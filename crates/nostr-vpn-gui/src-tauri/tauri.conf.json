@@ -11,6 +11,7 @@
     "beforeBuildCommand": "pnpm run prepare:sidecar:release && pnpm build"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "label": "main",

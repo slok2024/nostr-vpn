@@ -18,7 +18,7 @@ ACTION="${1:-put}"
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/testflight-internal <ensure-app|compliance|put|attach|wait|status|groups>
+usage: ./scripts/testflight-internal <ensure-app|compliance|put|attach|wait|status|groups|public|public-submit|public-attach|public-status>
 
 Commands:
   ensure-app   create the App Store Connect app record if it is missing
@@ -28,9 +28,34 @@ Commands:
   wait         wait until the uploaded build is visible and valid
   status       print current App Store Connect build/internal-group status
   groups       list TestFlight groups for the app
+  public       wait, prepare metadata, submit Beta App Review, and attach external groups
+  public-submit
+               submit the already-visible build for Beta App Review
+  public-attach
+               attach the already-visible build to external TestFlight groups
+  public-status
+               print current public TestFlight status
 
 Environment:
   NVPN_TESTFLIGHT_GROUPS          optional comma-separated internal group names or IDs
+  NVPN_TESTFLIGHT_PUBLIC_GROUPS   optional comma-separated external group names or IDs
+  NVPN_TESTFLIGHT_PUBLIC_GROUP_NAME
+                                   default Public Beta when creating an external group
+  NVPN_TESTFLIGHT_PUBLIC_LINK_ENABLED
+                                   default true for external groups
+  NVPN_TESTFLIGHT_PUBLIC_LINK_LIMIT
+                                   default 1000
+  NVPN_TESTFLIGHT_WHATS_NEW       optional What to Test text
+  NVPN_TESTFLIGHT_BETA_DESCRIPTION
+                                   optional public beta app description
+  NVPN_TESTFLIGHT_PRIVACY_POLICY_URL
+                                   required unless already set in App Store Connect
+  NVPN_TESTFLIGHT_FEEDBACK_EMAIL  required unless already set in App Store Connect
+  NVPN_TESTFLIGHT_CONTACT_FIRST_NAME,
+  NVPN_TESTFLIGHT_CONTACT_LAST_NAME,
+  NVPN_TESTFLIGHT_CONTACT_PHONE,
+  NVPN_TESTFLIGHT_CONTACT_EMAIL   required unless already set in App Store Connect
+  NVPN_TESTFLIGHT_REVIEW_NOTES    optional Beta App Review notes
   NVPN_TESTFLIGHT_WAIT_ATTEMPTS   default 40
   NVPN_TESTFLIGHT_WAIT_SECONDS    default 30
   NVPN_TESTFLIGHT_USES_NONEXEMPT_ENCRYPTION
@@ -42,7 +67,7 @@ EOF
 }
 
 case "$ACTION" in
-  ensure-app|compliance|put|attach|wait|status|groups)
+  ensure-app|compliance|put|attach|wait|status|groups|public|public-submit|public-attach|public-status)
     ;;
   -h|--help|help)
     usage
@@ -110,11 +135,37 @@ USES_NONEXEMPT_ENCRYPTION = USES_NONEXEMPT_ENCRYPTION_RAW.strip().lower() in {
 APP_ENCRYPTION_DECLARATION_ID = os.environ.get(
     "NVPN_TESTFLIGHT_APP_ENCRYPTION_DECLARATION_ID", ""
 ).strip()
+PUBLIC_ACTIONS = {"public", "public-submit", "public-attach", "public-status"}
+DEFAULT_PUBLIC_GROUP_NAME = "Public Beta"
+DEFAULT_WHATS_NEW = (
+    "Please test creating or importing a Nostr VPN network, starting and stopping the iOS "
+    "packet tunnel, LAN pairing, invite import, peer connectivity, routing settings, and "
+    "TestFlight feedback or crash reporting."
+)
+DEFAULT_BETA_DESCRIPTION = (
+    "Nostr VPN is a peer-to-peer VPN client that uses Nostr for discovery and "
+    "WireGuard-compatible encrypted tunnels between devices and services you choose."
+)
+DEFAULT_REVIEW_NOTES = (
+    "No demo account is required. To review, create a network in the app or import an "
+    "nvpn://invite link from another Nostr VPN device, then use the main VPN switch to "
+    "start and stop the iOS packet tunnel. The app uses Apple's NetworkExtension packet "
+    "tunnel APIs for VPN control. Nostr VPN is peer-to-peer by default; users choose their "
+    "relays, peers, routes, public services, and exit nodes. A VPN data disclosure is shown "
+    "on the main app screen before using the tunnel."
+)
 
 
 def fail(message, code=1):
     print(message, file=sys.stderr)
     raise SystemExit(code)
+
+
+def bool_env(name, default=False):
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def b64url(data):
@@ -407,7 +458,18 @@ def wait_for_internal_testable_build(build):
 
 
 def groups():
-    return get_all("betaGroups", {"filter[app]": APP_ID, "limit": "200"})
+    return get_all(
+        "betaGroups",
+        {
+            "filter[app]": APP_ID,
+            "fields[betaGroups]": (
+                "name,createdDate,isInternalGroup,hasAccessToAllBuilds,"
+                "publicLinkEnabled,publicLinkId,publicLinkLimitEnabled,publicLinkLimit,"
+                "publicLink,feedbackEnabled"
+            ),
+            "limit": "200",
+        },
+    )
 
 
 def create_internal_group():
@@ -432,6 +494,46 @@ def create_internal_group():
     status, response = request("POST", "betaGroups", body=body)
     group = require_ok(status, response, "Create internal TestFlight group").get("data")
     print(f"Created internal TestFlight group: {group_name}")
+    return group
+
+
+def create_external_group():
+    group_name = os.environ.get(
+        "NVPN_TESTFLIGHT_PUBLIC_GROUP_NAME", DEFAULT_PUBLIC_GROUP_NAME
+    ).strip() or DEFAULT_PUBLIC_GROUP_NAME
+    attrs = {
+        "name": group_name,
+        "isInternalGroup": False,
+        "hasAccessToAllBuilds": False,
+        "feedbackEnabled": bool_env("NVPN_TESTFLIGHT_FEEDBACK_ENABLED", True),
+    }
+    if bool_env("NVPN_TESTFLIGHT_PUBLIC_LINK_ENABLED", True):
+        attrs["publicLinkEnabled"] = True
+        attrs["publicLinkLimitEnabled"] = bool_env(
+            "NVPN_TESTFLIGHT_PUBLIC_LINK_LIMIT_ENABLED", True
+        )
+        if attrs["publicLinkLimitEnabled"]:
+            attrs["publicLinkLimit"] = int(
+                os.environ.get("NVPN_TESTFLIGHT_PUBLIC_LINK_LIMIT", "1000")
+            )
+
+    body = {
+        "data": {
+            "type": "betaGroups",
+            "attributes": attrs,
+            "relationships": {
+                "app": {
+                    "data": {
+                        "type": "apps",
+                        "id": APP_ID,
+                    }
+                }
+            },
+        }
+    }
+    status, response = request("POST", "betaGroups", body=body)
+    group = require_ok(status, response, "Create external TestFlight group").get("data")
+    print(f"Created external TestFlight group: {group_name}")
     return group
 
 
@@ -475,8 +577,88 @@ def select_internal_groups(all_groups):
     return selected
 
 
+def select_external_groups(all_groups, *, create_missing=False):
+    wanted_raw = (
+        os.environ.get("NVPN_TESTFLIGHT_PUBLIC_GROUPS", "").strip()
+        or os.environ.get("NVPN_TESTFLIGHT_GROUPS", "").strip()
+    )
+    if not wanted_raw:
+        selected = [
+            group
+            for group in all_groups
+            if group.get("attributes", {}).get("isInternalGroup") is not True
+        ]
+        if not selected and create_missing:
+            selected = [create_external_group()]
+    else:
+        wanted = {item.strip() for item in wanted_raw.split(",") if item.strip()}
+        selected = [
+            group
+            for group in all_groups
+            if group["id"] in wanted or group.get("attributes", {}).get("name") in wanted
+        ]
+        matched = {
+            group["id"] for group in selected
+        } | {group.get("attributes", {}).get("name") for group in selected}
+        missing = sorted(wanted - matched)
+        if missing:
+            fail(f"TestFlight group not found: {', '.join(missing)}")
+
+    external = [
+        group
+        for group in selected
+        if group.get("attributes", {}).get("isInternalGroup") is not True
+    ]
+    if len(external) != len(selected):
+        fail("Refusing to attach internal group(s) in public TestFlight mode")
+    if not external:
+        fail("No external TestFlight groups found")
+    return external
+
+
+def ensure_public_group_settings(selected_groups):
+    if not bool_env("NVPN_TESTFLIGHT_PUBLIC_LINK_ENABLED", True):
+        return selected_groups
+
+    updated = []
+    for group in selected_groups:
+        attrs = {
+            "feedbackEnabled": bool_env("NVPN_TESTFLIGHT_FEEDBACK_ENABLED", True),
+            "publicLinkEnabled": True,
+            "publicLinkLimitEnabled": bool_env(
+                "NVPN_TESTFLIGHT_PUBLIC_LINK_LIMIT_ENABLED", True
+            ),
+        }
+        if attrs["publicLinkLimitEnabled"]:
+            attrs["publicLinkLimit"] = int(
+                os.environ.get("NVPN_TESTFLIGHT_PUBLIC_LINK_LIMIT", "1000")
+            )
+        status, body = request(
+            "PATCH",
+            f"betaGroups/{group['id']}",
+            body={
+                "data": {
+                    "type": "betaGroups",
+                    "id": group["id"],
+                    "attributes": attrs,
+                }
+            },
+        )
+        if 200 <= status < 300:
+            updated.append(body.get("data", group))
+            continue
+        print(
+            "Warning: could not enable public link for "
+            f"{group.get('attributes', {}).get('name', group['id'])}: "
+            f"HTTP {status}",
+            file=sys.stderr,
+        )
+        updated.append(group)
+    return updated
+
+
 def group_has_build(group_id, build):
-    for item in get_all(f"betaGroups/{group_id}/builds"):
+    for item in get_all(f"betaGroups/{group_id}/builds", {"limit": "200"}):
         if item["id"] == build["id"]:
             return True
     return False
@@ -517,6 +699,34 @@ def summarize_build(build, selected_groups=None):
         )
 
 
+def summarize_public_build(build, selected_groups):
+    attrs = build["attributes"]
+    detail = build_beta_detail(build)
+    detail_attrs = detail.get("attributes", {})
+    print(f"Nostr VPN {VERSION_NAME} ({BUILD_NUMBER})")
+    print(f"Build: {build['id']}")
+    print(f"State: {attrs.get('processingState')}")
+    print(f"Audience: {attrs.get('buildAudienceType')}")
+    print(f"Uses Non-Exempt Encryption: {attrs.get('usesNonExemptEncryption')}")
+    print(f"External Beta State: {detail_attrs.get('externalBuildState')}")
+    print(f"Beta Review: {beta_review_state(build)}")
+    print(f"Uploaded: {attrs.get('uploadedDate')}")
+    print("External TestFlight groups:")
+    for group in selected_groups:
+        group_attrs = group.get("attributes", {})
+        attached = group_has_build(group["id"], build)
+        tester_count = len(group_testers(group["id"]))
+        public_link = group_attrs.get("publicLink")
+        link_suffix = f", {public_link}" if public_link else ""
+        print(
+            f"  - {group_attrs.get('name', group['id'])}: "
+            f"{'attached' if attached else 'not attached'}, "
+            f"{tester_count} tester(s), "
+            f"public link {'on' if group_attrs.get('publicLinkEnabled') else 'off'}"
+            f"{link_suffix}"
+        )
+
+
 def attach_build(build, selected_groups):
     body = {
         "data": [
@@ -545,34 +755,331 @@ def attach_build(build, selected_groups):
         print(f"  - {group.get('attributes', {}).get('name', group['id'])}")
 
 
+def attach_public_build(build, selected_groups):
+    body = {
+        "data": [
+            {"type": "betaGroups", "id": group["id"]}
+            for group in selected_groups
+        ]
+    }
+    status, response_body = request(
+        "POST",
+        f"builds/{build['id']}/relationships/betaGroups",
+        body=body,
+    )
+    if not (200 <= status < 300 or status == 409):
+        fail(f"Attach failed: HTTP {status}\n{json.dumps(response_body, indent=2)}")
+
+    print(f"Attached build {BUILD_NUMBER} to external TestFlight group(s):")
+    for group in selected_groups:
+        print(f"  - {group.get('attributes', {}).get('name', group['id'])}")
+
+
+def ensure_public_build(build):
+    build = get_build(build["id"])
+    state = build["attributes"].get("processingState")
+    if state != "VALID":
+        fail(f"Build {BUILD_NUMBER} is {state}, not VALID")
+    if build["attributes"].get("buildAudienceType") == "INTERNAL_ONLY":
+        fail(
+            f"Build {BUILD_NUMBER} is INTERNAL_ONLY. Upload a new build with "
+            "NVPN_IOS_INTERNAL_ONLY=false before public TestFlight submission."
+        )
+    return build
+
+
+def beta_review_detail():
+    status, body = request("GET", f"apps/{APP_ID}/betaAppReviewDetail")
+    return require_ok(status, body, "Read beta app review detail").get("data")
+
+
+def beta_app_localizations():
+    return get_all(f"apps/{APP_ID}/betaAppLocalizations", {"limit": "200"})
+
+
+def required_metadata_value(env_name, current, label, default=""):
+    value = os.environ.get(env_name, "").strip() or str(current or "").strip() or default
+    if not value:
+        fail(f"Missing TestFlight review metadata: {label} ({env_name})")
+    return value
+
+
+def patch_beta_review_detail():
+    detail = beta_review_detail()
+    attrs = detail.get("attributes", {}) if detail else {}
+    contact_first = required_metadata_value(
+        "NVPN_TESTFLIGHT_CONTACT_FIRST_NAME",
+        attrs.get("contactFirstName"),
+        "contact first name",
+    )
+    contact_last = required_metadata_value(
+        "NVPN_TESTFLIGHT_CONTACT_LAST_NAME",
+        attrs.get("contactLastName"),
+        "contact last name",
+    )
+    contact_phone = required_metadata_value(
+        "NVPN_TESTFLIGHT_CONTACT_PHONE",
+        attrs.get("contactPhone"),
+        "contact phone",
+    )
+    contact_email = required_metadata_value(
+        "NVPN_TESTFLIGHT_CONTACT_EMAIL",
+        attrs.get("contactEmail"),
+        "contact email",
+    )
+    notes = (
+        os.environ.get("NVPN_TESTFLIGHT_REVIEW_NOTES", "").strip()
+        or attrs.get("notes")
+        or DEFAULT_REVIEW_NOTES
+    )
+    body = {
+        "data": {
+            "type": "betaAppReviewDetails",
+            "id": detail["id"],
+            "attributes": {
+                "contactFirstName": contact_first,
+                "contactLastName": contact_last,
+                "contactPhone": contact_phone,
+                "contactEmail": contact_email,
+                "demoAccountRequired": False,
+                "notes": notes,
+            },
+        }
+    }
+    status, response = request(
+        "PATCH",
+        f"betaAppReviewDetails/{detail['id']}",
+        body=body,
+    )
+    require_ok(status, response, "Update beta app review detail")
+    print("Updated Beta App Review contact and notes")
+
+
+def upsert_beta_app_localization():
+    locale = os.environ.get("NVPN_TESTFLIGHT_LOCALE", "en-US")
+    existing = None
+    for item in beta_app_localizations():
+        if item.get("attributes", {}).get("locale") == locale:
+            existing = item
+            break
+    if existing is None:
+        localizations = beta_app_localizations()
+        existing = localizations[0] if localizations else None
+
+    attrs = existing.get("attributes", {}) if existing else {}
+    description = (
+        os.environ.get("NVPN_TESTFLIGHT_BETA_DESCRIPTION", "").strip()
+        or attrs.get("description")
+        or DEFAULT_BETA_DESCRIPTION
+    )
+    feedback_email = required_metadata_value(
+        "NVPN_TESTFLIGHT_FEEDBACK_EMAIL",
+        attrs.get("feedbackEmail"),
+        "feedback email",
+    )
+    privacy_policy_url = required_metadata_value(
+        "NVPN_TESTFLIGHT_PRIVACY_POLICY_URL",
+        attrs.get("privacyPolicyUrl"),
+        "privacy policy URL",
+    )
+    localization_attrs = {
+        "description": description,
+        "feedbackEmail": feedback_email,
+        "privacyPolicyUrl": privacy_policy_url,
+    }
+    marketing_url = os.environ.get("NVPN_TESTFLIGHT_MARKETING_URL", "").strip()
+    if marketing_url:
+        localization_attrs["marketingUrl"] = marketing_url
+
+    if existing:
+        status, body = request(
+            "PATCH",
+            f"betaAppLocalizations/{existing['id']}",
+            body={
+                "data": {
+                    "type": "betaAppLocalizations",
+                    "id": existing["id"],
+                    "attributes": localization_attrs,
+                }
+            },
+        )
+        require_ok(status, body, "Update beta app localization")
+    else:
+        localization_attrs["locale"] = locale
+        status, body = request(
+            "POST",
+            "betaAppLocalizations",
+            body={
+                "data": {
+                    "type": "betaAppLocalizations",
+                    "attributes": localization_attrs,
+                    "relationships": {
+                        "app": {
+                            "data": {
+                                "type": "apps",
+                                "id": APP_ID,
+                            }
+                        }
+                    },
+                }
+            },
+        )
+        require_ok(status, body, "Create beta app localization")
+    print(f"Updated beta app localization for {locale}")
+
+
+def ensure_public_metadata():
+    patch_beta_review_detail()
+    upsert_beta_app_localization()
+
+
+def beta_build_localizations(build):
+    return get_all(f"builds/{build['id']}/betaBuildLocalizations", {"limit": "200"})
+
+
+def upsert_what_to_test(build):
+    whats_new = os.environ.get("NVPN_TESTFLIGHT_WHATS_NEW", "").strip() or DEFAULT_WHATS_NEW
+    locale = os.environ.get("NVPN_TESTFLIGHT_LOCALE", "en-US")
+    existing = None
+    for item in beta_build_localizations(build):
+        if item.get("attributes", {}).get("locale") == locale:
+            existing = item
+            break
+
+    if existing:
+        status, body = request(
+            "PATCH",
+            f"betaBuildLocalizations/{existing['id']}",
+            body={
+                "data": {
+                    "type": "betaBuildLocalizations",
+                    "id": existing["id"],
+                    "attributes": {"whatsNew": whats_new},
+                }
+            },
+        )
+        require_ok(status, body, "Update What to Test")
+    else:
+        status, body = request(
+            "POST",
+            "betaBuildLocalizations",
+            body={
+                "data": {
+                    "type": "betaBuildLocalizations",
+                    "attributes": {
+                        "locale": locale,
+                        "whatsNew": whats_new,
+                    },
+                    "relationships": {
+                        "build": {
+                            "data": {
+                                "type": "builds",
+                                "id": build["id"],
+                            }
+                        }
+                    },
+                }
+            },
+        )
+        require_ok(status, body, "Create What to Test")
+    print(f"Updated What to Test for {locale}")
+
+
+def beta_review_state(build):
+    status, body = request("GET", f"builds/{build['id']}/betaAppReviewSubmission")
+    if status == 404:
+        return "not submitted"
+    if not (200 <= status < 300):
+        return f"unknown (HTTP {status})"
+    data = body.get("data")
+    if not data:
+        return "not submitted"
+    attrs = data.get("attributes", {})
+    return attrs.get("betaReviewState") or attrs.get("state") or "submitted"
+
+
+def submit_beta_review(build):
+    state = beta_review_state(build)
+    if state not in {"not submitted", "REJECTED"}:
+        print(f"Beta App Review already submitted: {state}")
+        return
+
+    status, body = request(
+        "POST",
+        "betaAppReviewSubmissions",
+        body={
+            "data": {
+                "type": "betaAppReviewSubmissions",
+                "relationships": {
+                    "build": {
+                        "data": {
+                            "type": "builds",
+                            "id": build["id"],
+                        }
+                    }
+                },
+            }
+        },
+    )
+    if status == 409:
+        print("Beta App Review submission already exists")
+        return
+    require_ok(status, body, "Submit Beta App Review")
+    data = body.get("data", {})
+    review_state = data.get("attributes", {}).get("betaReviewState") or "submitted"
+    print(f"Submitted build {BUILD_NUMBER} for Beta App Review: {review_state}")
+
+
 if ACTION == "groups":
     print(f"TestFlight groups for {BUNDLE_ID}:")
     for group in groups():
         attrs = group.get("attributes", {})
         kind = "internal" if attrs.get("isInternalGroup") else "external"
         tester_count = len(group_testers(group["id"]))
+        public = ""
+        if kind == "external":
+            link = attrs.get("publicLink")
+            public = (
+                f", public link {'on' if attrs.get('publicLinkEnabled') else 'off'}"
+                + (f", {link}" if link else "")
+            )
         print(
             f"  - {attrs.get('name', group['id'])} "
-            f"[{kind}] {group['id']} ({tester_count} tester(s))"
+            f"[{kind}] {group['id']} ({tester_count} tester(s)){public}"
         )
     raise SystemExit(0)
 
-if ACTION in {"put", "wait"}:
+if ACTION in {"put", "wait", "public"}:
     build = wait_for_valid_build()
 else:
     build = find_build()
     if build is None:
         fail(f"Build {BUILD_NUMBER} is not visible in App Store Connect yet")
-    if ACTION == "attach" and build["attributes"].get("processingState") != "VALID":
+    if ACTION in {"attach", "public-submit", "public-attach"} and build["attributes"].get("processingState") != "VALID":
         fail(f"Build {BUILD_NUMBER} is {build['attributes'].get('processingState')}, not VALID")
 
-if ACTION in {"put", "attach", "compliance"}:
+if ACTION in {"put", "attach", "compliance", "public", "public-submit", "public-attach"}:
     build = ensure_export_compliance(build)
 else:
     build = get_build(build["id"])
 
 if ACTION == "compliance":
     summarize_build(build)
+    raise SystemExit(0)
+
+if ACTION in PUBLIC_ACTIONS:
+    selected_groups = select_external_groups(
+        groups(), create_missing=ACTION in {"public", "public-attach"}
+    )
+    build = ensure_public_build(build)
+    if ACTION in {"public", "public-submit"}:
+        ensure_public_metadata()
+        upsert_what_to_test(build)
+        submit_beta_review(build)
+    if ACTION in {"public", "public-attach"}:
+        selected_groups = ensure_public_group_settings(selected_groups)
+        attach_public_build(build, selected_groups)
+    summarize_public_build(build, selected_groups)
     raise SystemExit(0)
 
 selected_groups = select_internal_groups(groups())

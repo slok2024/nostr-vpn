@@ -60,14 +60,12 @@ impl NvpnBackend {
         config.ensure_defaults();
         maybe_autoconfigure_node(&mut config);
         write_ios_probe(format!(
-            "ios-start: prepare network_id={} participants={} endpoint={} listen_port={}",
+            "ios-start: start network_id={} participants={} endpoint={} listen_port={}",
             config.effective_network_id(),
             config.participant_pubkeys_hex().len(),
             config.node.endpoint,
             config.node.listen_port
         ));
-        ios_vpn::prepare()?;
-        write_ios_probe("ios-start: prepare complete");
         let status = ios_vpn::start(&ios_vpn::StartVpnArgs {
             session_name: config.effective_network_id(),
             config_json: serde_json::to_string(&config)

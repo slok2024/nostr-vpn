@@ -138,6 +138,8 @@ use tauri::WindowEvent;
 use tauri::image::Image;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+#[cfg(target_os = "ios")]
+use tauri::webview::PageLoadEvent;
 use tauri::{Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tokio::runtime::Runtime;
@@ -1384,6 +1386,26 @@ pub fn run() {
                     webview.label(),
                     payload.url()
                 ));
+                if matches!(payload.event(), PageLoadEvent::Finished) {
+                    let app_handle = webview.app_handle().clone();
+                    if let Some(state) = app_handle.try_state::<AppState>() {
+                        match tauri_commands::with_backend(state, |backend| {
+                            backend.tick();
+                            Ok(())
+                        }) {
+                            Ok(()) => {
+                                write_ios_probe("page_load: initial backend tick complete");
+                            }
+                            Err(error) => {
+                                write_ios_probe(format!(
+                                    "page_load: initial backend tick failed: {error}"
+                                ));
+                            }
+                        }
+                    } else {
+                        write_ios_probe("page_load: initial backend tick skipped: no state");
+                    }
+                }
             }
         })
         .setup(move |app| {

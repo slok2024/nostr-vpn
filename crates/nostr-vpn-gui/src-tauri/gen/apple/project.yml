@@ -48,6 +48,10 @@ targets:
           NSAllowsLocalNetworking: true
         NSCameraUsageDescription: Scan Nostr VPN invite QR codes.
         NSPhotoLibraryUsageDescription: Select a saved invite QR image to join a network.
+        CFBundleURLTypes:
+          - CFBundleURLName: Nostr VPN
+            CFBundleURLSchemes:
+              - nvpn
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
         UISupportedInterfaceOrientations:

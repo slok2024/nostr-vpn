@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nostr VPN Privacy Policy</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.55;
+      }
+
+      body {
+        margin: 0;
+        color: light-dark(#17202a, #f2f4f8);
+        background: light-dark(#f6f7f9, #101215);
+      }
+
+      main {
+        width: min(760px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 48px 0;
+      }
+
+      h1 {
+        margin: 0 0 4px;
+        font-size: clamp(2rem, 5vw, 3rem);
+        line-height: 1;
+      }
+
+      h2 {
+        margin: 32px 0 8px;
+        font-size: 1.08rem;
+      }
+
+      p,
+      li {
+        color: light-dark(#344255, #cbd3df);
+      }
+
+      ul {
+        padding-left: 1.25rem;
+      }
+
+      a {
+        color: light-dark(#005f87, #7bd8ff);
+      }
+
+      .updated {
+        margin-top: 0;
+        color: light-dark(#667085, #9aa4b2);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Nostr VPN Privacy Policy</h1>
+      <p class="updated">Effective April 29, 2026</p>
+
+      <p>
+        Nostr VPN is a peer-to-peer VPN client. It uses Nostr relays for discovery and
+        WireGuard-compatible encrypted tunnels between devices and services you choose.
+      </p>
+
+      <h2>Data Used to Operate the VPN</h2>
+      <p>Nostr VPN processes the following data to create and maintain VPN connections:</p>
+      <ul>
+        <li>your Nostr public key, device name, network membership, and peer list;</li>
+        <li>WireGuard public keys, tunnel addresses, peer endpoints, and routing choices;</li>
+        <li>join requests, invite metadata, relay choices, presence status, and connection state;</li>
+        <li>traffic counters and health information shown in the app.</li>
+      </ul>
+      <p>
+        Private keys and local configuration are stored on your device. Packet traffic inside the VPN
+        tunnel is encrypted. When you use an exit node, relay service, public service, Nostr relay, or
+        peer-operated device, that operator receives the data needed to provide the service you asked
+        to use.
+      </p>
+
+      <h2>How the Data Is Used</h2>
+      <p>
+        Nostr VPN uses VPN data only to operate the VPN features you configure, including discovery,
+        pairing, routing, peer connectivity, relay fallback, and exit-node operation.
+      </p>
+      <p>
+        The developer does not sell VPN data and does not use or disclose VPN data to third parties
+        for any purpose. The app only transmits the connection data needed to the peers, relays,
+        relay services, public services, and exit nodes you choose to operate your VPN.
+      </p>
+
+      <h2>Analytics and Tracking</h2>
+      <p>
+        The app does not include advertising SDKs, third-party analytics SDKs, or cross-app tracking.
+        TestFlight and Apple platforms may provide crash reports or feedback if you choose to submit
+        them through Apple.
+      </p>
+
+      <h2>Your Choices</h2>
+      <p>
+        You choose which networks, relays, peers, routes, public services, and exit nodes to use. You
+        can remove peers, leave networks, stop the VPN tunnel, or delete the app to remove local app
+        data from your device.
+      </p>
+
+      <h2>Contact</h2>
+      <p>
+        For privacy questions, contact
+        <a href="mailto:martti.malmi@iki.fi">martti.malmi@iki.fi</a>.
+      </p>
+    </main>
+  </body>
+</html>

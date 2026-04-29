@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 import {
   addAdminMock,
@@ -14,7 +15,6 @@ import {
   installCliMock,
   installSystemServiceMock,
   isAutostartEnabledMock,
-  isTauriRuntime,
   removeAdminMock,
   removeNetworkMock,
   removeParticipantMock,
@@ -35,8 +35,74 @@ import {
 } from './mock-backend.js'
 import type { SettingsPatch, UiState } from './types'
 
+type TauriEvent<T = unknown> = {
+  payload: T
+}
+
+type GlobalTauriApi = {
+  core?: {
+    invoke?: <T>(method: string, args?: Record<string, unknown>) => Promise<T>
+  }
+  event?: {
+    listen?: <T>(
+      event: string,
+      handler: (event: TauriEvent<T>) => void | Promise<void>,
+    ) => Promise<() => void>
+  }
+}
+
+type TauriWindow = Window & {
+  __TAURI_INTERNALS__?: unknown
+  __TAURI__?: GlobalTauriApi
+}
+
+const tauriWindow = () =>
+  typeof window === 'undefined' ? null : (window as TauriWindow)
+
+const hasTauriInternals = () => {
+  const target = tauriWindow()
+  return !!target && '__TAURI_INTERNALS__' in target
+}
+
+const globalTauriApi = () => tauriWindow()?.__TAURI__ ?? null
+
+export const isTauriRuntime = () =>
+  hasTauriInternals() || typeof globalTauriApi()?.core?.invoke === 'function'
+
+const invokeTauri = <T>(method: string, args?: Record<string, unknown>) => {
+  if (hasTauriInternals()) {
+    return invoke<T>(method, args)
+  }
+
+  const globalInvoke = globalTauriApi()?.core?.invoke
+  if (typeof globalInvoke === 'function') {
+    return globalInvoke<T>(method, args)
+  }
+
+  throw new Error('Tauri runtime is unavailable')
+}
+
 const callUi = (method: string, mockFn: () => Promise<UiState> | UiState, args?: unknown) =>
-  isTauriRuntime() ? invoke<UiState>(method, args as Record<string, unknown> | undefined) : mockFn()
+  isTauriRuntime() ? invokeTauri<UiState>(method, args as Record<string, unknown> | undefined) : mockFn()
+
+export const listenTauriEvent = <T>(
+  event: string,
+  handler: (event: TauriEvent<T>) => void | Promise<void>,
+) => {
+  if (hasTauriInternals()) {
+    return listen<T>(event, handler)
+  }
+
+  const globalListen = globalTauriApi()?.event?.listen
+  if (typeof globalListen === 'function') {
+    return globalListen<T>(event, handler)
+  }
+
+  throw new Error('Tauri event API is unavailable')
+}
+
+export const getCurrentDeepLinks = () =>
+  invokeTauri<string[] | null>('plugin:deep-link|get_current')
 
 export const tick = () => callUi('tick', tickMock)
 export const connectSession = () => callUi('connect_session', connectSessionMock)
@@ -105,11 +171,14 @@ export const isAutostartEnabled = async () => {
   }
 
   try {
-    const { isEnabled } = await import('@tauri-apps/plugin-autostart')
-    return await isEnabled()
+    if (hasTauriInternals()) {
+      const { isEnabled } = await import('@tauri-apps/plugin-autostart')
+      return await isEnabled()
+    }
   } catch {
-    return false
+    // Fall through to the unsupported result below.
   }
+  return false
 }
 
 export const setAutostartEnabled = async (enabled: boolean) => {
@@ -118,15 +187,18 @@ export const setAutostartEnabled = async (enabled: boolean) => {
   }
 
   try {
-    if (enabled) {
-      const { enable } = await import('@tauri-apps/plugin-autostart')
-      await enable()
-    } else {
-      const { disable } = await import('@tauri-apps/plugin-autostart')
-      await disable()
+    if (hasTauriInternals()) {
+      if (enabled) {
+        const { enable } = await import('@tauri-apps/plugin-autostart')
+        await enable()
+      } else {
+        const { disable } = await import('@tauri-apps/plugin-autostart')
+        await disable()
+      }
+      return true
     }
-    return true
   } catch {
-    return false
+    // Fall through to the unsupported result below.
   }
+  return false
 }

@@ -10,6 +10,10 @@ const bundledDir = path.resolve(
   scriptDir,
   '../src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset',
 )
+const iosInfoPlistPath = path.resolve(
+  scriptDir,
+  '../src-tauri/gen/apple/nostr-vpn-gui_iOS/Info.plist',
+)
 
 const listPngs = async (dir) =>
   (await readdir(dir))
@@ -47,4 +51,11 @@ test('bundled iOS AppIcon catalog matches the committed iOS source icons', async
       assert.equal(hasPngAlphaChannel(sourceBytes), false, `iOS app icon ${file} has an alpha channel`)
     }),
   )
+})
+
+test('generated iOS Info.plist registers nvpn invite links', async () => {
+  const infoPlist = await readFile(iosInfoPlistPath, 'utf8')
+
+  assert.match(infoPlist, /<key>CFBundleURLTypes<\/key>/)
+  assert.match(infoPlist, /<string>nvpn<\/string>/)
 })

@@ -72,6 +72,15 @@
       {/if}
     </div>
 
+    {#if vpnControlSupported}
+      <div class="vpn-data-disclosure" data-testid="vpn-data-disclosure">
+        <strong>VPN data:</strong> Nostr VPN uses your public key, network membership, peer
+        endpoints, relay choices, and traffic counters only to run the VPN you configure. Packet
+        traffic is encrypted. The developer does not sell VPN data or use or disclose it to third
+        parties; the app only transmits connection data to peers, relays, and services you select.
+      </div>
+    {/if}
+
     <div class="hero-stats-grid">
       <div class="hero-stat-card" data-testid="hero-identity-card">
         <div class="panel-kicker">Identity</div>

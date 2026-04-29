@@ -1,7 +1,5 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
-  import { invoke } from '@tauri-apps/api/core'
-  import { listen } from '@tauri-apps/api/event'
   import { dispatchBootReady, waitForNextPaint } from './lib/boot.js'
   import {
     lanPairingDeadlineFromSnapshot,
@@ -52,7 +50,10 @@
     importNetworkInvite,
     installCli,
     installSystemService,
+    getCurrentDeepLinks,
     isAutostartEnabled,
+    isTauriRuntime,
+    listenTauriEvent,
     removeNetwork,
     removeAdmin,
     removeParticipant,
@@ -312,12 +313,12 @@
   }
 
   async function initializeDeepLinkHandling() {
-    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+    if (!isTauriRuntime()) {
       return
     }
 
     try {
-      deepLinkUnlisten = await listen('deep-link://new-url', async (event) => {
+      deepLinkUnlisten = await listenTauriEvent<string[]>('deep-link://new-url', async (event) => {
         const urls = Array.isArray(event.payload) ? event.payload : []
         for (const url of urls) {
           if (typeof url === 'string') {
@@ -326,7 +327,7 @@
         }
       })
 
-      const current = await invoke<string[] | null>('plugin:deep-link|get_current')
+      const current = await getCurrentDeepLinks()
       if (!Array.isArray(current)) {
         return
       }

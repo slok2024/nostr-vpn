@@ -33,7 +33,7 @@ AUTH_ARGS=()
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/ios-release <print-config|ensure-app|ensure-profiles|prepare|archive|export|upload|internal|all>
+usage: ./scripts/ios-release <print-config|ensure-app|ensure-profiles|prepare|archive|export|upload|internal|public|all>
 
 Commands:
   ensure-app    create the App Store Connect app record if it is missing
@@ -44,7 +44,10 @@ Commands:
   export        export the archive as an .ipa
   upload        export the archive and upload the .ipa to App Store Connect
   internal      attach the uploaded build to internal TestFlight groups
+  public        submit/attach the uploaded build for public TestFlight
   all           ensure app, archive, upload, wait for processing, attach internally
+
+For public TestFlight, upload with NVPN_IOS_INTERNAL_ONLY=false and a new build number.
 EOF
 }
 
@@ -338,6 +341,9 @@ case "${1:-}" in
     ;;
   internal)
     "$ROOT/scripts/testflight-internal" put
+    ;;
+  public)
+    "$ROOT/scripts/testflight-public" put
     ;;
   all)
     "$ROOT/scripts/testflight-internal" ensure-app

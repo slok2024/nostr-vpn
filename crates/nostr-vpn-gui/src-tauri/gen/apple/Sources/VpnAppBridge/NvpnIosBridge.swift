@@ -102,6 +102,7 @@ private func loadAllManagers() throws -> [NETunnelProviderManager] {
 private func saveManager(_ manager: NETunnelProviderManager) throws {
     let _: Void = try waitForAsyncResult(
         operation: "VPN manager preferences to save",
+        timeout: 120,
         executeOnMainQueue: true
     ) { completion in
         manager.saveToPreferences { error in
