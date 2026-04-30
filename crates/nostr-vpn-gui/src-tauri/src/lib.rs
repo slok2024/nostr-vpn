@@ -98,12 +98,14 @@ pub(crate) use tray_runtime::{
 #[cfg(test)]
 pub(crate) use tray_runtime::{tray_menu_spec, tray_vpn_status_menu_text, tray_vpn_toggle_text};
 
+#[cfg(target_os = "ios")]
+use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -229,6 +231,45 @@ struct NvpnBackend {
     magic_dns_status: String,
 }
 
+fn load_gui_config(path: &Path) -> Result<AppConfig> {
+    #[cfg(target_os = "ios")]
+    {
+        write_ios_probe("backend: config load begin");
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| AppConfig::load(path)));
+        match result {
+            Ok(Ok(config)) => {
+                write_ios_probe("backend: config load ok");
+                Ok(config)
+            }
+            Ok(Err(error)) => {
+                write_ios_probe(format!("backend: config load failed: {error:#}"));
+                Err(error)
+            }
+            Err(payload) => {
+                let message = panic_payload_message(payload.as_ref());
+                write_ios_probe(format!("backend: config load panicked: {message}"));
+                Err(anyhow!("config load panicked: {message}"))
+            }
+        }
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        AppConfig::load(path)
+    }
+}
+
+#[cfg(target_os = "ios")]
+fn panic_payload_message(payload: &(dyn Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
 impl NvpnBackend {
     fn new(
         app_handle: tauri::AppHandle,
@@ -248,7 +289,7 @@ impl NvpnBackend {
             android_session::AndroidSessionManager::new(app_handle, runtime.handle().clone());
 
         let mut config = if config_path.exists() {
-            AppConfig::load(&config_path).context("failed to load config")?
+            load_gui_config(&config_path).context("failed to load config")?
         } else {
             let generated = AppConfig::generated();
             generated
@@ -1725,6 +1766,7 @@ pub fn run() {
 mod tests {
     use base64::Engine as _;
 
+    use super::path_resolution::migrate_legacy_mobile_config_file;
     use super::{
         ConfiguredPeerStatus, DaemonPeerState, DaemonRuntimeState, GuiLaunchDisposition,
         IOS_TAURI_ORIGIN, LAN_PAIRING_ANNOUNCEMENT_VERSION, LAN_PAIRING_DURATION_SECS,
@@ -3877,6 +3919,31 @@ mod tests {
         let path = config_path_from_roots(None, Some(std::path::Path::new("/home/test/.config")));
 
         assert_eq!(path, PathBuf::from("/home/test/.config/nvpn/config.toml"));
+    }
+
+    #[test]
+    fn migrates_legacy_mobile_config_file_to_config_toml() {
+        let legacy_path = std::env::temp_dir().join(format!(
+            "nvpn-gui-legacy-mobile-config-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("epoch")
+                .as_nanos()
+        ));
+        let legacy_contents = "node_name = \"phone\"\n";
+        fs::write(&legacy_path, legacy_contents).expect("write legacy config");
+
+        migrate_legacy_mobile_config_file(&legacy_path).expect("migrate legacy config");
+
+        let config_path = legacy_path.join("config.toml");
+        assert!(legacy_path.is_dir());
+        assert_eq!(
+            fs::read_to_string(&config_path).expect("read migrated config"),
+            legacy_contents
+        );
+
+        let _ = fs::remove_dir_all(&legacy_path);
     }
 
     #[test]

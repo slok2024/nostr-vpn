@@ -266,6 +266,81 @@ pub(super) fn route_targets_for_tunnel_peers(peers: &[PlannedTunnelPeer]) -> Vec
     route_targets
 }
 
+pub(super) fn route_targets_for_planned_tunnel_peers(
+    config: &AppConfig,
+    own_pubkey: Option<&str>,
+    peer_announcements: &HashMap<String, PeerAnnouncement>,
+    planned_peers: &[PlannedTunnelPeer],
+    path_book: &PeerPathBook,
+    current_runtime: Option<&MobileWireGuardRuntime>,
+    own_local_endpoint: Option<&str>,
+    now: u64,
+) -> Vec<String> {
+    let mut route_targets = route_targets_for_tunnel_peers(planned_peers);
+    let exit_node_ready = selected_exit_node_ready_for_default_route(
+        config,
+        own_pubkey,
+        peer_announcements,
+        planned_peers,
+        path_book,
+        current_runtime,
+        own_local_endpoint,
+        now,
+    );
+    if !exit_node_ready {
+        route_targets.retain(|route| route != "0.0.0.0/0");
+    }
+    route_targets
+}
+
+fn selected_exit_node_ready_for_default_route(
+    config: &AppConfig,
+    own_pubkey: Option<&str>,
+    peer_announcements: &HashMap<String, PeerAnnouncement>,
+    planned_peers: &[PlannedTunnelPeer],
+    path_book: &PeerPathBook,
+    current_runtime: Option<&MobileWireGuardRuntime>,
+    own_local_endpoint: Option<&str>,
+    now: u64,
+) -> bool {
+    let Some(participant) = selected_exit_node_participant(config, own_pubkey, peer_announcements)
+    else {
+        return false;
+    };
+
+    let Some(planned) = planned_peers
+        .iter()
+        .find(|planned| planned.participant == participant)
+    else {
+        return false;
+    };
+
+    let own_local_endpoints = own_local_endpoint
+        .map(|endpoint| vec![endpoint.to_string()])
+        .unwrap_or_default();
+    if path_book.endpoint_has_recent_success_for_local_endpoints(
+        &participant,
+        &planned.endpoint,
+        &own_local_endpoints,
+        now,
+        PEER_ONLINE_GRACE_SECS,
+    ) {
+        return true;
+    }
+
+    current_runtime
+        .map(|runtime| {
+            runtime.peer_statuses().into_iter().any(|status| {
+                status.participant_pubkey == participant
+                    && status.endpoint.to_string() == planned.endpoint
+                    && status
+                        .last_handshake_age
+                        .is_some_and(|age| age <= Duration::from_secs(PEER_ONLINE_GRACE_SECS))
+            })
+        })
+        .unwrap_or(false)
+}
+
 pub(super) fn tunnel_fingerprint(
     config: &AppConfig,
     listen_port: u16,
@@ -403,4 +478,156 @@ pub(super) struct PlannedTunnelPeer {
     pub participant: String,
     pub endpoint: String,
     pub peer: TunnelPeer,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        planned_tunnel_peers, route_targets_for_planned_tunnel_peers,
+        route_targets_for_tunnel_peers,
+    };
+    use nostr_sdk::prelude::Keys;
+    use nostr_vpn_core::config::AppConfig;
+    use nostr_vpn_core::control::PeerAnnouncement;
+    use nostr_vpn_core::paths::PeerPathBook;
+    use std::collections::HashMap;
+
+    fn participant() -> String {
+        Keys::generate().public_key().to_hex()
+    }
+
+    fn peer_announcement(endpoint: &str, tunnel_ip: &str, routes: &[&str]) -> PeerAnnouncement {
+        PeerAnnouncement {
+            node_id: format!("node-{endpoint}"),
+            public_key: "dummy-public-key".to_string(),
+            endpoint: endpoint.to_string(),
+            local_endpoint: None,
+            public_endpoint: Some(endpoint.to_string()),
+            relay_endpoint: None,
+            relay_pubkey: None,
+            relay_expires_at: None,
+            tunnel_ip: tunnel_ip.to_string(),
+            advertised_routes: routes.iter().map(|route| (*route).to_string()).collect(),
+            timestamp: 1,
+        }
+    }
+
+    fn planned_exit_peer() -> (
+        AppConfig,
+        String,
+        HashMap<String, PeerAnnouncement>,
+        Vec<super::PlannedTunnelPeer>,
+        PeerPathBook,
+    ) {
+        let own = participant();
+        let exit = participant();
+        let other = participant();
+
+        let mut config = AppConfig::generated();
+        config.networks[0].participants = vec![own.clone(), exit.clone(), other.clone()];
+        config.node.public_key = own.clone();
+        config.exit_node = exit.clone();
+
+        let announcements = HashMap::from([
+            (
+                exit.clone(),
+                peer_announcement(
+                    "198.51.100.20:51820",
+                    "10.44.0.2/32",
+                    &["0.0.0.0/0", "10.60.0.0/24"],
+                ),
+            ),
+            (
+                other,
+                peer_announcement("198.51.100.21:51820", "10.44.0.3/32", &["10.70.0.0/24"]),
+            ),
+        ]);
+        let mut path_book = PeerPathBook::default();
+        let planned = planned_tunnel_peers(
+            &config,
+            Some(&own),
+            &announcements,
+            &mut path_book,
+            Some("192.0.2.10:51820"),
+            100,
+        )
+        .expect("planned peers");
+
+        (config, own, announcements, planned, path_book)
+    }
+
+    #[test]
+    fn raw_ios_route_targets_include_selected_exit_default_route() {
+        let (_, _, _, planned, _) = planned_exit_peer();
+
+        assert!(
+            route_targets_for_tunnel_peers(&planned)
+                .iter()
+                .any(|route| route == "0.0.0.0/0")
+        );
+    }
+
+    #[test]
+    fn ios_withholds_default_route_until_exit_peer_is_ready() {
+        let (config, own, announcements, planned, path_book) = planned_exit_peer();
+
+        let routes = route_targets_for_planned_tunnel_peers(
+            &config,
+            Some(&own),
+            &announcements,
+            &planned,
+            &path_book,
+            None,
+            Some("192.0.2.10:51820"),
+            100,
+        );
+
+        assert!(!routes.iter().any(|route| route == "0.0.0.0/0"));
+        assert!(routes.iter().any(|route| route == "10.44.0.2/32"));
+        assert!(routes.iter().any(|route| route == "10.60.0.0/24"));
+    }
+
+    #[test]
+    fn ios_withholds_default_route_for_fresh_relay_endpoint_without_success() {
+        let (config, own, mut announcements, planned, path_book) = planned_exit_peer();
+        let exit = config.exit_node.clone();
+        let exit_announcement = announcements
+            .get_mut(&exit)
+            .expect("exit announcement should exist");
+        exit_announcement.relay_endpoint = Some("198.51.100.20:51820".to_string());
+        exit_announcement.relay_expires_at = Some(200);
+
+        let routes = route_targets_for_planned_tunnel_peers(
+            &config,
+            Some(&own),
+            &announcements,
+            &planned,
+            &path_book,
+            None,
+            Some("192.0.2.10:51820"),
+            100,
+        );
+
+        assert!(!routes.iter().any(|route| route == "0.0.0.0/0"));
+    }
+
+    #[test]
+    fn ios_installs_default_route_after_recent_exit_peer_success() {
+        let (config, own, announcements, planned, mut path_book) = planned_exit_peer();
+        let exit = config.exit_node.clone();
+        path_book.note_success(exit, "198.51.100.20:51820", 99);
+
+        let routes = route_targets_for_planned_tunnel_peers(
+            &config,
+            Some(&own),
+            &announcements,
+            &planned,
+            &path_book,
+            None,
+            Some("192.0.2.10:51820"),
+            100,
+        );
+
+        assert!(routes.iter().any(|route| route == "0.0.0.0/0"));
+    }
 }

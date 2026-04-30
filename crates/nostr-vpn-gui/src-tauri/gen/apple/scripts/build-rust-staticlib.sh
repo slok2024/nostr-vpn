@@ -45,9 +45,9 @@ source_path="${target_root}/${rust_target}/${profile_dir}/libnostr_vpn_gui_lib.a
 mkdir -p "${artifact_dir}"
 
 cd "${repo_root}"
+cargo_args=(build -p nostr-vpn-gui --target "${rust_target}" --features custom-protocol)
 if [ "${profile_dir}" = "release" ]; then
-  cargo build -p nostr-vpn-gui --target "${rust_target}" --release --features custom-protocol
-else
-  cargo build -p nostr-vpn-gui --target "${rust_target}"
+  cargo_args+=(--release)
 fi
+cargo "${cargo_args[@]}"
 cp "${source_path}" "${artifact_path}"

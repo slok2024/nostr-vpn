@@ -18,7 +18,8 @@ use self::ios_tunnel_planning::{
     configured_recipients, expected_peer_count, local_interface_address_for_tunnel,
     local_signal_endpoint, note_successful_runtime_paths, planned_tunnel_peers,
     publish_hello_best_effort, publish_private_announce_best_effort, resolve_relays,
-    route_targets_for_tunnel_peers, signaling_networks_for_app, tunnel_fingerprint, unix_timestamp,
+    route_targets_for_planned_tunnel_peers, signaling_networks_for_app, tunnel_fingerprint,
+    unix_timestamp,
 };
 use crate::DaemonRuntimeState;
 use crate::mobile_runtime_state::build_mobile_runtime_state;
@@ -551,7 +552,16 @@ async fn reconcile_runtime(
     }
 
     let local_addresses = vec![local_interface_address_for_tunnel(&config.node.tunnel_ip)];
-    let route_targets = route_targets_for_tunnel_peers(&planned);
+    let route_targets = route_targets_for_planned_tunnel_peers(
+        config,
+        context.own_pubkey,
+        presence.known(),
+        &planned,
+        path_book,
+        current_runtime.as_ref(),
+        Some(&own_endpoint),
+        now,
+    );
     if &route_targets != current_route_targets {
         callbacks.update_settings(&NetworkSettingsPayload {
             local_addresses,

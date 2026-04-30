@@ -473,6 +473,53 @@ pub(crate) fn config_path_from_roots(
     PathBuf::from("nvpn.toml")
 }
 
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub(crate) fn migrate_legacy_mobile_config_file(app_config_dir: &Path) -> Result<()> {
+    if !app_config_dir.is_file() {
+        return Ok(());
+    }
+
+    let parent = app_config_dir.parent().ok_or_else(|| {
+        anyhow!(
+            "mobile app config path has no parent: {}",
+            app_config_dir.display()
+        )
+    })?;
+    let file_name = app_config_dir
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .ok_or_else(|| {
+            anyhow!(
+                "mobile app config path has no file name: {}",
+                app_config_dir.display()
+            )
+        })?;
+    let backup_path = parent.join(format!(
+        "{file_name}.legacy-config-{}.toml",
+        current_unix_timestamp()
+    ));
+    let config_path = app_config_dir.join("config.toml");
+
+    fs::rename(app_config_dir, &backup_path).with_context(|| {
+        format!(
+            "failed to move legacy mobile config {} to {}",
+            app_config_dir.display(),
+            backup_path.display()
+        )
+    })?;
+    fs::create_dir_all(app_config_dir)
+        .with_context(|| format!("failed to create {}", app_config_dir.display()))?;
+    fs::rename(&backup_path, &config_path).with_context(|| {
+        format!(
+            "failed to move legacy mobile config {} to {}",
+            backup_path.display(),
+            config_path.display()
+        )
+    })?;
+
+    Ok(())
+}
+
 #[cfg(any(target_os = "windows", test))]
 pub(crate) fn desktop_config_path_from_roots(
     dirs_config_dir: Option<&Path>,
@@ -546,6 +593,7 @@ pub(crate) fn resolve_backend_config_path<R: tauri::Runtime>(
             .path()
             .app_config_dir()
             .context("failed to resolve mobile app config directory")?;
+        migrate_legacy_mobile_config_file(&app_config_dir)?;
         return Ok(config_path_from_roots(Some(app_config_dir.as_path()), None));
     }
 

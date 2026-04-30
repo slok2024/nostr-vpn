@@ -65,7 +65,7 @@ test('generated iOS Info.plist registers nvpn invite links', async () => {
   assert.match(infoPlist, /<string>nvpn<\/string>/)
 })
 
-test('iOS Release builds enable Tauri custom protocol assets', async () => {
+test('iOS builds enable Tauri custom protocol assets', async () => {
   const [buildScript, cargoManifest] = await Promise.all([
     readFile(iosRustBuildScriptPath, 'utf8'),
     readFile(cargoManifestPath, 'utf8'),
@@ -74,6 +74,11 @@ test('iOS Release builds enable Tauri custom protocol assets', async () => {
   assert.match(cargoManifest, /\[features\][\s\S]*custom-protocol = \["tauri\/custom-protocol"\]/)
   assert.match(
     buildScript,
-    /cargo build -p nostr-vpn-gui --target "\$\{rust_target\}" --release --features custom-protocol/,
+    /cargo_args=\(build -p nostr-vpn-gui --target "\$\{rust_target\}" --features custom-protocol\)/,
   )
+  assert.match(
+    buildScript,
+    /cargo_args\+=\(--release\)/,
+  )
+  assert.match(buildScript, /cargo "\$\{cargo_args\[@\]\}"/)
 })

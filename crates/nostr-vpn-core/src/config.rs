@@ -1147,6 +1147,10 @@ impl AppConfig {
             return;
         }
 
+        if normalize_nostr_pubkey(&self.nostr.public_key).is_ok() {
+            return;
+        }
+
         if let Ok(keys) = Keys::parse(&self.nostr.secret_key) {
             if self.nostr.public_key.trim().is_empty() {
                 self.nostr.public_key = keys
@@ -1363,4 +1367,27 @@ const MAX_SHARED_ROSTER_FUTURE_SECS: u64 = 600;
 
 fn next_shared_roster_updated_at(previous: u64) -> u64 {
     current_unix_timestamp().max(previous.saturating_add(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppConfig, normalize_nostr_pubkey};
+    use crate::config_defaults::generate_nostr_identity;
+
+    #[test]
+    fn ensure_defaults_keeps_existing_public_identity_without_parsing_secret_key() {
+        let (_, public_key) = generate_nostr_identity();
+        let public_key_hex = normalize_nostr_pubkey(&public_key).expect("valid public key");
+        let mut config = AppConfig::default();
+        config.nostr.secret_key = "not-a-secret-key".to_string();
+        config.nostr.public_key = public_key.clone();
+
+        config.ensure_defaults();
+
+        assert_eq!(
+            normalize_nostr_pubkey(&config.nostr.public_key).expect("valid public key"),
+            public_key_hex
+        );
+        assert_eq!(config.nostr.secret_key, "not-a-secret-key");
+    }
 }
