@@ -2239,6 +2239,36 @@
           "type": "string",
           "const": "deep-link:deny-unregister",
           "markdownDescription": "Denies the unregister command without any pre-configured scope."
+        },
+        {
+          "description": "Allow checking for and installing updates from the configured hashtree release.\n#### This default permission set includes:\n\n- `allow-check`\n- `allow-download-and-install`",
+          "type": "string",
+          "const": "hashtree-updater:default",
+          "markdownDescription": "Allow checking for and installing updates from the configured hashtree release.\n#### This default permission set includes:\n\n- `allow-check`\n- `allow-download-and-install`"
+        },
+        {
+          "description": "Enables the check command without any pre-configured scope.",
+          "type": "string",
+          "const": "hashtree-updater:allow-check",
+          "markdownDescription": "Enables the check command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the download_and_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "hashtree-updater:allow-download-and-install",
+          "markdownDescription": "Enables the download_and_install command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check command without any pre-configured scope.",
+          "type": "string",
+          "const": "hashtree-updater:deny-check",
+          "markdownDescription": "Denies the check command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the download_and_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "hashtree-updater:deny-download-and-install",
+          "markdownDescription": "Denies the download_and_install command without any pre-configured scope."
         }
       ]
     },

@@ -17,6 +17,7 @@
     "test:tauri-driver": "node e2e-tauri/run.mjs"
   },
   "dependencies": {
+    "@hashtree/tauri-plugin-updater": "file:../../../hashtree/rust/crates/tauri-plugin-hashtree-updater",
     "@tauri-apps/api": "^2.5.0",
     "@tauri-apps/plugin-autostart": "^2",
     "jsqr": "^1.4.0",

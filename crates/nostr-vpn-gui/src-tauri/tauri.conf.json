@@ -46,6 +46,9 @@
           "appLink": false
         }
       ]
+    },
+    "hashtree-updater": {
+      "reference": "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest"
     }
   },
   "bundle": {

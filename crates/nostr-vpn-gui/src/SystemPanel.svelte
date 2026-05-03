@@ -1,5 +1,13 @@
 <script lang="ts">
   import type { SettingsPatch, UiState } from './lib/types'
+  import {
+    type DownloadEvent,
+    type Update,
+    checkForUpdate,
+    downloadAndInstall,
+    loadPrefs,
+    patchPrefs,
+  } from './lib/updater'
 
   export let state: UiState
   export let cliActionStatus = ''
@@ -17,6 +25,62 @@
   export let onToggleAutostart: (enabled: boolean) => Promise<void>
   export let onUpdateSettings: (patch: SettingsPatch) => Promise<void>
   export let debounce: (key: string, fn: () => Promise<void>, delay?: number) => void
+
+  let updaterPrefs = loadPrefs()
+  let updateStatus:
+    | { kind: 'idle' }
+    | { kind: 'checking' }
+    | { kind: 'available'; update: Update }
+    | { kind: 'upToDate' }
+    | { kind: 'installing'; pct: number | null }
+    | { kind: 'installed'; version: string }
+    | { kind: 'error'; message: string } = { kind: 'idle' }
+
+  function applyPrefs(patch: Parameters<typeof patchPrefs>[0]) {
+    updaterPrefs = patchPrefs(patch)
+  }
+
+  async function manualCheck() {
+    updateStatus = { kind: 'checking' }
+    try {
+      const update = await checkForUpdate()
+      applyPrefs({ lastCheckMs: Date.now() })
+      if (update && update.updateAvailable) {
+        updateStatus = { kind: 'available', update }
+      } else {
+        updateStatus = { kind: 'upToDate' }
+      }
+    } catch (err) {
+      updateStatus = {
+        kind: 'error',
+        message: err instanceof Error ? err.message : String(err),
+      }
+    }
+  }
+
+  async function installUpdate(update: Update) {
+    updateStatus = { kind: 'installing', pct: null }
+    try {
+      let total: number | undefined
+      await downloadAndInstall(update, (event: DownloadEvent) => {
+        if (event.event === 'started') {
+          total = event.data.contentLength
+          updateStatus = { kind: 'installing', pct: total ? 0 : null }
+        } else if (event.event === 'progress' && total) {
+          updateStatus = {
+            kind: 'installing',
+            pct: Math.min(100, Math.round((event.data.downloaded / total) * 100)),
+          }
+        }
+      })
+      updateStatus = { kind: 'installed', version: update.version }
+    } catch (err) {
+      updateStatus = {
+        kind: 'error',
+        message: err instanceof Error ? err.message : String(err),
+      }
+    }
+  }
 </script>
 
 <details class="panel collapsible-panel">
@@ -90,6 +154,52 @@
       </label>
     {/if}
 
+    <div class="updates-section">
+      <div class="panel-kicker">Updates</div>
+      <div class="row settings-action-row">
+        <button class="btn" on:click={manualCheck} disabled={updateStatus.kind === 'checking' || updateStatus.kind === 'installing'}>
+          {updateStatus.kind === 'checking' ? 'Checking…' : 'Check for updates'}
+        </button>
+        {#if updaterPrefs.lastCheckMs > 0}
+          <span class="config-path">Last checked {new Date(updaterPrefs.lastCheckMs).toLocaleString()}</span>
+        {/if}
+      </div>
+      <label class="toggle-row">
+        <input
+          type="checkbox"
+          checked={updaterPrefs.autoCheck}
+          disabled={updaterPrefs.autoInstall}
+          on:change={(event) => applyPrefs({ autoCheck: (event.currentTarget as HTMLInputElement).checked })}
+        />
+        <span>Check for updates automatically</span>
+      </label>
+      <label class="toggle-row">
+        <input
+          type="checkbox"
+          checked={updaterPrefs.autoInstall}
+          on:change={(event) => applyPrefs({ autoInstall: (event.currentTarget as HTMLInputElement).checked })}
+        />
+        <span>Install updates automatically <span class="config-path">(applies on next start)</span></span>
+      </label>
+      {#if updateStatus.kind === 'available'}
+        <div class="row settings-action-row">
+          <span>Version <strong>{updateStatus.update.version}</strong> is available.</span>
+          <button class="btn" on:click={() => installUpdate(updateStatus.update)}>Install now</button>
+        </div>
+        {#if updateStatus.update.notes}
+          <div class="config-path">{updateStatus.update.notes}</div>
+        {/if}
+      {:else if updateStatus.kind === 'upToDate'}
+        <div class="config-path">You're up to date.</div>
+      {:else if updateStatus.kind === 'installing'}
+        <div class="config-path">Installing{updateStatus.pct !== null ? ` — ${updateStatus.pct}%` : '…'}</div>
+      {:else if updateStatus.kind === 'installed'}
+        <div class="config-path">Installed {updateStatus.version}. Restart Nostr VPN to apply.</div>
+      {:else if updateStatus.kind === 'error'}
+        <div class="config-path" style="color:#ff8a8a">{updateStatus.message}</div>
+      {/if}
+    </div>
+
     <div class="field-grid">
       <label>
         <span>MagicDNS Suffix (Optional)</span>
@@ -138,3 +248,14 @@
     </div>
   </div>
 </details>
+
+<style>
+  .updates-section {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+</style>

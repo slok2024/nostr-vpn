@@ -30,6 +30,7 @@ tracing-subscriber.workspace = true
 nostr-sdk.workspace = true
 tauri = { version = "2.6", features = ["tray-icon", "image-png", "tracing"] }
 tauri-plugin-deep-link = "2"
+tauri-plugin-hashtree-updater = { path = "../../../../hashtree/rust/crates/tauri-plugin-hashtree-updater" }
 
 nostr-vpn-core = { path = "../../nostr-vpn-core" }
 

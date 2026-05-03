@@ -37,6 +37,7 @@
   import SavedNetworksPanel from './SavedNetworksPanel.svelte'
   import ServiceActionPanel from './ServiceActionPanel.svelte'
   import SystemPanel from './SystemPanel.svelte'
+  import UpdateBanner from './UpdateBanner.svelte'
   import {
     addAdmin,
     addNetwork,
@@ -1029,6 +1030,8 @@
   <header class="window-chrome" data-tauri-drag-region>
     <div class="window-title" data-testid="window-title">Nostr VPN</div>
   </header>
+
+  <UpdateBanner />
 
   <HeroStatusPanel
     {state}

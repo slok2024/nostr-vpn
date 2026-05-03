@@ -1413,6 +1413,8 @@ pub fn run() {
     } else {
         builder.plugin(tauri_plugin_deep_link::init())
     };
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_hashtree_updater::init());
     let app = builder
         .on_page_load(|webview, payload| {
             #[cfg(not(target_os = "ios"))]

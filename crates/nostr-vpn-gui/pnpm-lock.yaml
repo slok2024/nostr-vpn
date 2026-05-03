@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@hashtree/tauri-plugin-updater':
+        specifier: file:../../../hashtree/rust/crates/tauri-plugin-hashtree-updater
+        version: file:../../../hashtree/rust/crates/tauri-plugin-hashtree-updater(@tauri-apps/api@2.10.1)
       '@tauri-apps/api':
         specifier: ^2.5.0
         version: 2.10.1
@@ -204,6 +207,11 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@hashtree/tauri-plugin-updater@file:../../../hashtree/rust/crates/tauri-plugin-hashtree-updater':
+    resolution: {directory: ../../../hashtree/rust/crates/tauri-plugin-hashtree-updater, type: directory}
+    peerDependencies:
+      '@tauri-apps/api': ^2
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -829,6 +837,10 @@ snapshots:
 
   '@esbuild/win32-x64@0.25.12':
     optional: true
+
+  '@hashtree/tauri-plugin-updater@file:../../../hashtree/rust/crates/tauri-plugin-hashtree-updater(@tauri-apps/api@2.10.1)':
+    dependencies:
+      '@tauri-apps/api': 2.10.1
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
