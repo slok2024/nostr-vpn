@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.3.18 - 2026-05-04
+
+Changes since `0.3.17` earlier on 2026-05-04.
+
+### Changed
+
+- macOS release artifacts: now ship a signed + notarized + stapled `.dmg` (drag-to-Applications disk image) for first-install users, alongside the `.app.tar.gz` consumed by the in-app hashtree updater. Dropped the redundant `.zip` since `.dmg` covers the human-download case more idiomatically and `.app.tar.gz` covers the updater.
+- SystemPanel "Updates" status messages (`You're up to date.`, `Installed …`, available-version line, install progress, errors) now render directly under the Check button — the spot the user just clicked — instead of below the auto-check / auto-install toggles. Up-to-date and Installed states render in green.
+
+### Fixed
+
+- "You're up to date." was rendering below the toggle rows in muted gray, making it look like unrelated body text. It now sits beside the Check button in the success color used elsewhere in the panel.
+
 ## 0.3.17 - 2026-05-04
 
 Changes since `0.3.16` earlier on 2026-05-04.

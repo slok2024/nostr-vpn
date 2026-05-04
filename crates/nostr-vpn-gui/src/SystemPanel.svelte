@@ -167,11 +167,29 @@
         <button class="btn" on:click={manualCheck} disabled={updateStatus.kind === 'checking' || updateStatus.kind === 'installing'}>
           {updateStatus.kind === 'checking' ? 'Checking…' : 'Check for updates'}
         </button>
-        <div class="config-path last-checked-line">
-          {updaterPrefs.lastCheckMs > 0
-            ? `Last checked ${new Date(updaterPrefs.lastCheckMs).toLocaleString()}`
-            : ''}
-        </div>
+        {#if updateStatus.kind === 'available'}
+          <div class="update-status">
+            Version <strong>{updateStatus.update.version}</strong> is available.
+            <button class="btn install-now-btn" on:click={() => installUpdate(updateStatus.update)}>Install now</button>
+          </div>
+          {#if updateStatus.update.notes}
+            <div class="config-path">{updateStatus.update.notes}</div>
+          {/if}
+        {:else if updateStatus.kind === 'upToDate'}
+          <div class="update-status ok-text">You're up to date.</div>
+        {:else if updateStatus.kind === 'installing'}
+          <div class="update-status">Installing{updateStatus.pct !== null ? ` — ${updateStatus.pct}%` : '…'}</div>
+        {:else if updateStatus.kind === 'installed'}
+          <div class="update-status ok-text">Installed {updateStatus.version}. Restart Nostr VPN to apply.</div>
+        {:else if updateStatus.kind === 'error'}
+          <div class="update-status update-status-error">{updateStatus.message}</div>
+        {:else}
+          <div class="config-path last-checked-line">
+            {updaterPrefs.lastCheckMs > 0
+              ? `Last checked ${new Date(updaterPrefs.lastCheckMs).toLocaleString()}`
+              : ''}
+          </div>
+        {/if}
       </div>
       <label class="toggle-row">
         <input
@@ -190,23 +208,6 @@
         />
         <span>Install updates automatically <span class="config-path">(applies on next start)</span></span>
       </label>
-      {#if updateStatus.kind === 'available'}
-        <div class="row settings-action-row">
-          <span>Version <strong>{updateStatus.update.version}</strong> is available.</span>
-          <button class="btn" on:click={() => installUpdate(updateStatus.update)}>Install now</button>
-        </div>
-        {#if updateStatus.update.notes}
-          <div class="config-path">{updateStatus.update.notes}</div>
-        {/if}
-      {:else if updateStatus.kind === 'upToDate'}
-        <div class="config-path">You're up to date.</div>
-      {:else if updateStatus.kind === 'installing'}
-        <div class="config-path">Installing{updateStatus.pct !== null ? ` — ${updateStatus.pct}%` : '…'}</div>
-      {:else if updateStatus.kind === 'installed'}
-        <div class="config-path">Installed {updateStatus.version}. Restart Nostr VPN to apply.</div>
-      {:else if updateStatus.kind === 'error'}
-        <div class="config-path" style="color:#ff8a8a">{updateStatus.message}</div>
-      {/if}
     </div>
 
     <div class="field-grid">
@@ -270,5 +271,19 @@
   .last-checked-line {
     margin-top: 0.25rem;
     min-height: 1em;
+  }
+  .update-status {
+    margin-top: 0.4rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    font-size: 0.9rem;
+  }
+  .update-status-error {
+    color: #ff8a8a;
+  }
+  .install-now-btn {
+    margin-left: auto;
   }
 </style>

@@ -461,6 +461,34 @@ function notarytoolAuthArgs(env, mode) {
   ]
 }
 
+function submitNotarization({ artifactPath, authArgs, label, dryRun }) {
+  const submitOutput = run(
+    'xcrun',
+    [
+      'notarytool',
+      'submit',
+      artifactPath,
+      ...authArgs,
+      '--wait',
+      '--output-format',
+      'json',
+    ],
+    { capture: true, dryRun },
+  )
+
+  if (!dryRun) {
+    const submission = JSON.parse(submitOutput)
+    if (submission.status !== 'Accepted') {
+      if (submission.id) {
+        try {
+          run('xcrun', ['notarytool', 'log', submission.id, ...authArgs], { dryRun })
+        } catch {}
+      }
+      throw new Error(`${label} notarization status was '${submission.status}' (expected 'Accepted').`)
+    }
+  }
+}
+
 function notarizeLocalMacosApp({ appPath, env, mode, dryRun }) {
   const tempRoot = dryRun ? join(os.tmpdir(), 'nvpn-local-notary-dry-run') : mkdtempSync(join(os.tmpdir(), 'nvpn-local-notary-'))
   const notaryZipPath = join(tempRoot, 'nvpn-notarize.zip')
@@ -468,36 +496,7 @@ function notarizeLocalMacosApp({ appPath, env, mode, dryRun }) {
 
   try {
     run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', appPath, notaryZipPath], { dryRun })
-    const submitOutput = run(
-      'xcrun',
-      [
-        'notarytool',
-        'submit',
-        notaryZipPath,
-        ...authArgs,
-        '--wait',
-        '--output-format',
-        'json',
-      ],
-      { capture: true, dryRun },
-    )
-
-    if (!dryRun) {
-      const submission = JSON.parse(submitOutput)
-      if (submission.status !== 'Accepted') {
-        if (submission.id) {
-          try {
-            run(
-              'xcrun',
-              ['notarytool', 'log', submission.id, ...authArgs],
-              { dryRun },
-            )
-          } catch {}
-        }
-        throw new Error(`Notarization status was '${submission.status}' (expected 'Accepted').`)
-      }
-    }
-
+    submitNotarization({ artifactPath: notaryZipPath, authArgs, label: 'macOS app', dryRun })
     run('xcrun', ['stapler', 'staple', appPath], { dryRun })
     run('xcrun', ['stapler', 'validate', appPath], { dryRun })
   } finally {
@@ -505,32 +504,45 @@ function notarizeLocalMacosApp({ appPath, env, mode, dryRun }) {
       rmSync(tempRoot, { recursive: true, force: true })
     }
   }
+
+  return authArgs
 }
 
-function verifyPackagedMacosArtifact({ zipPath, signed, notarized, dryRun }) {
-  const verifyDir = dryRun ? join(os.tmpdir(), 'nvpn-local-verify-dry-run') : mkdtempSync(join(os.tmpdir(), 'nvpn-local-verify-'))
+function createDmgFromApp({ appPath, dmgPath, volumeName, dryRun }) {
+  const stageDir = dryRun
+    ? join(os.tmpdir(), 'nvpn-dmg-dry-run')
+    : mkdtempSync(join(os.tmpdir(), 'nvpn-dmg-'))
 
   try {
-    run('ditto', ['-x', '-k', zipPath, verifyDir], { dryRun })
-    const appPath = findFirstFile(verifyDir, (entry) => entry.endsWith('.app'))
-    if (!dryRun && !appPath) {
-      throw new Error('Packaged zip did not contain a macOS .app bundle.')
+    if (!dryRun) {
+      rmSync(dmgPath, { force: true })
     }
-
-    if (signed) {
-      run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath || '<macos-app-bundle>'], {
-        dryRun,
-      })
-    }
-    if (notarized) {
-      run('spctl', ['--assess', '--type', 'execute', '--verbose=4', appPath || '<macos-app-bundle>'], {
-        dryRun,
-      })
-    }
+    run('ditto', [appPath, join(stageDir, basename(appPath))], { dryRun })
+    run('ln', ['-s', '/Applications', join(stageDir, 'Applications')], { dryRun })
+    run(
+      'hdiutil',
+      ['create', '-volname', volumeName, '-srcfolder', stageDir, '-fs', 'HFS+', '-format', 'UDZO', '-ov', dmgPath],
+      { dryRun },
+    )
   } finally {
     if (!dryRun) {
-      rmSync(verifyDir, { recursive: true, force: true })
+      rmSync(stageDir, { recursive: true, force: true })
     }
+  }
+}
+
+function notarizeAndStapleDmg({ dmgPath, authArgs, dryRun }) {
+  submitNotarization({ artifactPath: dmgPath, authArgs, label: 'macOS DMG', dryRun })
+  run('xcrun', ['stapler', 'staple', dmgPath], { dryRun })
+  run('xcrun', ['stapler', 'validate', dmgPath], { dryRun })
+}
+
+function verifyPackagedMacosArtifact({ appPath, signed, notarized, dryRun }) {
+  if (signed) {
+    run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath], { dryRun })
+  }
+  if (notarized) {
+    run('spctl', ['--assess', '--type', 'execute', '--verbose=4', appPath], { dryRun })
   }
 }
 
@@ -855,18 +867,18 @@ function buildMacosArtifacts({ env, pnpmInvocation, tag, dryRun, builtLines, all
   })
   builtLines.push('Built Apple Silicon CLI locally.')
 
-  const macosZipPath = join(distDir, `nostr-vpn-${tag}-macos-arm64.zip`)
   const macosAppTarPath = join(distDir, `nostr-vpn-${tag}-macos-arm64.app.tar.gz`)
+  const macosDmgPath = join(distDir, `nostr-vpn-${tag}-macos-arm64.dmg`)
   if (!dryRun) {
-    rmSync(macosZipPath, { force: true })
     rmSync(macosAppTarPath, { force: true })
+    rmSync(macosDmgPath, { force: true })
   }
 
   const capabilities = detectLocalMacosReleaseCapabilities(env)
   if (!capabilities.signingReady && !allowUnsignedMacos) {
     const missing = capabilities.missingSigning.join(', ')
     throw new SkipStepError(
-      `Skipping macOS desktop app because signing inputs are missing (${missing}). Pass --allow-unsigned-macos or set NVPN_ALLOW_UNSIGNED_MACOS=1 to force an unsigned zip.`,
+      `Skipping macOS desktop app because signing inputs are missing (${missing}). Pass --allow-unsigned-macos or set NVPN_ALLOW_UNSIGNED_MACOS=1 to force an unsigned build.`,
     )
   }
 
@@ -887,6 +899,7 @@ function buildMacosArtifacts({ env, pnpmInvocation, tag, dryRun, builtLines, all
 
   let signed = false
   let notarized = false
+  let notaryAuthArgs = null
   let signingContext = null
   try {
     if (capabilities.signingReady) {
@@ -900,7 +913,12 @@ function buildMacosArtifacts({ env, pnpmInvocation, tag, dryRun, builtLines, all
       signed = true
 
       if (capabilities.notarizationReady) {
-        notarizeLocalMacosApp({ appPath: appPathForZip, env, mode: capabilities.mode, dryRun })
+        notaryAuthArgs = notarizeLocalMacosApp({
+          appPath: appPathForZip,
+          env,
+          mode: capabilities.mode,
+          dryRun,
+        })
         notarized = true
       }
     }
@@ -908,19 +926,20 @@ function buildMacosArtifacts({ env, pnpmInvocation, tag, dryRun, builtLines, all
     signingContext?.cleanup()
   }
 
-  run(
-    'ditto',
-    ['-c', '-k', '--sequesterRsrc', '--keepParent', appPathForZip, macosZipPath],
-    { dryRun },
-  )
-
   // hashtree-updater installs AppBundle assets by gunzipping + untarring,
   // so the .app.tar.gz must be a real tar.gz (ditto -c -k makes a zip).
   if (appPath) {
     run('tar', ['-czf', macosAppTarPath, '-C', dirname(appPath), basename(appPath)], { dryRun })
   }
 
-  verifyPackagedMacosArtifact({ zipPath: macosZipPath, signed, notarized, dryRun })
+  if (appPath) {
+    createDmgFromApp({ appPath, dmgPath: macosDmgPath, volumeName: 'Nostr VPN', dryRun })
+    if (notarized && notaryAuthArgs) {
+      notarizeAndStapleDmg({ dmgPath: macosDmgPath, authArgs: notaryAuthArgs, dryRun })
+    }
+  }
+
+  verifyPackagedMacosArtifact({ appPath: appPathForZip, signed, notarized, dryRun })
 
   if (notarized) {
     builtLines.push('Built signed and notarized Apple Silicon macOS app locally.')

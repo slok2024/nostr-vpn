@@ -110,8 +110,8 @@ export function autoDetectWindowsVmName(prlctlListOutput) {
 }
 
 export function describeAsset(name) {
-  if (/^nostr-vpn-.*-macos-arm64\.zip$/.test(name)) {
-    return 'macOS Apple Silicon app'
+  if (/^nostr-vpn-.*-macos-arm64\.dmg$/.test(name)) {
+    return 'macOS Apple Silicon disk image'
   }
   if (/^nostr-vpn-.*-macos-arm64\.app\.tar\.gz$/.test(name)) {
     return 'macOS Apple Silicon updater archive'
