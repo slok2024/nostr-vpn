@@ -52,9 +52,9 @@ const macosNotarizationP12RequiredEnv = [
   'MACOS_NOTARIZE_TEAM_ID',
 ]
 const versionlessCliAssets = new Map([
-  ['nvpn-aarch64-apple-darwin.tar.gz', 'nvpn-v{tag}-aarch64-apple-darwin.tar.gz'],
-  ['nvpn-x86_64-unknown-linux-musl.tar.gz', 'nvpn-v{tag}-x86_64-unknown-linux-musl.tar.gz'],
-  ['nvpn-aarch64-unknown-linux-musl.tar.gz', 'nvpn-v{tag}-aarch64-unknown-linux-musl.tar.gz'],
+  ['nvpn-aarch64-apple-darwin.tar.gz', 'nvpn-{tag}-aarch64-apple-darwin.tar.gz'],
+  ['nvpn-x86_64-unknown-linux-musl.tar.gz', 'nvpn-{tag}-x86_64-unknown-linux-musl.tar.gz'],
+  ['nvpn-aarch64-unknown-linux-musl.tar.gz', 'nvpn-{tag}-aarch64-unknown-linux-musl.tar.gz'],
 ])
 
 class SkipStepError extends Error {}
