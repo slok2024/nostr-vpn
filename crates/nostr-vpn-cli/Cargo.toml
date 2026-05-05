@@ -45,5 +45,10 @@ windows-service = "0.8"
 name = "nvpn"
 path = "src/main.rs"
 
+[[bin]]
+name = "nvpn-fips-probe"
+path = "src/bin/nvpn-fips-probe.rs"
+required-features = ["embedded-fips"]
+
 [dev-dependencies]
 nostr-sdk.workspace = true

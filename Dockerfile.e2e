@@ -1,8 +1,11 @@
+# syntax=docker/dockerfile:1.4
+
 FROM rust:1.93-bookworm AS builder
-WORKDIR /app
+WORKDIR /app/nostr-vpn
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY --from=fips . /app/fips
 
 RUN cargo build --release -p nostr-vpn-cli -p nostr-vpn-relay
 
@@ -11,9 +14,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates iproute2 iptables iputils-ping procps \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/nvpn /usr/local/bin/nvpn
-COPY --from=builder /app/target/release/nostr-vpn-relay /usr/local/bin/nostr-vpn-relay
-COPY --from=builder /app/target/release/nvpn-reflector /usr/local/bin/nvpn-reflector
-COPY --from=builder /app/target/release/nvpn-udp-relay /usr/local/bin/nvpn-udp-relay
+COPY --from=builder /app/nostr-vpn/target/release/nvpn /usr/local/bin/nvpn
+COPY --from=builder /app/nostr-vpn/target/release/nvpn-fips-probe /usr/local/bin/nvpn-fips-probe
+COPY --from=builder /app/nostr-vpn/target/release/nostr-vpn-relay /usr/local/bin/nostr-vpn-relay
+COPY --from=builder /app/nostr-vpn/target/release/nvpn-reflector /usr/local/bin/nvpn-reflector
+COPY --from=builder /app/nostr-vpn/target/release/nvpn-udp-relay /usr/local/bin/nvpn-udp-relay
 
 ENV RUST_LOG=info

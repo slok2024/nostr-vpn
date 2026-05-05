@@ -1,0 +1,29 @@
+services:
+  node-a:
+    build:
+      context: .
+      dockerfile: Dockerfile.e2e
+      additional_contexts:
+        fips: ../fips
+    entrypoint: ["sleep", "infinity"]
+    networks:
+      fips_e2e:
+        ipv4_address: 10.204.0.10
+
+  node-b:
+    build:
+      context: .
+      dockerfile: Dockerfile.e2e
+      additional_contexts:
+        fips: ../fips
+    entrypoint: ["sleep", "infinity"]
+    networks:
+      fips_e2e:
+        ipv4_address: 10.204.0.11
+
+networks:
+  fips_e2e:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.204.0.0/24

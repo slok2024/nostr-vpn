@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.e2e
+      additional_contexts:
+        fips: ../fips
     command:
       - sh
       - -lc
@@ -17,6 +19,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.e2e
+      additional_contexts:
+        fips: ../fips
     environment:
       NVPN_RELAY_SECRET_KEY: "1111111111111111111111111111111111111111111111111111111111111111"
     command:
@@ -40,6 +44,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.e2e
+      additional_contexts:
+        fips: ../fips
     environment:
       NVPN_RELAY_SECRET_KEY: "3333333333333333333333333333333333333333333333333333333333333333"
     command:
@@ -64,6 +70,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.e2e
+      additional_contexts:
+        fips: ../fips
     entrypoint: ["sleep", "infinity"]
     cap_add:
       - NET_ADMIN
@@ -81,6 +89,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.e2e
+      additional_contexts:
+        fips: ../fips
     entrypoint: ["sleep", "infinity"]
     cap_add:
       - NET_ADMIN

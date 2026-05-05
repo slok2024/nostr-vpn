@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.e2e
+      additional_contexts:
+        fips: ../fips
     command: ["nostr-vpn-relay", "--bind", "0.0.0.0:8080"]
     networks:
       e2e:
@@ -12,6 +14,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.e2e
+      additional_contexts:
+        fips: ../fips
     entrypoint: ["sleep", "infinity"]
     cap_add:
       - NET_ADMIN
@@ -27,6 +31,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.e2e
+      additional_contexts:
+        fips: ../fips
     entrypoint: ["sleep", "infinity"]
     cap_add:
       - NET_ADMIN
@@ -42,6 +48,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.e2e
+      additional_contexts:
+        fips: ../fips
     entrypoint: ["sleep", "infinity"]
     cap_add:
       - NET_ADMIN
