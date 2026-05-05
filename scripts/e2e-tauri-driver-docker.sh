@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+FIPS_DIR="$(cd "$ROOT_DIR/../fips" && pwd)"
 IMAGE_NAME="nostr-vpn-tauri-e2e"
 
 cd "$ROOT_DIR"
@@ -16,6 +17,7 @@ docker run --rm \
   --device=/dev/net/tun \
   -e TAURI_E2E_SCENARIO \
   -v "$ROOT_DIR:/work" \
+  -v "$FIPS_DIR:/fips:ro" \
   -w /work \
   "$IMAGE_NAME" \
   bash -c "set -euo pipefail; \

@@ -127,7 +127,7 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
         )?;
         let runtime = crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await?;
         println!(
-            "connect: FIPS private mesh on {}; WireGuard exit capability remains {}",
+            "connect: FIPS private mesh on {}; exit capability remains {}",
             runtime.iface(),
             app.exit_data_plane
         );
@@ -274,6 +274,9 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                         eprintln!("fips: peer ping failed: {error}");
                     }
                     let _ = runtime.drain_events();
+                    if let Err(error) = runtime.refresh_peer_dependent_routes().await {
+                        eprintln!("fips: peer route refresh failed: {error}");
+                    }
                     maybe_log_fips_mesh_count(
                         &app,
                         own_pubkey.as_deref(),
@@ -795,7 +798,7 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
         )?;
         let runtime = crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await?;
         eprintln!(
-            "daemon: FIPS private mesh on {}; WireGuard exit capability remains {}",
+            "daemon: FIPS private mesh on {}; exit capability remains {}",
             runtime.iface(),
             app.exit_data_plane
         );
@@ -1468,7 +1471,9 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                 &network_id,
                                 &relays,
                                 own_pubkey.as_deref(),
-                            ) {
+                            )
+                            .await
+                            {
                                 session_status =
                                     format!("Roster applied, but FIPS reload failed ({error})");
                             }
@@ -1478,9 +1483,14 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                             session_status = format!("FIPS event handling failed ({error})");
                         }
                     }
+                    if let Err(error) = runtime.refresh_peer_dependent_routes().await {
+                        session_status = format!("FIPS route refresh failed ({error})");
+                    }
                 }
 
                 if let Some(request) = take_daemon_control_request(&config_path) {
+                    let publish_fips_roster_after_control =
+                        matches!(request, DaemonControlRequest::Reload | DaemonControlRequest::Resume);
                     let control_result = match request {
                         DaemonControlRequest::Stop => break,
                         DaemonControlRequest::Pause => {
@@ -1774,6 +1784,29 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     };
                     let _ = write_daemon_control_result(&config_path, request, control_result);
                     #[cfg(feature = "embedded-fips")]
+                    let pre_sync_fips_roster_recipients = if publish_fips_roster_after_control {
+                        fips_tunnel_runtime
+                            .as_ref()
+                            .map(|runtime| runtime.peer_pubkeys())
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+                    #[cfg(feature = "embedded-fips")]
+                    if publish_fips_roster_after_control
+                        && let Some(runtime) = fips_tunnel_runtime.as_ref()
+                        && let Err(error) = publish_fips_active_network_roster_to(
+                            runtime,
+                            &app,
+                            &pre_sync_fips_roster_recipients,
+                        )
+                        .await
+                    {
+                        eprintln!(
+                            "fips: roster publish failed before peer-set refresh: {error}"
+                        );
+                    }
+                    #[cfg(feature = "embedded-fips")]
                     if let Err(error) = sync_fips_private_runtime(
                         &mut fips_tunnel_runtime,
                         &app,
@@ -1787,6 +1820,13 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     .await
                     {
                         session_status = format!("FIPS private mesh update failed ({error})");
+                    }
+                    #[cfg(feature = "embedded-fips")]
+                    if publish_fips_roster_after_control
+                        && let Some(runtime) = fips_tunnel_runtime.as_ref()
+                        && let Err(error) = publish_fips_active_network_roster(runtime, &app).await
+                    {
+                        eprintln!("fips: roster publish failed after control request: {error}");
                     }
                     let _ = persist_daemon_runtime_state(
                         &state_file,
@@ -2376,7 +2416,7 @@ pub(crate) fn build_daemon_runtime_state(
                 tx_bytes: status.map(|status| status.tx_bytes).unwrap_or(0),
                 rx_bytes: status.map(|status| status.rx_bytes).unwrap_or(0),
                 public_key: String::new(),
-                advertised_routes: Vec::new(),
+                advertised_routes: fips_peer_advertised_routes(app, participant),
                 presence_timestamp: last_seen_at.unwrap_or(0),
                 last_signal_seen_at: last_seen_at,
                 reachable,

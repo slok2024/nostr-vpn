@@ -388,7 +388,7 @@ pub(crate) fn linux_bypass_route_specs(
     tunnel_iface: &str,
     original_default_route: Option<&str>,
 ) -> Result<Vec<LinuxEndpointBypassRoute>> {
-    let mut hosts = peers
+    let hosts = peers
         .iter()
         .filter_map(|peer| match crate::endpoint_host_ip(&peer.endpoint) {
             Some(IpAddr::V4(ip)) => Some(ip),
@@ -396,6 +396,16 @@ pub(crate) fn linux_bypass_route_specs(
         })
         .chain(control_plane_bypass_ipv4_hosts(app))
         .collect::<Vec<_>>();
+
+    linux_bypass_route_specs_for_hosts(hosts, tunnel_iface, original_default_route)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn linux_bypass_route_specs_for_hosts(
+    mut hosts: Vec<Ipv4Addr>,
+    tunnel_iface: &str,
+    original_default_route: Option<&str>,
+) -> Result<Vec<LinuxEndpointBypassRoute>> {
     hosts.sort_unstable();
     hosts.dedup();
 

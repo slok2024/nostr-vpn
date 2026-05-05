@@ -52,6 +52,34 @@ const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 
 const processes = []
 
+function assertFipsMeshStatus(status, label) {
+  if (status.private_data_plane !== 'fips') {
+    throw new Error(`${label} expected private_data_plane=fips, got: ${status.private_data_plane}`)
+  }
+
+  const daemonState = status?.daemon?.state
+  if (!daemonState || daemonState.connected_peer_count < 1) {
+    throw new Error(
+      `${label} expected connected_peer_count >= 1, got: ${JSON.stringify(daemonState)}`,
+    )
+  }
+
+  const reachablePeer = (daemonState.peers || []).find((entry) => entry.reachable)
+  if (!reachablePeer) {
+    throw new Error(
+      `${label} expected at least one reachable FIPS peer in daemon state: ${JSON.stringify(
+        daemonState,
+      )}`,
+    )
+  }
+
+  if (reachablePeer.endpoint !== 'fips' || reachablePeer.runtime_endpoint !== 'fips') {
+    throw new Error(
+      `${label} expected reachable peer endpoint=fips, got: ${JSON.stringify(reachablePeer)}`,
+    )
+  }
+}
+
 async function main() {
   assertExecutable(NVPN_BIN)
   assertExecutable(RELAY_BIN)
@@ -260,20 +288,14 @@ async function main() {
       { cwd: ROOT_DIR, timeoutMs: 30_000 },
     )
     const guiStatus = JSON.parse(extractJsonDocument(guiStatusOutput.stdout))
-    const daemonState = guiStatus?.daemon?.state
-    if (!daemonState || daemonState.connected_peer_count < 1) {
-      throw new Error(
-        `expected gui daemon connected_peer_count >= 1, got: ${JSON.stringify(daemonState)}`,
-      )
-    }
-    const reachablePeer = (daemonState.peers || []).find((entry) => entry.reachable)
-    if (!reachablePeer) {
-      throw new Error(
-        `expected at least one reachable tunnel peer in daemon state: ${JSON.stringify(
-          daemonState,
-        )}`,
-      )
-    }
+    assertFipsMeshStatus(guiStatus, 'gui')
+
+    const peerStatusOutput = await runChecked(
+      NVPN_BIN,
+      ['status', '--json', '--discover-secs', '0', '--config', peerConfigPath],
+      { cwd: ROOT_DIR, timeoutMs: 30_000 },
+    )
+    assertFipsMeshStatus(JSON.parse(extractJsonDocument(peerStatusOutput.stdout)), 'peer')
 
     await stopManaged(peer, 'SIGINT')
     await waitForSelectorText(
@@ -287,7 +309,7 @@ async function main() {
 
     await captureScreenshot(DRIVER_BASE, sessionId, SCREENSHOT_PATH)
     log(`screenshot written: ${SCREENSHOT_PATH}`)
-    log('tauri-driver e2e passed: GUI reached mesh 1/1 with real peer connect + wireguard handshake')
+    log('tauri-driver e2e passed: GUI reached mesh 1/1 with real peer connect over FIPS')
   } catch (error) {
     const failureScreenshotPath = SCREENSHOT_PATH.replace(/\.png$/i, '-failure.png')
 

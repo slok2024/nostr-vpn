@@ -263,6 +263,40 @@ fn apply_admin_signed_shared_roster_ignores_unknown_signer() {
 }
 
 #[test]
+fn apply_admin_signed_shared_roster_clears_data_peers_when_own_key_is_removed() {
+    let own = Keys::generate();
+    let current_admin = Keys::generate();
+    let other_member = Keys::generate();
+    let own_hex = own.public_key().to_hex();
+    let current_admin_hex = current_admin.public_key().to_hex();
+    let other_member_hex = other_member.public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    config.nostr.secret_key = own.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex.clone();
+    config.networks[0].network_id = "mesh-home".to_string();
+    config.networks[0].admins = vec![current_admin_hex.clone()];
+    config.networks[0].participants = vec![current_admin_hex.clone(), other_member_hex.clone()];
+    config.ensure_defaults();
+
+    let changed = config
+        .apply_admin_signed_shared_roster(
+            "mesh-home",
+            "Home",
+            vec![current_admin_hex.clone(), other_member_hex],
+            vec![current_admin_hex.clone()],
+            std::collections::HashMap::new(),
+            1_726_000_000,
+            &current_admin_hex,
+        )
+        .expect("apply removal roster");
+
+    assert!(changed);
+    assert!(config.networks[0].participants.is_empty());
+    assert_eq!(config.networks[0].admins, vec![current_admin_hex]);
+}
+
+#[test]
 fn shared_network_roster_includes_network_aliases() {
     let own = Keys::generate();
     let peer = Keys::generate();

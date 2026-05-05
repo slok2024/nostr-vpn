@@ -8,7 +8,6 @@ COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.exit-nod
 RELAY_URL="ws://198.51.100.2:8080"
 REFLECTOR_ADDR="198.51.100.3:3478"
 CONFIG_PATH="/root/.config/nvpn/config.toml"
-EXIT_PUBLIC_IP="198.51.100.10"
 PUBLIC_INTERNET_TARGET="${NVPN_EXIT_NODE_E2E_PUBLIC_IP:-198.51.100.100}"
 
 cleanup() {
@@ -81,18 +80,6 @@ nostr_pubkey_from_config() {
       }
     ' '$CONFIG_PATH'
   " | tr -d '\r\"'
-}
-
-peer_tunnel_ip_from_status() {
-  grep -o '"tunnel_ip":"10\.44\.[0-9]\+\.[0-9]\+/32"' | tail -n1 | cut -d '"' -f4 | cut -d/ -f1 || true
-}
-
-local_tunnel_ip_from_status() {
-  grep -o '"tunnel_ip":"10\.44\.[0-9]\+\.[0-9]\+/32"' | head -n1 | cut -d '"' -f4 | cut -d/ -f1 || true
-}
-
-peer_announced_endpoint_from_status() {
-  grep -o '"endpoint":"[^"]*"' | tail -n1 | cut -d '"' -f4 || true
 }
 
 wait_for_service() {
@@ -181,16 +168,20 @@ for _ in $(seq 1 80); do
   BOB_STATUS="$("${COMPOSE[@]}" exec -T node-b nvpn status --json --discover-secs 0 | tr -d '\r')"
   ALICE_COMPACT="$(printf '%s' "$ALICE_STATUS" | compact_json)"
   BOB_COMPACT="$(printf '%s' "$BOB_STATUS" | compact_json)"
-  ALICE_ANNOUNCED_ENDPOINT="$(printf '%s' "$ALICE_COMPACT" | peer_announced_endpoint_from_status)"
-  ALICE_TUNNEL_IP="$(printf '%s' "$ALICE_COMPACT" | local_tunnel_ip_from_status)"
-  BOB_TUNNEL_IP="$(printf '%s' "$BOB_COMPACT" | local_tunnel_ip_from_status)"
+  ALICE_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-a nvpn ip | tr -d '\r')"
+  BOB_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-b nvpn ip | tr -d '\r')"
 
   if grep -q '"status_source":"daemon"' <<<"$ALICE_COMPACT" \
     && grep -q '"status_source":"daemon"' <<<"$BOB_COMPACT" \
     && grep -q '"running":true' <<<"$ALICE_COMPACT" \
     && grep -q '"running":true' <<<"$BOB_COMPACT" \
+    && grep -q '"private_data_plane":"fips"' <<<"$ALICE_COMPACT" \
+    && grep -q '"private_data_plane":"fips"' <<<"$BOB_COMPACT" \
+    && grep -q '"mesh_ready":true' <<<"$ALICE_COMPACT" \
+    && grep -q '"mesh_ready":true' <<<"$BOB_COMPACT" \
+    && grep -q '"endpoint":"fips"' <<<"$ALICE_COMPACT" \
+    && grep -q '"endpoint":"fips"' <<<"$BOB_COMPACT" \
     && grep -q '"effective_advertised_routes":\["0.0.0.0/0","::/0"\]' <<<"$ALICE_COMPACT" \
-    && [[ "$ALICE_ANNOUNCED_ENDPOINT" == "198.51.100.11:51820" ]] \
     && [[ -n "$ALICE_TUNNEL_IP" ]] \
     && [[ -n "$BOB_TUNNEL_IP" ]]; then
     break
@@ -207,24 +198,21 @@ grep -q '"status_source":"daemon"' <<<"$ALICE_COMPACT"
 grep -q '"status_source":"daemon"' <<<"$BOB_COMPACT"
 grep -q '"running":true' <<<"$ALICE_COMPACT"
 grep -q '"running":true' <<<"$BOB_COMPACT"
+grep -q '"private_data_plane":"fips"' <<<"$ALICE_COMPACT"
+grep -q '"private_data_plane":"fips"' <<<"$BOB_COMPACT"
+grep -q '"mesh_ready":true' <<<"$ALICE_COMPACT"
+grep -q '"mesh_ready":true' <<<"$BOB_COMPACT"
+grep -q '"endpoint":"fips"' <<<"$ALICE_COMPACT"
+grep -q '"endpoint":"fips"' <<<"$BOB_COMPACT"
 grep -q '"effective_advertised_routes":\["0.0.0.0/0","::/0"\]' <<<"$ALICE_COMPACT"
 
-ALICE_TUNNEL_IP="$(printf '%s' "$ALICE_COMPACT" | local_tunnel_ip_from_status)"
-BOB_TUNNEL_IP="$(printf '%s' "$BOB_COMPACT" | local_tunnel_ip_from_status)"
 if [[ -z "$ALICE_TUNNEL_IP" || -z "$BOB_TUNNEL_IP" ]]; then
   echo "exit-node docker e2e failed: unable to resolve node tunnel IPs from status output" >&2
   exit 1
 fi
 
-PEER_ROUTE="$("${COMPOSE[@]}" exec -T node-b sh -lc "ip route get $EXIT_PUBLIC_IP | tr -d '\r'")"
 REFLECTOR_ROUTE="$("${COMPOSE[@]}" exec -T node-b sh -lc "ip route get 198.51.100.3 | tr -d '\r'")"
 DEFAULT_ROUTE="$("${COMPOSE[@]}" exec -T node-b sh -lc "ip route show default | head -n1 | tr -d '\r'")"
-
-if grep -q 'dev utun100' <<<"$PEER_ROUTE"; then
-  echo "exit-node docker e2e failed: peer public endpoint route unexpectedly points into the tunnel" >&2
-  echo "$PEER_ROUTE"
-  exit 1
-fi
 
 if grep -q 'dev utun100' <<<"$REFLECTOR_ROUTE"; then
   echo "exit-node docker e2e failed: reflector route unexpectedly points into the tunnel" >&2
@@ -262,8 +250,6 @@ if ! ping_until_success node-b "$PUBLIC_INTERNET_TARGET" /tmp/nvpn-exit-node-pub
   exit 1
 fi
 
-echo "--- Peer endpoint route ---"
-echo "$PEER_ROUTE"
 echo "--- Reflector route ---"
 echo "$REFLECTOR_ROUTE"
 echo "--- Default route ---"

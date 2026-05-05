@@ -8,11 +8,6 @@ COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.e2e.yml"
 NETWORK_ID="docker-vpn"
 RELAY_URL="ws://10.203.0.2:8080"
 
-ALICE_WG_PRIVATE="9eUzwIuYiF1Au6fBSwSnMHuWp90mqFQZrsC3YH7qzb8="
-ALICE_WG_PUBLIC="8VBKKEKhzF7lPlukFYvpMsZX42RcgClBcwI1FpFTIRE="
-BOB_WG_PRIVATE="3DnM5OoFTb2DgGQ/BPAM0W8+xKUExtxA1l5jXloihO0="
-BOB_WG_PUBLIC="czraiWsRqvnjWLMoww0riN8uZa6By7EJl6swa5mY5To="
-
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
   docker network rm "${PROJECT_NAME}_e2e" >/dev/null 2>&1 || true
@@ -41,7 +36,6 @@ wait_for_service() {
 
 nostr_pubkey_from_config() {
   local service="$1"
-  local config_path="${2:-/root/.config/nvpn/config.toml}"
   "${COMPOSE[@]}" exec -T "$service" sh -lc "
     awk '
       /^\\[nostr\\]$/ { in_nostr = 1; next }
@@ -50,7 +44,7 @@ nostr_pubkey_from_config() {
         print \$3;
         exit
       }
-    ' '$config_path'
+    ' /root/.config/nvpn/config.toml
   " | tr -d '\r\"'
 }
 
@@ -72,94 +66,72 @@ if [[ -z "$ALICE_NPUB" || -z "$BOB_NPUB" ]]; then
   exit 1
 fi
 
-"${COMPOSE[@]}" exec -d node-a sh -lc \
-  "nvpn listen --network-id '$NETWORK_ID' --relay '$RELAY_URL' --participant '$ALICE_NPUB' --participant '$BOB_NPUB' --limit 1 > /tmp/listen.log 2>&1"
-"${COMPOSE[@]}" exec -d node-b sh -lc \
-  "nvpn listen --network-id '$NETWORK_ID' --relay '$RELAY_URL' --participant '$ALICE_NPUB' --participant '$BOB_NPUB' --limit 1 > /tmp/listen.log 2>&1"
-
-sleep 2
-
-"${COMPOSE[@]}" exec -T node-a nvpn announce \
+"${COMPOSE[@]}" exec -T node-a nvpn set \
   --network-id "$NETWORK_ID" \
-  --relay "$RELAY_URL" \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
-  --node-id alice-node \
-  --endpoint 10.203.0.10:51820 \
-  --tunnel-ip 10.44.0.1/32 \
-  --public-key "$ALICE_WG_PUBLIC" >/dev/null
+  --relay "$RELAY_URL" >/dev/null
 
-"${COMPOSE[@]}" exec -T node-b nvpn announce \
+"${COMPOSE[@]}" exec -T node-b nvpn set \
   --network-id "$NETWORK_ID" \
-  --relay "$RELAY_URL" \
-  --participant "$BOB_NPUB" \
   --participant "$ALICE_NPUB" \
-  --node-id bob-node \
-  --endpoint 10.203.0.11:51820 \
-  --tunnel-ip 10.44.0.2/32 \
-  --public-key "$BOB_WG_PUBLIC" >/dev/null
+  --participant "$BOB_NPUB" \
+  --relay "$RELAY_URL" >/dev/null
 
-for _ in $(seq 1 20); do
-  ALICE_LISTEN_LOGS="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/listen.log 2>/dev/null || true')"
-  BOB_LISTEN_LOGS="$("${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/listen.log 2>/dev/null || true')"
+ALICE_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-a nvpn ip | tr -d '\r')"
+BOB_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-b nvpn ip | tr -d '\r')"
 
-  if grep -Eq '"node_id"\s*:\s*"bob-node"' <<<"$ALICE_LISTEN_LOGS" \
-    && grep -Eq '"node_id"\s*:\s*"alice-node"' <<<"$BOB_LISTEN_LOGS"; then
+"${COMPOSE[@]}" exec -d node-a sh -lc "nvpn connect > /tmp/connect.log 2>&1"
+"${COMPOSE[@]}" exec -d node-b sh -lc "nvpn connect > /tmp/connect.log 2>&1"
+
+for _ in $(seq 1 30); do
+  ALICE_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
+  BOB_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
+
+  if grep -q "mesh: 1/1 peers with presence" <<<"$ALICE_CONNECT_LOGS" \
+    && grep -q "mesh: 1/1 peers with presence" <<<"$BOB_CONNECT_LOGS"; then
     break
   fi
 
   sleep 1
 done
 
-ALICE_LISTEN_LOGS="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/listen.log 2>/dev/null || true')"
-BOB_LISTEN_LOGS="$("${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/listen.log 2>/dev/null || true')"
+ALICE_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
+BOB_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
 
-if ! grep -Eq '"node_id"\s*:\s*"bob-node"' <<<"$ALICE_LISTEN_LOGS"; then
-  echo "docker e2e failed: alice did not receive bob announcement" >&2
-  echo "$ALICE_LISTEN_LOGS"
+if ! grep -q "mesh: 1/1 peers with presence" <<<"$ALICE_CONNECT_LOGS"; then
+  echo "docker e2e failed: alice mesh did not reach 1/1" >&2
+  echo "$ALICE_CONNECT_LOGS"
   exit 1
 fi
 
-if ! grep -Eq '"node_id"\s*:\s*"alice-node"' <<<"$BOB_LISTEN_LOGS"; then
-  echo "docker e2e failed: bob did not receive alice announcement" >&2
-  echo "$BOB_LISTEN_LOGS"
+if ! grep -q "mesh: 1/1 peers with presence" <<<"$BOB_CONNECT_LOGS"; then
+  echo "docker e2e failed: bob mesh did not reach 1/1" >&2
+  echo "$BOB_CONNECT_LOGS"
   exit 1
 fi
 
-"${COMPOSE[@]}" exec -d node-a sh -lc \
-  "nvpn tunnel-up \
-     --iface utun100 \
-     --private-key '$ALICE_WG_PRIVATE' \
-     --listen-port 51820 \
-     --address 10.44.0.1/32 \
-     --peer-public-key '$BOB_WG_PUBLIC' \
-     --peer-endpoint 10.203.0.11:51820 \
-     --peer-allowed-ip 10.44.0.2/32 \
-     --keepalive-secs 1 > /tmp/tunnel.log 2>&1"
+if ! "${COMPOSE[@]}" exec -T node-a ping -c 3 -W 2 "$BOB_TUNNEL_IP" >/tmp/ping-a.log; then
+  echo "docker e2e failed: ping A -> B failed" >&2
+  echo "$ALICE_CONNECT_LOGS"
+  echo "$BOB_CONNECT_LOGS"
+  exit 1
+fi
 
-"${COMPOSE[@]}" exec -d node-b sh -lc \
-  "nvpn tunnel-up \
-     --iface utun100 \
-     --private-key '$BOB_WG_PRIVATE' \
-     --listen-port 51820 \
-     --address 10.44.0.2/32 \
-     --peer-public-key '$ALICE_WG_PUBLIC' \
-     --peer-endpoint 10.203.0.10:51820 \
-     --peer-allowed-ip 10.44.0.1/32 \
-     --keepalive-secs 1 > /tmp/tunnel.log 2>&1"
+if ! "${COMPOSE[@]}" exec -T node-b ping -c 3 -W 2 "$ALICE_TUNNEL_IP" >/tmp/ping-b.log; then
+  echo "docker e2e failed: ping B -> A failed" >&2
+  echo "$ALICE_CONNECT_LOGS"
+  echo "$BOB_CONNECT_LOGS"
+  exit 1
+fi
 
-sleep 5
-
-"${COMPOSE[@]}" exec -T node-a ping -c 3 -W 2 10.44.0.2 >/tmp/ping-a.log
-"${COMPOSE[@]}" exec -T node-b ping -c 3 -W 2 10.44.0.1 >/tmp/ping-b.log
-
-echo "--- Alice listen log ---"
-echo "$ALICE_LISTEN_LOGS"
-echo "--- Bob listen log ---"
-echo "$BOB_LISTEN_LOGS"
+echo "--- Alice connect log ---"
+echo "$ALICE_CONNECT_LOGS"
+echo "--- Bob connect log ---"
+echo "$BOB_CONNECT_LOGS"
 echo "--- Ping A -> B ---"
 cat /tmp/ping-a.log
 echo "--- Ping B -> A ---"
 cat /tmp/ping-b.log
 
-echo "docker e2e passed: announcements + boringtun tunnel data-plane ping succeeded"
+echo "docker e2e passed: FIPS private mesh established and tunnel pings succeeded"

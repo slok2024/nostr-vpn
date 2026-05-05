@@ -60,14 +60,6 @@ compact_json() {
   tr -d '\n\r\t '
 }
 
-peer_tunnel_ip_from_status() {
-  grep -o '"tunnel_ip":"10\.44\.[0-9]\+\.[0-9]\+/32"' | tail -n1 | cut -d '"' -f4 | cut -d/ -f1 || true
-}
-
-peer_announced_endpoint_from_status() {
-  grep -o '"endpoint":"[^"]*"' | tail -n1 | cut -d '"' -f4 || true
-}
-
 cleanup
 
 wait_for_service() {
@@ -172,19 +164,19 @@ for _ in $(seq 1 60); do
   BOB_STATUS="$("${COMPOSE[@]}" exec -T node-b nvpn status --json --discover-secs 0 | tr -d '\r')"
   ALICE_COMPACT="$(printf '%s' "$ALICE_STATUS" | compact_json)"
   BOB_COMPACT="$(printf '%s' "$BOB_STATUS" | compact_json)"
-  ALICE_ANNOUNCED_ENDPOINT="$(printf '%s' "$ALICE_COMPACT" | peer_announced_endpoint_from_status)"
-  BOB_ANNOUNCED_ENDPOINT="$(printf '%s' "$BOB_COMPACT" | peer_announced_endpoint_from_status)"
-  BOB_TUNNEL_IP="$(printf '%s' "$ALICE_COMPACT" | peer_tunnel_ip_from_status)"
-  ALICE_TUNNEL_IP="$(printf '%s' "$BOB_COMPACT" | peer_tunnel_ip_from_status)"
+  BOB_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-a nvpn ip --peer --discover-secs 0 | head -n1 | tr -d '\r')"
+  ALICE_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-b nvpn ip --peer --discover-secs 0 | head -n1 | tr -d '\r')"
 
   if grep -q '"status_source":"daemon"' <<<"$ALICE_COMPACT" \
     && grep -q '"status_source":"daemon"' <<<"$BOB_COMPACT" \
     && grep -q '"running":true' <<<"$ALICE_COMPACT" \
     && grep -q '"running":true' <<<"$BOB_COMPACT" \
-    && [[ "$ALICE_ANNOUNCED_ENDPOINT" == "203.0.113.11:51820" ]] \
-    && [[ "$BOB_ANNOUNCED_ENDPOINT" == "203.0.113.10:51820" ]] \
-    && [[ -n "$ALICE_ANNOUNCED_ENDPOINT" ]] \
-    && [[ -n "$BOB_ANNOUNCED_ENDPOINT" ]] \
+    && grep -q '"private_data_plane":"fips"' <<<"$ALICE_COMPACT" \
+    && grep -q '"private_data_plane":"fips"' <<<"$BOB_COMPACT" \
+    && grep -q '"mesh_ready":true' <<<"$ALICE_COMPACT" \
+    && grep -q '"mesh_ready":true' <<<"$BOB_COMPACT" \
+    && grep -q '"endpoint":"fips"' <<<"$ALICE_COMPACT" \
+    && grep -q '"endpoint":"fips"' <<<"$BOB_COMPACT" \
     && [[ -n "$ALICE_TUNNEL_IP" ]] \
     && [[ -n "$BOB_TUNNEL_IP" ]]; then
     break
@@ -202,20 +194,12 @@ grep -q '"status_source":"daemon"' <<<"$ALICE_COMPACT"
 grep -q '"status_source":"daemon"' <<<"$BOB_COMPACT"
 grep -q '"running":true' <<<"$ALICE_COMPACT"
 grep -q '"running":true' <<<"$BOB_COMPACT"
-ALICE_ANNOUNCED_ENDPOINT="$(printf '%s' "$ALICE_COMPACT" | peer_announced_endpoint_from_status)"
-BOB_ANNOUNCED_ENDPOINT="$(printf '%s' "$BOB_COMPACT" | peer_announced_endpoint_from_status)"
-
-if [[ "$ALICE_ANNOUNCED_ENDPOINT" != "203.0.113.11:51820" ]]; then
-  echo "nat docker e2e failed: alice did not observe bob's public endpoint announcement ('$ALICE_ANNOUNCED_ENDPOINT')" >&2
-  exit 1
-fi
-if [[ "$BOB_ANNOUNCED_ENDPOINT" != "203.0.113.10:51820" ]]; then
-  echo "nat docker e2e failed: bob did not observe alice's public endpoint announcement ('$BOB_ANNOUNCED_ENDPOINT')" >&2
-  exit 1
-fi
-
-BOB_TUNNEL_IP="$(printf '%s' "$ALICE_COMPACT" | peer_tunnel_ip_from_status)"
-ALICE_TUNNEL_IP="$(printf '%s' "$BOB_COMPACT" | peer_tunnel_ip_from_status)"
+grep -q '"private_data_plane":"fips"' <<<"$ALICE_COMPACT"
+grep -q '"private_data_plane":"fips"' <<<"$BOB_COMPACT"
+grep -q '"mesh_ready":true' <<<"$ALICE_COMPACT"
+grep -q '"mesh_ready":true' <<<"$BOB_COMPACT"
+grep -q '"endpoint":"fips"' <<<"$ALICE_COMPACT"
+grep -q '"endpoint":"fips"' <<<"$BOB_COMPACT"
 
 if [[ -z "$ALICE_TUNNEL_IP" || -z "$BOB_TUNNEL_IP" ]]; then
   echo "nat docker e2e failed: unable to resolve peer tunnel IPs from status output" >&2
@@ -240,4 +224,4 @@ cat /tmp/nvpn-nat-ping-a.log
 echo "--- Ping B -> A ---"
 cat /tmp/nvpn-nat-ping-b.log
 
-echo "nat docker e2e passed: daemon-mode Nostr signaling, public endpoint discovery, NAT punching from a private node to a public peer, boringtun tunnel handshake, and ping succeeded"
+echo "nat docker e2e passed: FIPS private mesh reached across the NAT topology and tunnel pings succeeded"

@@ -1013,8 +1013,18 @@ impl AppConfig {
             return Ok(false);
         }
 
-        let participants =
-            normalize_shared_roster_participants(participants, own_pubkey.as_deref())?;
+        let own_in_shared_roster = own_pubkey.as_deref().is_none_or(|own_pubkey| {
+            participants
+                .iter()
+                .chain(admins.iter())
+                .filter_map(|member| normalize_nostr_pubkey(member).ok())
+                .any(|member| member == own_pubkey)
+        });
+        let participants = if own_in_shared_roster {
+            normalize_shared_roster_participants(participants, own_pubkey.as_deref())?
+        } else {
+            Vec::new()
+        };
         let admins =
             normalize_network_admins(admins, own_pubkey.as_deref(), &network.invite_inviter);
         if admins.is_empty() {

@@ -75,15 +75,13 @@ fi
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
   --participant "$PHANTOM_NPUB" \
-  --relay "$RELAY_URL" \
-  --endpoint 10.203.0.10:51820 >/dev/null
+  --relay "$RELAY_URL" >/dev/null
 
 "${COMPOSE[@]}" exec -T node-b nvpn set \
   --network-id "$NETWORK_ID" \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
-  --relay "$RELAY_URL" \
-  --endpoint 10.203.0.11:51820 >/dev/null
+  --relay "$RELAY_URL" >/dev/null
 
 ALICE_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-a nvpn ip)"
 BOB_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-b nvpn ip)"

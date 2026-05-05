@@ -449,11 +449,10 @@ pub(crate) async fn publish_active_network_roster(
         Ok(pubkey) => pubkey,
         Err(_) => return Ok(0),
     };
-    if !app.is_network_admin(&network.id, &own_pubkey) {
+    let roster = app.shared_network_roster(&network.id)?;
+    if !crate::shared_roster_publish_allowed(app, &network.id, &own_pubkey, &roster.signed_by) {
         return Ok(0);
     }
-
-    let roster = app.shared_network_roster(&network.id)?;
     let allowed = app.active_network_signal_pubkeys_hex();
     let allowed_set = allowed.iter().cloned().collect::<HashSet<_>>();
     let mut recipients = recipients

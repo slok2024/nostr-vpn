@@ -69,14 +69,12 @@ fi
 "${COMPOSE[@]}" exec -T node-a nvpn set \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
-  --relay "$RELAY_URL" \
-  --endpoint 10.203.0.10:51820 >/dev/null
+  --relay "$RELAY_URL" >/dev/null
 
 "${COMPOSE[@]}" exec -T node-b nvpn set \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
-  --relay "$RELAY_URL" \
-  --endpoint 10.203.0.11:51820 >/dev/null
+  --relay "$RELAY_URL" >/dev/null
 
 "${COMPOSE[@]}" exec -d node-a sh -lc "nvpn connect > /tmp/connect.log 2>&1"
 "${COMPOSE[@]}" exec -d node-b sh -lc "nvpn connect > /tmp/connect.log 2>&1"

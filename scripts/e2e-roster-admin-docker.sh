@@ -8,13 +8,6 @@ COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.e2e.yml"
 NETWORK_ID="docker-roster-admin"
 RELAY_URL="ws://10.203.0.2:8080"
 
-ALICE_ENDPOINT="10.203.0.10:51820"
-BOB_ENDPOINT="10.203.0.11:51820"
-CAROL_ENDPOINT="10.203.0.12:51820"
-ALICE_TUNNEL_IP="10.44.0.10/32"
-BOB_TUNNEL_IP="10.44.0.11/32"
-CAROL_TUNNEL_IP="10.44.0.12/32"
-
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
   docker network rm "${PROJECT_NAME}_e2e" >/dev/null 2>&1 || true
@@ -23,7 +16,34 @@ cleanup() {
     sleep 1
   done
 }
-trap cleanup EXIT
+
+dump_debug() {
+  set +e
+  echo "roster/admin docker e2e failed, collecting debug output..."
+  "${COMPOSE[@]}" ps || true
+  for service in relay node-a node-b node-c; do
+    echo "--- logs: $service ---"
+    "${COMPOSE[@]}" logs --no-color --tail 120 "$service" || true
+  done
+  for node in node-a node-b node-c; do
+    echo "--- $node status ---"
+    "${COMPOSE[@]}" exec -T "$node" nvpn status --json --discover-secs 0 || true
+    echo "--- $node config ---"
+    "${COMPOSE[@]}" exec -T "$node" sh -lc "cat /root/.config/nvpn/config.toml 2>/dev/null || true" || true
+    echo "--- $node daemon.log ---"
+    "${COMPOSE[@]}" exec -T "$node" sh -lc "tail -n 240 /root/.config/nvpn/daemon.log 2>/dev/null || true" || true
+  done
+}
+
+on_exit() {
+  local exit_code=$?
+  if [[ $exit_code -ne 0 ]]; then
+    dump_debug
+  fi
+  cleanup
+  exit "$exit_code"
+}
+trap on_exit EXIT
 
 wait_for_service() {
   local service="$1"
@@ -149,11 +169,27 @@ next_shared_roster_updated_at() {
 
   current="$(shared_roster_updated_at "$service" || true)"
   now="$(date +%s)"
-  if [[ "$current" =~ ^[0-9]+$ && "$current" -ge "$now" ]]; then
+  if [[ "$current" =~ ^[0-9]+$ ]]; then
     printf '%s' "$((current + 1))"
   else
     printf '%s' "$now"
   fi
+}
+
+next_global_shared_roster_updated_at() {
+  local max=""
+  local current=""
+  local service=""
+
+  max="$(($(date +%s) + 30))"
+  for service in "$@"; do
+    current="$(shared_roster_updated_at "$service" || true)"
+    if [[ "$current" =~ ^[0-9]+$ && "$current" -gt "$max" ]]; then
+      max="$current"
+    fi
+  done
+
+  printf '%s' "$((max + 1))"
 }
 
 wait_for_config_array_contains() {
@@ -230,8 +266,13 @@ set_membership() {
   local admins_toml="$3"
   local signer="$4"
   local inviter="$5"
+  local shared_at_arg="${6:-}"
   local shared_at
-  shared_at="$(next_shared_roster_updated_at "$service")"
+  if [[ -n "$shared_at_arg" ]]; then
+    shared_at="$shared_at_arg"
+  else
+    shared_at="$(next_shared_roster_updated_at "$service")"
+  fi
 
   "${COMPOSE[@]}" exec -T \
     -e PARTICIPANTS_TOML="$participants_toml" \
@@ -273,8 +314,13 @@ set_peer_alias() {
   local participant="$2"
   local alias="$3"
   local signer="$4"
+  local shared_at_arg="${5:-}"
   local shared_at
-  shared_at="$(next_shared_roster_updated_at "$service")"
+  if [[ -n "$shared_at_arg" ]]; then
+    shared_at="$shared_at_arg"
+  else
+    shared_at="$(next_shared_roster_updated_at "$service")"
+  fi
 
   "${COMPOSE[@]}" exec -T \
     -e PARTICIPANT="$participant" \
@@ -355,20 +401,25 @@ B_ADMIN="$(toml_array "$BOB_NPUB")"
   --network-id "$NETWORK_ID" \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
-  --relay "$RELAY_URL" \
-  --endpoint "$ALICE_ENDPOINT" \
-  --tunnel-ip "$ALICE_TUNNEL_IP" >/dev/null
+  --relay "$RELAY_URL" >/dev/null
 
 "${COMPOSE[@]}" exec -T node-b nvpn set \
   --network-id "$NETWORK_ID" \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
-  --relay "$RELAY_URL" \
-  --endpoint "$BOB_ENDPOINT" \
-  --tunnel-ip "$BOB_TUNNEL_IP" >/dev/null
+  --relay "$RELAY_URL" >/dev/null
 
-set_membership node-a "$AB_PARTICIPANTS" "$A_ADMIN" "$ALICE_NPUB" "$ALICE_NPUB"
-set_membership node-b "$AB_PARTICIPANTS" "$A_ADMIN" "$ALICE_NPUB" "$ALICE_NPUB"
+ALICE_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-a nvpn ip | tr -d '\r')"
+BOB_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-b nvpn ip | tr -d '\r')"
+
+if [[ -z "$ALICE_TUNNEL_IP" || -z "$BOB_TUNNEL_IP" ]]; then
+  echo "roster/admin docker e2e failed: unable to resolve initial FIPS tunnel IPs" >&2
+  exit 1
+fi
+
+INITIAL_SHARED_AT="$(next_global_shared_roster_updated_at node-a node-b)"
+set_membership node-a "$AB_PARTICIPANTS" "$A_ADMIN" "$ALICE_NPUB" "$ALICE_NPUB" "$INITIAL_SHARED_AT"
+set_membership node-b "$AB_PARTICIPANTS" "$A_ADMIN" "$ALICE_NPUB" "$ALICE_NPUB" "$INITIAL_SHARED_AT"
 
 start_daemon node-a
 start_daemon node-b
@@ -376,13 +427,14 @@ start_daemon node-b
 wait_for_connected_peer_count node-a 1 "alice never reached the initial 1/1 mesh"
 wait_for_connected_peer_count node-b 1 "bob never reached the initial 1/1 mesh"
 
-if ! ping_until_success node-a 10.44.0.11 /tmp/nvpn-roster-admin-a-to-b.log; then
+if ! ping_until_success node-a "$BOB_TUNNEL_IP" /tmp/nvpn-roster-admin-a-to-b.log; then
   echo "roster/admin docker e2e failed: initial alice -> bob ping failed" >&2
   cat /tmp/nvpn-roster-admin-a-to-b.log >&2 || true
   exit 1
 fi
 
-set_membership node-a "$ABC_PARTICIPANTS" "$AB_ADMINS" "$ALICE_NPUB" "$ALICE_NPUB"
+ADD_CAROL_SHARED_AT="$(next_global_shared_roster_updated_at node-a node-b)"
+set_membership node-a "$ABC_PARTICIPANTS" "$AB_ADMINS" "$ALICE_NPUB" "$ALICE_NPUB" "$ADD_CAROL_SHARED_AT"
 reload_daemon node-a
 
 wait_for_config_array_contains node-b participants "$CAROL_NPUB" \
@@ -395,30 +447,38 @@ wait_for_config_array_contains node-b admins "$BOB_NPUB" \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
   --participant "$CAROL_NPUB" \
-  --relay "$RELAY_URL" \
-  --endpoint "$CAROL_ENDPOINT" \
-  --tunnel-ip "$CAROL_TUNNEL_IP" >/dev/null
+  --relay "$RELAY_URL" >/dev/null
 
-set_membership node-c "$ABC_PARTICIPANTS" "$AB_ADMINS" "$ALICE_NPUB" "$ALICE_NPUB"
+CAROL_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-c nvpn ip | tr -d '\r')"
+
+if [[ -z "$CAROL_TUNNEL_IP" ]]; then
+  echo "roster/admin docker e2e failed: unable to resolve carol FIPS tunnel IP" >&2
+  exit 1
+fi
+
+set_membership node-c "$ABC_PARTICIPANTS" "$AB_ADMINS" "$ALICE_NPUB" "$ALICE_NPUB" "$ADD_CAROL_SHARED_AT"
 start_daemon node-c
 
 wait_for_connected_peer_count node-a 2 "alice never reached the 2/2 mesh after carol joined"
 wait_for_connected_peer_count node-b 2 "bob never reached the 2/2 mesh after carol joined"
 wait_for_connected_peer_count node-c 2 "carol never reached the 2/2 mesh after being added"
 
-if ! ping_until_success node-c 10.44.0.10 /tmp/nvpn-roster-admin-c-to-a.log; then
+if ! ping_until_success node-c "$ALICE_TUNNEL_IP" /tmp/nvpn-roster-admin-c-to-a.log; then
   echo "roster/admin docker e2e failed: carol could not reach alice after being added" >&2
   cat /tmp/nvpn-roster-admin-c-to-a.log >&2 || true
   exit 1
 fi
 
-set_peer_alias node-b "$ALICE_NPUB" "founder" "$BOB_NPUB"
+ALIAS_SHARED_AT="$(next_global_shared_roster_updated_at node-a node-b node-c)"
+set_peer_alias node-b "$ALICE_NPUB" "founder" "$BOB_NPUB" "$ALIAS_SHARED_AT"
+set_membership node-b "$ABC_PARTICIPANTS" "$AB_ADMINS" "$BOB_NPUB" "$ALICE_NPUB" "$ALIAS_SHARED_AT"
 reload_daemon node-b
 
 wait_for_peer_alias node-c "$ALICE_NPUB" "founder" \
   "carol never applied bob's signed alias update for alice"
 
-set_membership node-b "$AB_PARTICIPANTS" "$AB_ADMINS" "$BOB_NPUB" "$ALICE_NPUB"
+REMOVE_CAROL_SHARED_AT="$(next_global_shared_roster_updated_at node-a node-b node-c)"
+set_membership node-b "$AB_PARTICIPANTS" "$AB_ADMINS" "$BOB_NPUB" "$ALICE_NPUB" "$REMOVE_CAROL_SHARED_AT"
 reload_daemon node-b
 
 wait_for_config_array_lacks node-a participants "$CAROL_NPUB" \
@@ -426,13 +486,14 @@ wait_for_config_array_lacks node-a participants "$CAROL_NPUB" \
 wait_for_connected_peer_count node-a 1 "alice never returned to 1/1 after bob removed carol"
 wait_for_connected_peer_count node-b 1 "bob never returned to 1/1 after removing carol"
 
-if ! ping_until_failure node-c 10.44.0.10 /tmp/nvpn-roster-admin-c-to-a-removed.log; then
+if ! ping_until_failure node-c "$ALICE_TUNNEL_IP" /tmp/nvpn-roster-admin-c-to-a-removed.log; then
   echo "roster/admin docker e2e failed: carol still reached alice after bob removed her" >&2
   cat /tmp/nvpn-roster-admin-c-to-a-removed.log >&2 || true
   exit 1
 fi
 
-set_membership node-b "$ABC_PARTICIPANTS" "$AB_ADMINS" "$BOB_NPUB" "$ALICE_NPUB"
+READD_CAROL_SHARED_AT="$(next_global_shared_roster_updated_at node-a node-b node-c)"
+set_membership node-b "$ABC_PARTICIPANTS" "$AB_ADMINS" "$BOB_NPUB" "$ALICE_NPUB" "$READD_CAROL_SHARED_AT"
 reload_daemon node-b
 
 wait_for_config_array_contains node-a participants "$CAROL_NPUB" \
@@ -441,13 +502,14 @@ wait_for_connected_peer_count node-a 2 "alice never returned to 2/2 after bob re
 wait_for_connected_peer_count node-b 2 "bob never returned to 2/2 after re-adding carol"
 wait_for_connected_peer_count node-c 2 "carol never rejoined after bob re-added her"
 
-if ! ping_until_success node-c 10.44.0.10 /tmp/nvpn-roster-admin-c-to-a-rejoined.log; then
+if ! ping_until_success node-c "$ALICE_TUNNEL_IP" /tmp/nvpn-roster-admin-c-to-a-rejoined.log; then
   echo "roster/admin docker e2e failed: carol did not rejoin after bob re-added her" >&2
   cat /tmp/nvpn-roster-admin-c-to-a-rejoined.log >&2 || true
   exit 1
 fi
 
-set_membership node-b "$ABC_PARTICIPANTS" "$B_ADMIN" "$BOB_NPUB" "$BOB_NPUB"
+SOLE_ADMIN_SHARED_AT="$(next_global_shared_roster_updated_at node-a node-b node-c)"
+set_membership node-b "$ABC_PARTICIPANTS" "$B_ADMIN" "$BOB_NPUB" "$BOB_NPUB" "$SOLE_ADMIN_SHARED_AT"
 reload_daemon node-b
 
 wait_for_config_array_contains node-a admins "$BOB_NPUB" \

@@ -72,6 +72,28 @@ async function statusJson(configPath) {
   return JSON.parse(extractJsonDocument(output.stdout))
 }
 
+function assertFipsMeshStatus(status, label) {
+  if (status.private_data_plane !== 'fips') {
+    throw new Error(`${label} expected private_data_plane=fips, got: ${status.private_data_plane}`)
+  }
+
+  const daemonState = status?.daemon?.state
+  if (!daemonState || daemonState.connected_peer_count < 1) {
+    throw new Error(`${label} daemon did not report a connected peer: ${JSON.stringify(status)}`)
+  }
+
+  const reachablePeer = (daemonState.peers || []).find((entry) => entry.reachable)
+  if (!reachablePeer) {
+    throw new Error(`${label} daemon did not report a reachable peer: ${JSON.stringify(status)}`)
+  }
+
+  if (reachablePeer.endpoint !== 'fips' || reachablePeer.runtime_endpoint !== 'fips') {
+    throw new Error(
+      `${label} expected reachable peer endpoint=fips, got: ${JSON.stringify(reachablePeer)}`,
+    )
+  }
+}
+
 async function waitForAppReady(base, sessionId, label) {
   await waitUntil(
     async () => {
@@ -473,12 +495,8 @@ async function main() {
 
     const ownerStatus = await statusJson(ownerConfigPath)
     const requesterStatus = await statusJson(requesterConfigPath)
-    if ((ownerStatus?.daemon?.state?.connected_peer_count ?? 0) < 1) {
-      throw new Error(`owner daemon did not report a connected peer: ${JSON.stringify(ownerStatus)}`)
-    }
-    if ((requesterStatus?.daemon?.state?.connected_peer_count ?? 0) < 1) {
-      throw new Error(`requester daemon did not report a connected peer: ${JSON.stringify(requesterStatus)}`)
-    }
+    assertFipsMeshStatus(ownerStatus, 'owner')
+    assertFipsMeshStatus(requesterStatus, 'requester')
 
     await captureScreenshot(OWNER_DRIVER_BASE, ownerSessionId, OWNER_SCREENSHOT_PATH)
     await captureScreenshot(REQUESTER_DRIVER_BASE, requesterSessionId, REQUESTER_SCREENSHOT_PATH)

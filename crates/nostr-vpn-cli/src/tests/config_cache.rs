@@ -97,6 +97,42 @@ fn participants_override_marks_shared_roster_updated_for_admin_owned_network() {
 }
 
 #[test]
+fn shared_roster_publish_allowed_only_for_current_signer() {
+    let other_admin = Keys::generate().public_key().to_hex();
+    let outsider = Keys::generate().public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    let own_pubkey = config.own_nostr_pubkey_hex().expect("own nostr pubkey");
+    let network_id = config.active_network().id.clone();
+    config.networks[0].admins = vec![own_pubkey.clone(), other_admin.clone()];
+
+    assert!(shared_roster_publish_allowed(
+        &config,
+        &network_id,
+        &own_pubkey,
+        ""
+    ));
+    assert!(shared_roster_publish_allowed(
+        &config,
+        &network_id,
+        &own_pubkey,
+        &own_pubkey
+    ));
+    assert!(!shared_roster_publish_allowed(
+        &config,
+        &network_id,
+        &own_pubkey,
+        &other_admin
+    ));
+    assert!(!shared_roster_publish_allowed(
+        &config,
+        &network_id,
+        &outsider,
+        &outsider
+    ));
+}
+
+#[test]
 fn active_network_invite_code_roundtrips_current_roster() {
     let inviter_hex = Keys::generate().public_key().to_hex();
     let participant_hex = Keys::generate().public_key().to_hex();

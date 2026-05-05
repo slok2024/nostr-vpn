@@ -56,8 +56,9 @@ use netdev::interface::interface::Interface as NetworkInterface;
 #[cfg(test)]
 use nostr_sdk::prelude::ToBech32;
 use nostr_vpn_core::config::{
-    AppConfig, DEFAULT_RELAYS, derive_mesh_tunnel_ip, maybe_autoconfigure_node,
-    normalize_advertised_route, normalize_nostr_pubkey, normalize_runtime_network_id,
+    AppConfig, DEFAULT_RELAYS, derive_mesh_tunnel_ip, exit_node_default_routes,
+    maybe_autoconfigure_node, normalize_advertised_route, normalize_nostr_pubkey,
+    normalize_runtime_network_id,
 };
 use nostr_vpn_core::control::{PeerAnnouncement, select_peer_endpoint_from_local_endpoints};
 use nostr_vpn_core::crypto::generate_keypair;
@@ -1000,9 +1001,17 @@ async fn run_command(command: Command) -> Result<()> {
                     let peers = state
                         .peers
                         .iter()
-                        .filter(|peer| !peer.node_id.is_empty())
+                        .filter(|peer| {
+                            !peer.node_id.is_empty()
+                                || !peer.tunnel_ip.is_empty()
+                                || !peer.endpoint.is_empty()
+                        })
                         .map(|peer| PeerAnnouncement {
-                            node_id: peer.node_id.clone(),
+                            node_id: if peer.node_id.is_empty() {
+                                peer.participant_pubkey.clone()
+                            } else {
+                                peer.node_id.clone()
+                            },
                             public_key: peer.public_key.clone(),
                             endpoint: peer.endpoint.clone(),
                             local_endpoint: None,
@@ -1610,6 +1619,30 @@ fn runtime_peer_tunnel_ips(app: &AppConfig, network_id: &str) -> Vec<String> {
     ips.sort();
     ips.dedup();
     ips
+}
+
+fn fips_peer_advertised_routes(app: &AppConfig, participant: &str) -> Vec<String> {
+    if !app.exit_node.is_empty() && app.exit_node == participant {
+        return exit_node_default_routes();
+    }
+    Vec::new()
+}
+
+pub(crate) fn shared_roster_publish_allowed(
+    app: &AppConfig,
+    network_id: &str,
+    own_pubkey: &str,
+    signed_by: &str,
+) -> bool {
+    let Ok(own_pubkey) = normalize_nostr_pubkey(own_pubkey) else {
+        return false;
+    };
+    if !app.is_network_admin(network_id, &own_pubkey) {
+        return false;
+    }
+
+    let signed_by = normalize_nostr_pubkey(signed_by).unwrap_or_default();
+    signed_by.is_empty() || signed_by == own_pubkey
 }
 
 #[cfg(all(
@@ -4391,8 +4424,8 @@ fn drain_fips_mesh_events(
 }
 
 #[cfg(feature = "embedded-fips")]
-fn refresh_fips_tunnel_config(
-    runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
+async fn refresh_fips_tunnel_config(
+    runtime: &mut crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
     network_id: &str,
     relays: &[String],
@@ -4405,7 +4438,7 @@ fn refresh_fips_tunnel_config(
         relays,
         own_pubkey,
     )?;
-    runtime.apply_config(config)
+    runtime.apply_config(config).await
 }
 
 #[cfg(feature = "embedded-fips")]
@@ -4439,12 +4472,12 @@ async fn sync_fips_private_runtime(
         own_pubkey,
     )?;
 
-    if let Some(existing) = runtime.as_ref() {
-        existing.apply_config(config)?;
+    if let Some(existing) = runtime.as_mut() {
+        existing.apply_config(config).await?;
     } else {
         let started = crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await?;
         eprintln!(
-            "daemon: FIPS private mesh on {}; WireGuard exit capability remains {}",
+            "daemon: FIPS private mesh on {}; exit capability remains {}",
             started.iface(),
             app.exit_data_plane
         );
@@ -4498,16 +4531,25 @@ async fn publish_fips_active_network_roster(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
 ) -> Result<usize> {
+    publish_fips_active_network_roster_to(runtime, app, &[]).await
+}
+
+#[cfg(feature = "embedded-fips")]
+async fn publish_fips_active_network_roster_to(
+    runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
+    app: &AppConfig,
+    extra_recipients: &[String],
+) -> Result<usize> {
     let network = app.active_network();
     let own_pubkey = match app.own_nostr_pubkey_hex() {
         Ok(pubkey) => pubkey,
         Err(_) => return Ok(0),
     };
-    if !app.is_network_admin(&network.id, &own_pubkey) {
-        return Ok(0);
-    }
 
     let shared = app.shared_network_roster(&network.id)?;
+    if !shared_roster_publish_allowed(app, &network.id, &own_pubkey, &shared.signed_by) {
+        return Ok(0);
+    }
     let roster = NetworkRoster {
         network_name: shared.name,
         participants: shared.participants,
@@ -4520,16 +4562,22 @@ async fn publish_fips_active_network_roster(
         },
     };
     let mut recipients = app.active_network_signal_pubkeys_hex();
+    recipients.extend(extra_recipients.iter().cloned());
     recipients.retain(|recipient| recipient != &own_pubkey);
     recipients.sort();
     recipients.dedup();
 
     let mut sent = 0usize;
     for recipient in recipients {
-        runtime
+        match runtime
             .send_roster(&recipient, &shared.network_id, roster.clone())
-            .await?;
-        sent += 1;
+            .await
+        {
+            Ok(()) => sent += 1,
+            Err(error) => {
+                eprintln!("fips: roster send to {recipient} failed: {error}");
+            }
+        }
     }
     Ok(sent)
 }
