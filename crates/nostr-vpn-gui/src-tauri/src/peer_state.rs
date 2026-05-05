@@ -298,10 +298,11 @@ pub(crate) fn apply_network_invite_to_active_network(
         let _ = config.set_peer_alias(&normalized_inviter_pubkey, &invite.inviter_node_name);
     }
 
-    if should_adopt_name && !invite.network_name.trim().is_empty() {
-        if let Some(network) = config.network_by_id_mut(&target_network_entry_id) {
-            network.name = invite.network_name.trim().to_string();
-        }
+    if should_adopt_name
+        && !invite.network_name.trim().is_empty()
+        && let Some(network) = config.network_by_id_mut(&target_network_entry_id)
+    {
+        network.name = invite.network_name.trim().to_string();
     }
 
     for relay in &invite.relays {

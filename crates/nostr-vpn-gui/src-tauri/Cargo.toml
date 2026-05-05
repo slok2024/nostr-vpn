@@ -32,6 +32,7 @@ tauri = { version = "2.6", features = ["tray-icon", "image-png", "tracing"] }
 tauri-plugin-deep-link = "2"
 tauri-plugin-hashtree-updater = "0.2"
 
+nostr-vpn-app-core = { path = "../../nostr-vpn-app-core" }
 nostr-vpn-core = { path = "../../nostr-vpn-core" }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]

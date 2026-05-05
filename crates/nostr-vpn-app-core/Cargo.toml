@@ -1,0 +1,20 @@
+[package]
+name = "nostr-vpn-app-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Native app state and action contract for Nostr VPN"
+
+[lib]
+name = "nostr_vpn_app_core"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+nostr-vpn-core = { path = "../nostr-vpn-core" }
+serde.workspace = true
+serde_json.workspace = true
+uniffi.workspace = true
+
+[lints]
+workspace = true

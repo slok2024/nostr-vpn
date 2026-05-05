@@ -117,7 +117,6 @@ use nostr_vpn_core::config::{
     AppConfig, PendingInboundJoinRequest, PendingOutboundJoinRequest, derive_mesh_tunnel_ip,
     maybe_autoconfigure_node, normalize_nostr_pubkey, normalize_runtime_network_id,
 };
-use nostr_vpn_core::diagnostics::{HealthIssue, NetworkSummary, PortMappingStatus};
 #[cfg(target_os = "windows")]
 use nostr_vpn_core::platform_paths::legacy_config_path_from_dirs_config_dir;
 #[cfg(any(target_os = "windows", test))]
@@ -132,7 +131,7 @@ use nostr_vpn_core::relay::{
     RelayOperatorState as SharedRelayOperatorState,
     ServiceOperatorState as SharedServiceOperatorState,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use tauri::WindowEvent;
 #[cfg(target_os = "macos")]
@@ -1760,25 +1759,25 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use base64::Engine as _;
+    use nostr_vpn_app_core::{DaemonPeerState, runtime_capabilities_for};
 
     use super::path_resolution::migrate_legacy_mobile_config_file;
     use super::{
-        ConfiguredPeerStatus, DaemonPeerState, DaemonRuntimeState, GuiLaunchDisposition,
-        IOS_TAURI_ORIGIN, LAN_PAIRING_ANNOUNCEMENT_VERSION, LAN_PAIRING_DURATION_SECS,
-        NETWORK_INVITE_PREFIX, NetworkInvite, NetworkView, NvpnBackend, ParticipantView,
-        PeerPresenceStatus, PendingLaunchAction, RuntimePlatform, SettingsPatch,
-        TRAY_EXIT_NODE_NONE_MENU_ID, TRAY_RUN_EXIT_NODE_MENU_ID, TRAY_THIS_DEVICE_MENU_ID,
-        TRAY_VPN_TOGGLE_MENU_ID, TrayMenuItemSpec, TrayRuntimeState, active_network_invite_code,
+        ConfiguredPeerStatus, DaemonRuntimeState, GuiLaunchDisposition, IOS_TAURI_ORIGIN,
+        LAN_PAIRING_ANNOUNCEMENT_VERSION, LAN_PAIRING_DURATION_SECS, NETWORK_INVITE_PREFIX,
+        NetworkInvite, NetworkView, NvpnBackend, ParticipantView, PeerPresenceStatus,
+        PendingLaunchAction, RuntimePlatform, SettingsPatch, TRAY_EXIT_NODE_NONE_MENU_ID,
+        TRAY_RUN_EXIT_NODE_MENU_ID, TRAY_THIS_DEVICE_MENU_ID, TRAY_VPN_TOGGLE_MENU_ID,
+        TrayMenuItemSpec, TrayRuntimeState, active_network_invite_code,
         apply_network_invite_to_active_network, bundled_nvpn_candidate_paths,
         cli_binary_installed_at, config_path_from_roots, decode_lan_pairing_announcement,
         desktop_config_path_from_roots, epoch_secs_to_system_time, expected_peer_count,
         extract_json_document, gui_launch_disposition, gui_requires_service_enable,
-        gui_requires_service_install, ios_runtime_status_detail, ios_vpn_session_control_supported,
-        is_already_running_message, is_mesh_complete, is_not_running_message, network_device_count,
-        network_online_device_count, parse_advertised_routes_input, parse_exit_node_input,
-        parse_network_invite, parse_running_gui_instances, peer_offers_exit_node,
-        peer_presence_state_label, peer_state_label, pending_launch_action,
-        run_blocking_mutex_action, runtime_capabilities_for_platform,
+        gui_requires_service_install, is_already_running_message, is_mesh_complete,
+        is_not_running_message, network_device_count, network_online_device_count,
+        parse_advertised_routes_input, parse_exit_node_input, parse_network_invite,
+        parse_running_gui_instances, peer_offers_exit_node, peer_presence_state_label,
+        peer_state_label, pending_launch_action, run_blocking_mutex_action,
         should_defer_gui_daemon_start_to_service_on_autostart,
         should_defer_gui_daemon_start_until_first_tick, should_start_gui_daemon_on_launch,
         should_surface_existing_instance_args, started_from_autostart_args,
@@ -3836,7 +3835,7 @@ mod tests {
 
     #[test]
     fn android_runtime_capabilities_disable_desktop_management_features() {
-        let capabilities = runtime_capabilities_for_platform(RuntimePlatform::Android);
+        let capabilities = runtime_capabilities_for(RuntimePlatform::Android, false);
 
         assert_eq!(capabilities.platform, "android");
         assert!(capabilities.mobile);
@@ -3853,7 +3852,7 @@ mod tests {
 
     #[test]
     fn ios_runtime_capabilities_enable_mobile_vpn_control() {
-        let capabilities = runtime_capabilities_for_platform(RuntimePlatform::Ios);
+        let capabilities = runtime_capabilities_for(RuntimePlatform::Ios, false);
 
         assert_eq!(capabilities.platform, "ios");
         assert!(capabilities.mobile);
@@ -3870,30 +3869,23 @@ mod tests {
 
     #[test]
     fn ios_simulator_runtime_capabilities_disable_mobile_vpn_control() {
-        assert!(!ios_vpn_session_control_supported(true));
-        assert!(ios_runtime_status_detail(true).contains("iOS Simulator"));
+        let capabilities = runtime_capabilities_for(RuntimePlatform::Ios, true);
+
+        assert!(!capabilities.vpn_session_control_supported);
+        assert!(capabilities.runtime_status_detail.contains("iOS Simulator"));
     }
 
     #[test]
     fn desktop_runtime_capabilities_keep_existing_management_features() {
-        let capabilities = runtime_capabilities_for_platform(RuntimePlatform::Desktop);
+        let capabilities = runtime_capabilities_for(RuntimePlatform::Desktop, false);
 
         assert_eq!(capabilities.platform, "desktop");
         assert!(!capabilities.mobile);
         assert!(capabilities.cli_install_supported);
         assert!(capabilities.startup_settings_supported);
         assert!(capabilities.tray_behavior_supported);
-        if cfg!(target_os = "windows") {
-            assert!(!capabilities.vpn_session_control_supported);
-            assert!(
-                capabilities
-                    .runtime_status_detail
-                    .contains("tunnel control is not wired up yet")
-            );
-        } else {
-            assert!(capabilities.vpn_session_control_supported);
-            assert_eq!(capabilities.runtime_status_detail, "");
-        }
+        assert!(capabilities.vpn_session_control_supported);
+        assert_eq!(capabilities.runtime_status_detail, "");
     }
 
     #[test]

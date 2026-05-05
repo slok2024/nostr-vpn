@@ -610,7 +610,7 @@ fn spawn_tun_read_task(tun: Arc<TunSocket>, packet_tx: mpsc::Sender<Vec<u8>>) ->
         let mut buf = vec![0_u8; 65_535];
         loop {
             match tun.read(&mut buf) {
-                Ok(packet) if packet.is_empty() => {
+                Ok([]) => {
                     sleep(Duration::from_millis(10)).await;
                 }
                 Ok(packet) => {

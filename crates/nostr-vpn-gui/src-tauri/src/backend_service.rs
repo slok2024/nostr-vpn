@@ -35,21 +35,20 @@ impl NvpnBackend {
             }
         }
 
+        #[cfg(target_os = "windows")]
         if let Err(error) = self.config.save(&self.config_path) {
-            #[cfg(target_os = "windows")]
-            {
-                if requires_admin_privileges_error(&error) {
-                    self.persist_config_with_admin_privileges()?;
-                } else {
-                    return Err(error);
-                }
-            }
-
-            #[cfg(not(target_os = "windows"))]
-            {
+            if requires_admin_privileges_error(&error) {
+                self.persist_config_with_admin_privileges()?;
+            } else {
                 return Err(error);
             }
         }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.config.save(&self.config_path)?;
+        }
+
         self.ensure_relay_status_entries();
         self.ensure_peer_status_entries();
         Ok(PersistConfigOutcome::SavedLocally)

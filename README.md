@@ -35,6 +35,7 @@ It currently ships:
 | `nostr-vpn-relay` | Minimal local websocket relay used for integration and e2e testing |
 | `nvpn-reflector` | Minimal UDP reflector used for NAT discovery and hole-punch testing |
 | `nostr-vpn-core` | Shared library for config, signaling, NAT helpers, diagnostics, MagicDNS, and WireGuard helpers |
+| `nostr-vpn-app-core` | Native app state/action contract and UniFFI bridge used by the Rust-core/native-front rewrite |
 
 ## Protocol
 
@@ -332,6 +333,9 @@ Lower-level commands:
 The GUI lives in [`crates/nostr-vpn-gui`](crates/nostr-vpn-gui). It is the Tauri/Svelte app codebase for the shipped desktop app, the Android build, and the in-repo iOS target.
 
 The commands below are the desktop flow. Android and iOS use Tauri mobile tooling and the platform-specific code under `src-tauri/`.
+
+The native UI rewrite parity target is tracked in [`docs/native-ui-parity-matrix.md`](docs/native-ui-parity-matrix.md).
+The shared native app contract lives in [`crates/nostr-vpn-app-core`](crates/nostr-vpn-app-core), with native shell targets under [`macos`](macos), [`windows`](windows), [`linux`](linux), [`android`](android), and [`ios`](ios).
 
 Run it in development:
 

@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use nostr_vpn_app_core::DaemonPeerState;
 use nostr_vpn_core::config::AppConfig;
 use nostr_vpn_core::presence::PeerPresenceBook;
 
 use crate::mobile_wg::PeerRuntimeStatus;
-use crate::{DaemonPeerState, DaemonRuntimeState, PEER_ONLINE_GRACE_SECS};
+use crate::{DaemonRuntimeState, PEER_ONLINE_GRACE_SECS};
 
 pub(crate) fn build_mobile_runtime_state(
     config: &AppConfig,
