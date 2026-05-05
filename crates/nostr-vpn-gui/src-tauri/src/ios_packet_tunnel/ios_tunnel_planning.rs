@@ -99,9 +99,6 @@ pub(super) fn build_peer_announcement(config: &AppConfig, listen_port: u16) -> P
         endpoint: endpoint.clone(),
         local_endpoint: Some(endpoint),
         public_endpoint: None,
-        relay_endpoint: None,
-        relay_pubkey: None,
-        relay_expires_at: None,
         tunnel_ip: config.node.tunnel_ip.clone(),
         advertised_routes: config.effective_advertised_routes(),
         timestamp: unix_timestamp(),
@@ -503,9 +500,6 @@ mod tests {
             endpoint: endpoint.to_string(),
             local_endpoint: None,
             public_endpoint: Some(endpoint.to_string()),
-            relay_endpoint: None,
-            relay_pubkey: None,
-            relay_expires_at: None,
             tunnel_ip: tunnel_ip.to_string(),
             advertised_routes: routes.iter().map(|route| (*route).to_string()).collect(),
             timestamp: 1,
@@ -585,30 +579,6 @@ mod tests {
         assert!(!routes.iter().any(|route| route == "0.0.0.0/0"));
         assert!(routes.iter().any(|route| route == "10.44.0.2/32"));
         assert!(routes.iter().any(|route| route == "10.60.0.0/24"));
-    }
-
-    #[test]
-    fn ios_withholds_default_route_for_fresh_relay_endpoint_without_success() {
-        let (config, own, mut announcements, planned, path_book) = planned_exit_peer();
-        let exit = config.exit_node.clone();
-        let exit_announcement = announcements
-            .get_mut(&exit)
-            .expect("exit announcement should exist");
-        exit_announcement.relay_endpoint = Some("198.51.100.20:51820".to_string());
-        exit_announcement.relay_expires_at = Some(200);
-
-        let routes = route_targets_for_planned_tunnel_peers(
-            &config,
-            Some(&own),
-            &announcements,
-            &planned,
-            &path_book,
-            None,
-            Some("192.0.2.10:51820"),
-            100,
-        );
-
-        assert!(!routes.iter().any(|route| route == "0.0.0.0/0"));
     }
 
     #[test]

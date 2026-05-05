@@ -537,15 +537,6 @@ async fn update_settings(
         if let Some(advertised_routes) = patch.advertised_routes {
             config.node.advertised_routes = parse_advertised_routes_input(&advertised_routes)?;
         }
-        if let Some(use_public_relay_fallback) = patch.use_public_relay_fallback {
-            config.use_public_relay_fallback = use_public_relay_fallback;
-        }
-        if let Some(relay_for_others) = patch.relay_for_others {
-            config.relay_for_others = relay_for_others;
-        }
-        if let Some(provide_nat_assist) = patch.provide_nat_assist {
-            config.provide_nat_assist = provide_nat_assist;
-        }
         if let Some(magic_dns_suffix) = patch.magic_dns_suffix {
             config.magic_dns_suffix = magic_dns_suffix;
         }

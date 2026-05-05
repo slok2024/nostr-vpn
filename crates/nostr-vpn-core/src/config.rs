@@ -20,8 +20,7 @@ use crate::config_defaults::{
     default_lan_discovery_enabled, default_launch_on_startup, default_listen_for_join_requests,
     default_listen_port, default_nat_discovery_timeout_secs, default_nat_enabled,
     default_nat_stun_servers, default_network_enabled, default_network_id, default_node_id,
-    default_provide_nat_assist, default_relay_for_others, default_relays, default_tunnel_ip,
-    default_use_public_relay_fallback, generate_nostr_identity, is_true, is_zero,
+    default_relays, default_tunnel_ip, generate_nostr_identity, is_true, is_zero,
     npub_for_pubkey_hex, uses_default_network_id,
 };
 pub use crate::config_defaults::{
@@ -81,12 +80,6 @@ pub struct AppConfig {
     pub networks: Vec<NetworkConfig>,
     #[serde(default = "default_node_name")]
     pub node_name: String,
-    #[serde(default = "default_use_public_relay_fallback")]
-    pub use_public_relay_fallback: bool,
-    #[serde(default = "default_relay_for_others")]
-    pub relay_for_others: bool,
-    #[serde(default = "default_provide_nat_assist")]
-    pub provide_nat_assist: bool,
     // Legacy field kept so older config files still deserialize cleanly.
     #[serde(default, skip_serializing)]
     pub auto_disconnect_relays_when_mesh_ready: bool,
@@ -215,9 +208,6 @@ impl Default for AppConfig {
                 shared_roster_signed_by: String::new(),
             }],
             node_name: default_node_name(),
-            use_public_relay_fallback: default_use_public_relay_fallback(),
-            relay_for_others: default_relay_for_others(),
-            provide_nat_assist: default_provide_nat_assist(),
             auto_disconnect_relays_when_mesh_ready: false,
             lan_discovery_enabled: default_lan_discovery_enabled(),
             launch_on_startup: default_launch_on_startup(),

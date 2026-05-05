@@ -39,7 +39,7 @@ It currently ships:
 
 ## Protocol
 
-For the current protocol-level description of invites, signaling, admin roster sync, relay fallback, NAT traversal, and the WireGuard data plane, see [docs/protocol.md](docs/protocol.md).
+For the current protocol-level description of invites, signaling, admin roster sync, NAT traversal, and the WireGuard data plane, see [docs/protocol.md](docs/protocol.md).
 
 ## Platform status
 

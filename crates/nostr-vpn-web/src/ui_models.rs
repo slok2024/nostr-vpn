@@ -138,29 +138,6 @@ pub(crate) fn build_ui_state(state: &ServerState) -> Result<UiState> {
         advertise_exit_node: config.node.advertise_exit_node,
         advertised_routes: config.node.advertised_routes.clone(),
         effective_advertised_routes: config.effective_advertised_routes(),
-        use_public_relay_fallback: config.use_public_relay_fallback,
-        relay_for_others: config.relay_for_others,
-        provide_nat_assist: config.provide_nat_assist,
-        relay_operator_running: daemon_state.is_some_and(|value| value.relay_operator_running),
-        relay_operator_status: daemon_state
-            .map(|value| value.relay_operator_status.clone())
-            .unwrap_or_else(|| {
-                if config.relay_for_others {
-                    "Waiting for relay operator".to_string()
-                } else {
-                    "Relay operator disabled".to_string()
-                }
-            }),
-        nat_assist_running: daemon_state.is_some_and(|value| value.nat_assist_running),
-        nat_assist_status: daemon_state
-            .map(|value| value.nat_assist_status.clone())
-            .unwrap_or_else(|| {
-                if config.provide_nat_assist {
-                    "Waiting for NAT assist".to_string()
-                } else {
-                    "NAT assist disabled".to_string()
-                }
-            }),
         magic_dns_suffix: config.magic_dns_suffix.clone(),
         magic_dns_status,
         autoconnect: config.autoconnect,
@@ -177,7 +154,6 @@ pub(crate) fn build_ui_state(state: &ServerState) -> Result<UiState> {
         networks,
         relays,
         relay_summary,
-        relay_operator: None,
         lan_peers: Vec::new(),
     })
 }

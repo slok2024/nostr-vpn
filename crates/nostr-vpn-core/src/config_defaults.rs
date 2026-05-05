@@ -62,18 +62,6 @@ pub(crate) const fn default_nat_discovery_timeout_secs() -> u64 {
     2
 }
 
-pub(crate) fn default_use_public_relay_fallback() -> bool {
-    true
-}
-
-pub(crate) fn default_relay_for_others() -> bool {
-    false
-}
-
-pub(crate) fn default_provide_nat_assist() -> bool {
-    false
-}
-
 pub(crate) fn default_lan_discovery_enabled() -> bool {
     true
 }

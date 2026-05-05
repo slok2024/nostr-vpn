@@ -11,9 +11,6 @@ pub(crate) fn sample_peer_announcement(public_key: String) -> PeerAnnouncement {
         endpoint: "203.0.113.20:51820".to_string(),
         local_endpoint: Some("192.168.1.20:51820".to_string()),
         public_endpoint: Some("203.0.113.20:51820".to_string()),
-        relay_endpoint: None,
-        relay_pubkey: None,
-        relay_expires_at: None,
         tunnel_ip: "10.44.0.2/32".to_string(),
         advertised_routes: Vec::new(),
         timestamp: 1,
@@ -47,9 +44,6 @@ pub(crate) fn build_peer_announcement(
         endpoint,
         local_endpoint: Some(local_endpoint),
         public_endpoint,
-        relay_endpoint: None,
-        relay_pubkey: None,
-        relay_expires_at: None,
         tunnel_ip: app.node.tunnel_ip.clone(),
         advertised_routes: crate::runtime_effective_advertised_routes(app),
         timestamp: crate::unix_timestamp(),
@@ -195,7 +189,6 @@ pub(crate) fn pending_nat_punch_targets_for_local_endpoints(
         .filter(|participant| Some(participant.as_str()) != own_pubkey)
         .filter_map(|participant| {
             let announcement = peer_announcements.get(participant)?;
-            let effective_announcement = announcement.without_expired_relay(now);
             if crate::peer_runtime_lookup(announcement, runtime_peers)
                 .is_some_and(crate::peer_has_recent_handshake)
             {
@@ -222,20 +215,20 @@ pub(crate) fn pending_nat_punch_targets_for_local_endpoints(
             let selected_endpoint = path_book
                 .select_endpoint_for_local_endpoints(
                     participant,
-                    &effective_announcement,
+                    announcement,
                     own_local_endpoints,
                     now,
                     crate::PEER_PATH_RETRY_AFTER_SECS,
                 )
                 .unwrap_or_else(|| {
                     crate::select_peer_endpoint_from_local_endpoints(
-                        &effective_announcement,
+                        announcement,
                         own_local_endpoints,
                     )
                 });
             if crate::peer_endpoint_requires_public_signal(
                 app,
-                &effective_announcement,
+                announcement,
                 &selected_endpoint,
                 own_local_endpoints,
             ) {

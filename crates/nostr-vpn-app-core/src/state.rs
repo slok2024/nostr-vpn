@@ -36,14 +36,6 @@ pub struct DaemonRuntimeState {
     pub network: NetworkSummary,
     #[serde(default)]
     pub port_mapping: PortMappingStatus,
-    #[serde(default)]
-    pub relay_operator_running: bool,
-    #[serde(default)]
-    pub relay_operator_status: String,
-    #[serde(default)]
-    pub nat_assist_running: bool,
-    #[serde(default)]
-    pub nat_assist_status: String,
     pub peers: Vec<DaemonPeerState>,
 }
 
@@ -54,8 +46,6 @@ pub struct DaemonPeerState {
     pub node_id: String,
     pub tunnel_ip: String,
     pub endpoint: String,
-    #[serde(default)]
-    pub relay_endpoint: Option<String>,
     #[serde(default)]
     pub runtime_endpoint: Option<String>,
     #[serde(default)]
@@ -88,8 +78,6 @@ pub struct ParticipantView {
     pub tunnel_ip: String,
     pub magic_dns_alias: String,
     pub magic_dns_name: String,
-    pub relay_path_active: bool,
-    pub runtime_endpoint: String,
     pub tx_bytes: u64,
     pub rx_bytes: u64,
     pub advertised_routes: Vec<String>,
@@ -98,39 +86,6 @@ pub struct ParticipantView {
     pub presence_state: String,
     pub status_text: String,
     pub last_signal_text: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct RelayOperatorSessionView {
-    pub request_id: String,
-    pub network_id: String,
-    pub requester_npub: String,
-    pub requester_pubkey_hex: String,
-    pub target_npub: String,
-    pub target_pubkey_hex: String,
-    pub requester_ingress_endpoint: String,
-    pub target_ingress_endpoint: String,
-    pub started_text: String,
-    pub expires_text: String,
-    pub bytes_from_requester: u64,
-    pub bytes_from_target: u64,
-    pub total_forwarded_bytes: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct RelayOperatorView {
-    pub relay_npub: String,
-    pub relay_pubkey_hex: String,
-    pub advertised_endpoint: String,
-    pub total_sessions_served: u64,
-    pub total_forwarded_bytes: u64,
-    pub current_forward_bps: u64,
-    pub unique_peer_count: usize,
-    pub active_session_count: usize,
-    pub updated_text: String,
-    pub active_sessions: Vec<RelayOperatorSessionView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -221,13 +176,6 @@ pub struct UiState {
     pub advertise_exit_node: bool,
     pub advertised_routes: Vec<String>,
     pub effective_advertised_routes: Vec<String>,
-    pub use_public_relay_fallback: bool,
-    pub relay_for_others: bool,
-    pub provide_nat_assist: bool,
-    pub relay_operator_running: bool,
-    pub relay_operator_status: String,
-    pub nat_assist_running: bool,
-    pub nat_assist_status: String,
     pub magic_dns_suffix: String,
     pub magic_dns_status: String,
     pub autoconnect: bool,
@@ -244,7 +192,6 @@ pub struct UiState {
     pub networks: Vec<NetworkView>,
     pub relays: Vec<RelayView>,
     pub relay_summary: RelaySummary,
-    pub relay_operator: Option<RelayOperatorView>,
     pub lan_peers: Vec<LanPeerView>,
 }
 
@@ -258,9 +205,6 @@ pub struct SettingsPatch {
     pub exit_node: Option<String>,
     pub advertise_exit_node: Option<bool>,
     pub advertised_routes: Option<String>,
-    pub use_public_relay_fallback: Option<bool>,
-    pub relay_for_others: Option<bool>,
-    pub provide_nat_assist: Option<bool>,
     pub magic_dns_suffix: Option<String>,
     pub autoconnect: Option<bool>,
     pub launch_on_startup: Option<bool>,

@@ -9,7 +9,6 @@ mod macos_network;
 mod macos_service;
 mod network_signaling;
 mod platform_routing;
-mod relay_runtime;
 mod service_management;
 mod session_runtime;
 #[cfg(any(target_os = "windows", test))]
@@ -20,7 +19,6 @@ mod windows_tunnel;
 use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "windows")]
 use std::ffi::OsString;
-use std::fmt::Write as _;
 use std::fs;
 use std::fs::OpenOptions;
 #[cfg(any(target_os = "macos", test))]
@@ -35,7 +33,7 @@ use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command as ProcessCommand, Stdio};
+use std::process::{Command as ProcessCommand, Stdio};
 #[cfg(test)]
 use std::sync::Mutex;
 #[cfg(any(target_os = "windows", test))]
@@ -74,7 +72,6 @@ use nostr_vpn_core::magic_dns::{
 use nostr_vpn_core::nat::{
     discover_public_udp_endpoint, discover_public_udp_endpoint_via_stun, hole_punch_udp,
 };
-use nostr_vpn_core::node_record::{NODE_RECORD_RELAY_TAG, NodeServiceKind, discover_node_records};
 use nostr_vpn_core::paths::PeerPathBook;
 #[cfg(target_os = "windows")]
 use nostr_vpn_core::platform_paths::{
@@ -83,18 +80,12 @@ use nostr_vpn_core::platform_paths::{
     windows_service_config_path_from_sc_qc_output,
 };
 use nostr_vpn_core::presence::PeerPresenceBook;
-use nostr_vpn_core::relay::{
-    RelayAllocationGranted, RelayAllocationRejected, RelayAllocationRequest, RelayOperatorState,
-    RelayProbeRequest, ServiceOperatorState,
-};
-use nostr_vpn_core::service_signaling::{RelayServiceClient, ServicePayload};
 use nostr_vpn_core::signaling::{
     NetworkRoster, NostrSignalingClient, SignalEnvelope, SignalPayload, SignalingNetwork,
 };
 use nostr_vpn_core::wireguard::{InterfaceConfig, PeerConfig, render_wireguard_config};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::net::UdpSocket;
 #[cfg(target_os = "windows")]
 use windows_service::define_windows_service;
 #[cfg(target_os = "windows")]
@@ -129,7 +120,6 @@ use crate::network_signaling::{
 };
 #[cfg(any(test, not(target_os = "windows")))]
 pub(crate) use crate::platform_routing::*;
-pub(crate) use crate::relay_runtime::*;
 #[cfg(test)]
 pub(crate) use crate::service_management::parse_nonzero_pid;
 #[cfg(any(target_os = "windows", test))]
@@ -195,16 +185,6 @@ const MAJOR_LINK_CHANGE_TIME_JUMP_SECS: u64 = 30;
 // sessions can stay healthy for roughly the reject-after window (~180s), so a
 // 20s cutoff misclassifies healthy peers as disconnected.
 const PEER_ONLINE_GRACE_SECS: u64 = 180;
-const RELAY_DISCOVERY_LOOKBACK_SECS: u64 = 900;
-const RELAY_REQUEST_RETRY_AFTER_SECS: u64 = 30;
-const RELAY_REQUEST_TIMEOUT_SECS: u64 = 120;
-const RELAY_SESSION_VERIFY_TIMEOUT_SECS: u64 = 8;
-const RELAY_FAILED_RETRY_AFTER_SECS: u64 = 60;
-const RELAY_PROVIDER_FAILURE_MAX_COOLDOWN_SECS: u64 = 900;
-const RELAY_PROVIDER_PROBE_TIMEOUT_SECS: u64 = 4;
-const RELAY_PROVIDER_PROBE_RETRY_AFTER_SECS: u64 = 60;
-const MAX_PARALLEL_RELAY_PROVIDER_PROBES: usize = 2;
-const MAX_PARALLEL_RELAY_REQUESTS_PER_PARTICIPANT: usize = 3;
 const MIN_PERSISTED_PEER_CACHE_TIMEOUT_SECS: u64 = 600;
 const PERSISTED_PEER_CACHE_TIMEOUT_MULTIPLIER: u64 = 30;
 const MIN_PERSISTED_PATH_CACHE_TIMEOUT_SECS: u64 = 1_800;
@@ -318,8 +298,6 @@ enum Command {
     Down(DownArgs),
     /// Show local and discovered peer status.
     Status(StatusArgs),
-    /// Show relay operator stats from the local state file.
-    Stats(StatsArgs),
     /// Update persisted node/network settings.
     Set(SetArgs),
     /// Emit an `nvpn://invite/...` code for the active network.
@@ -646,16 +624,6 @@ struct StatusArgs {
 }
 
 #[derive(Debug, Args)]
-struct StatsArgs {
-    #[arg(long)]
-    config: Option<PathBuf>,
-    #[arg(long)]
-    state_file: Option<PathBuf>,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Args)]
 struct SetArgs {
     #[arg(long)]
     config: Option<PathBuf>,
@@ -683,10 +651,6 @@ struct SetArgs {
     advertise_routes: Option<String>,
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     advertise_exit_node: Option<bool>,
-    #[arg(long)]
-    relay_for_others: Option<bool>,
-    #[arg(long)]
-    provide_nat_assist: Option<bool>,
     #[arg(long)]
     autoconnect: Option<bool>,
     #[arg(long)]
@@ -1043,9 +1007,6 @@ async fn run_command(command: Command) -> Result<()> {
                             endpoint: peer.endpoint.clone(),
                             local_endpoint: None,
                             public_endpoint: None,
-                            relay_endpoint: None,
-                            relay_pubkey: None,
-                            relay_expires_at: None,
                             tunnel_ip: peer.tunnel_ip.clone(),
                             advertised_routes: peer.advertised_routes.clone(),
                             timestamp: peer.presence_timestamp,
@@ -1099,8 +1060,6 @@ async fn run_command(command: Command) -> Result<()> {
                         "advertised_routes": app.node.advertised_routes,
                         "effective_advertised_routes": runtime_effective_advertised_routes(&app),
                         "relays": relays,
-                        "relay_for_others": app.relay_for_others,
-                        "provide_nat_assist": app.provide_nat_assist,
                         "daemon": daemon_status_json_value(&daemon),
                         "expected_peer_count": expected_peers,
                         "peer_count": peer_count,
@@ -1138,8 +1097,6 @@ async fn run_command(command: Command) -> Result<()> {
                 } else {
                     println!("advertised_routes: {}", effective_routes.join(", "));
                 }
-                println!("relay_for_others: {}", app.relay_for_others);
-                println!("provide_nat_assist: {}", app.provide_nat_assist);
                 println!("relays: {}", relays.len());
                 if daemon.running {
                     println!("daemon: running (pid {})", daemon.pid.unwrap_or_default());
@@ -1168,23 +1125,6 @@ async fn run_command(command: Command) -> Result<()> {
                         );
                     }
                 }
-            }
-        }
-        Command::Stats(args) => {
-            let config_path = args.config.unwrap_or_else(default_config_path);
-            let state_file = resolve_stats_state_file_path(args.state_file, &config_path)?;
-            let state = load_service_operator_state(&state_file)?;
-
-            if args.json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "state_file": state_file,
-                        "stats": state,
-                    }))?
-                );
-            } else {
-                print!("{}", render_service_operator_stats(&state_file, &state));
             }
         }
         Command::Set(args) => {
@@ -1220,12 +1160,6 @@ async fn run_command(command: Command) -> Result<()> {
             }
             if let Some(value) = args.advertise_exit_node {
                 app.node.advertise_exit_node = value;
-            }
-            if let Some(value) = args.relay_for_others {
-                app.relay_for_others = value;
-            }
-            if let Some(value) = args.provide_nat_assist {
-                app.provide_nat_assist = value;
             }
             if let Some(value) = args.autoconnect {
                 app.autoconnect = value;
@@ -1717,253 +1651,6 @@ struct DaemonRuntimeState {
     port_mapping: PortMappingStatus,
     #[serde(default)]
     peers: Vec<DaemonPeerState>,
-    #[serde(default)]
-    relay_operator_running: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    relay_operator_pid: Option<u32>,
-    #[serde(default)]
-    relay_operator_status: String,
-    #[serde(default)]
-    nat_assist_running: bool,
-    #[serde(default)]
-    nat_assist_status: String,
-}
-
-fn load_service_operator_state(path: &Path) -> Result<ServiceOperatorState> {
-    let raw = fs::read(path)
-        .with_context(|| format!("failed to read relay stats state {}", path.display()))?;
-    parse_service_operator_state(&raw)
-        .with_context(|| format!("failed to parse relay stats state {}", path.display()))
-}
-
-fn parse_service_operator_state(raw: &[u8]) -> Result<ServiceOperatorState, serde_json::Error> {
-    match serde_json::from_slice::<ServiceOperatorState>(raw) {
-        Ok(state)
-            if state.relay.is_some()
-                || state.nat_assist.is_some()
-                || !state.operator_pubkey.trim().is_empty() =>
-        {
-            Ok(state)
-        }
-        Err(service_error) => match serde_json::from_slice::<RelayOperatorState>(raw) {
-            Ok(relay_state) => Ok(ServiceOperatorState {
-                updated_at: relay_state.updated_at,
-                operator_pubkey: relay_state.relay_pubkey.clone(),
-                relay: Some(relay_state),
-                nat_assist: None,
-            }),
-            Err(_) => Err(service_error),
-        },
-        Ok(_) => match serde_json::from_slice::<RelayOperatorState>(raw) {
-            Ok(relay_state) => Ok(ServiceOperatorState {
-                updated_at: relay_state.updated_at,
-                operator_pubkey: relay_state.relay_pubkey.clone(),
-                relay: Some(relay_state),
-                nat_assist: None,
-            }),
-            Err(service_error) => Err(service_error),
-        },
-    }
-}
-
-fn stats_state_file_candidates(config_path: &Path) -> Vec<PathBuf> {
-    let mut candidates = vec![relay_operator_state_file_path(config_path)];
-    if let Some(config_dir) = dirs::config_dir() {
-        candidates.push(config_dir.join("nvpn").join("relay.operator.json"));
-    }
-    #[cfg(target_os = "linux")]
-    candidates.push(PathBuf::from("/var/lib/nvpn-udp-relay/relay.operator.json"));
-    candidates.dedup();
-    candidates
-}
-
-fn resolve_stats_state_file_path(
-    explicit_state_file: Option<PathBuf>,
-    config_path: &Path,
-) -> Result<PathBuf> {
-    if let Some(path) = explicit_state_file {
-        return Ok(path);
-    }
-
-    let candidates = stats_state_file_candidates(config_path);
-    if let Some(path) = candidates.iter().find(|path| path.exists()) {
-        return Ok(path.clone());
-    }
-
-    Err(anyhow!(
-        "relay stats state file not found; checked {}",
-        candidates
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    ))
-}
-
-fn render_service_operator_stats(state_file: &Path, state: &ServiceOperatorState) -> String {
-    let mut output = String::new();
-    let now = unix_timestamp();
-
-    let _ = writeln!(output, "state_file: {}", state_file.display());
-    let _ = writeln!(
-        output,
-        "updated: {}",
-        format_relative_timestamp(state.updated_at, now)
-    );
-    if !state.operator_pubkey.trim().is_empty() {
-        let _ = writeln!(output, "operator_pubkey: {}", state.operator_pubkey);
-    }
-
-    if let Some(relay) = state.relay.as_ref() {
-        let _ = writeln!(output, "relay: enabled");
-        if !relay.advertised_endpoint.trim().is_empty() {
-            let _ = writeln!(output, "relay_endpoint: {}", relay.advertised_endpoint);
-        }
-        let _ = writeln!(
-            output,
-            "total_sessions_served: {}",
-            relay.total_sessions_served
-        );
-        let _ = writeln!(output, "unique_peers_served: {}", relay.unique_peer_count);
-        let _ = writeln!(output, "active_sessions: {}", relay.active_sessions.len());
-        let _ = writeln!(
-            output,
-            "total_forwarded: {} ({} B)",
-            format_human_bytes(relay.total_forwarded_bytes),
-            relay.total_forwarded_bytes
-        );
-        let _ = writeln!(
-            output,
-            "current_forward_rate: {}/s",
-            format_human_bytes(relay.current_forward_bps)
-        );
-
-        for session in &relay.active_sessions {
-            let total_forwarded = session
-                .bytes_from_requester
-                .saturating_add(session.bytes_from_target);
-            let _ = writeln!(
-                output,
-                "session {}: {} -> {} forwarded={} expires_in={}",
-                session.request_id,
-                abbreviate_id(&session.requester_pubkey),
-                abbreviate_id(&session.target_pubkey),
-                format_human_bytes(total_forwarded),
-                format_remaining_secs(session.expires_at.saturating_sub(now))
-            );
-        }
-    } else {
-        let _ = writeln!(output, "relay: disabled");
-    }
-
-    if let Some(nat_assist) = state.nat_assist.as_ref() {
-        let _ = writeln!(output, "nat_assist: enabled");
-        if !nat_assist.advertised_endpoint.trim().is_empty() {
-            let _ = writeln!(
-                output,
-                "nat_assist_endpoint: {}",
-                nat_assist.advertised_endpoint
-            );
-        }
-        let _ = writeln!(
-            output,
-            "nat_assist_unique_clients: {}",
-            nat_assist.unique_client_count
-        );
-        let _ = writeln!(
-            output,
-            "nat_assist_discovery_requests: {}",
-            nat_assist.total_discovery_requests
-        );
-        let _ = writeln!(
-            output,
-            "nat_assist_punch_requests: {}",
-            nat_assist.total_punch_requests
-        );
-        let _ = writeln!(
-            output,
-            "nat_assist_request_rate: {} req/s",
-            nat_assist.current_request_bps
-        );
-    } else {
-        let _ = writeln!(output, "nat_assist: disabled");
-    }
-
-    output
-}
-
-fn format_human_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-
-    if bytes < 1024 {
-        return format!("{bytes} B");
-    }
-
-    let mut value = bytes as f64;
-    let mut unit_index = 0;
-    while value >= 1024.0 && unit_index < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit_index += 1;
-    }
-
-    if value >= 10.0 {
-        format!("{value:.1} {}", UNITS[unit_index])
-    } else {
-        format!("{value:.2} {}", UNITS[unit_index])
-    }
-}
-
-fn format_relative_timestamp(timestamp: u64, now: u64) -> String {
-    if timestamp == 0 {
-        return "unknown".to_string();
-    }
-
-    format!(
-        "{} (unix {})",
-        format_elapsed_secs(now.saturating_sub(timestamp)),
-        timestamp
-    )
-}
-
-fn format_elapsed_secs(secs: u64) -> String {
-    if secs < 60 {
-        return format!("{secs}s ago");
-    }
-    if secs < 3600 {
-        return format!("{}m ago", secs / 60);
-    }
-    if secs < 86_400 {
-        return format!("{}h ago", secs / 3600);
-    }
-    format!("{}d ago", secs / 86_400)
-}
-
-fn format_remaining_secs(secs: u64) -> String {
-    if secs < 60 {
-        return format!("{secs}s");
-    }
-    if secs < 3600 {
-        return format!("{}m", secs / 60);
-    }
-    if secs < 86_400 {
-        return format!("{}h", secs / 3600);
-    }
-    format!("{}d", secs / 86_400)
-}
-
-fn abbreviate_id(value: &str) -> String {
-    const HEAD_LEN: usize = 8;
-    const TAIL_LEN: usize = 8;
-
-    if value.len() <= HEAD_LEN + TAIL_LEN + 1 {
-        return value.to_string();
-    }
-
-    format!(
-        "{}..{}",
-        &value[..HEAD_LEN],
-        &value[value.len().saturating_sub(TAIL_LEN)..]
-    )
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -1990,8 +1677,6 @@ struct DaemonPeerState {
     node_id: String,
     tunnel_ip: String,
     endpoint: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    relay_endpoint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     runtime_endpoint: Option<String>,
     #[serde(default)]
@@ -2029,26 +1714,6 @@ struct DaemonPeerCacheState {
 struct ExecutableFingerprint {
     len: u64,
     modified_unix_nanos: Option<u128>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct LocalRelayOperatorRuntime {
-    running: bool,
-    pid: Option<u32>,
-    status: String,
-    nat_assist_running: bool,
-    nat_assist_status: String,
-}
-
-#[derive(Debug)]
-struct LocalRelayOperatorProcess {
-    child: Child,
-    pid: u32,
-    advertise_host: String,
-    relays: Vec<String>,
-    secret_key: String,
-    relay_enabled: bool,
-    nat_assist_enabled: bool,
 }
 
 struct DaemonPeerCacheRestore<'a> {
@@ -2151,23 +1816,6 @@ struct PlannedTunnelPeer {
     peer: TunnelPeer,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ActiveRelaySession {
-    relay_pubkey: String,
-    local_ingress_endpoint: String,
-    advertised_ingress_endpoint: String,
-    granted_at: u64,
-    verified_at: Option<u64>,
-    expires_at: u64,
-}
-
-#[derive(Debug, Clone)]
-struct PendingRelayRequest {
-    participant: String,
-    relay_pubkey: String,
-    requested_at: u64,
-}
-
 #[derive(Debug, Clone, Default)]
 struct OutboundAnnounceBook {
     entries: HashMap<String, OutboundAnnounceEntry>,
@@ -2177,32 +1825,6 @@ struct OutboundAnnounceBook {
 struct OutboundAnnounceEntry {
     fingerprint: String,
     sent_at: u64,
-}
-
-type RelayFailureCooldowns = HashMap<String, u64>;
-type RelayProviderVerificationBook = HashMap<String, RelayProviderVerification>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum RelayGrantAction {
-    Activated(String),
-    QueuedStandby(String),
-    Ignored,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum RelayProviderProbeOutcome {
-    Verified,
-    Rejected(Option<u64>),
-    Failed,
-}
-
-#[derive(Debug, Clone, Default)]
-struct RelayProviderVerification {
-    verified_at: Option<u64>,
-    failure_cooldown_until: Option<u64>,
-    last_failure_at: Option<u64>,
-    last_probe_attempt_at: Option<u64>,
-    consecutive_failures: u32,
 }
 
 impl OutboundAnnounceBook {
@@ -2247,490 +1869,6 @@ impl OutboundAnnounceBook {
         self.entries
             .retain(|participant, _| participants.contains(participant));
     }
-}
-
-fn effective_peer_announcement_for_runtime(
-    announcement: &PeerAnnouncement,
-    relay_session: Option<&ActiveRelaySession>,
-    now: u64,
-) -> PeerAnnouncement {
-    let announcement = announcement.without_expired_relay(now);
-    if let Some(session) = relay_session.filter(|session| relay_session_is_active(session, now)) {
-        announcement.with_relay(
-            Some(session.local_ingress_endpoint.clone()),
-            Some(session.relay_pubkey.clone()),
-            Some(session.expires_at),
-        )
-    } else {
-        announcement
-    }
-}
-
-fn effective_peer_announcements_for_runtime(
-    peer_announcements: &HashMap<String, PeerAnnouncement>,
-    relay_sessions: &HashMap<String, ActiveRelaySession>,
-    now: u64,
-) -> HashMap<String, PeerAnnouncement> {
-    peer_announcements
-        .iter()
-        .map(|(participant, announcement)| {
-            (
-                participant.clone(),
-                effective_peer_announcement_for_runtime(
-                    announcement,
-                    relay_sessions.get(participant),
-                    now,
-                ),
-            )
-        })
-        .collect()
-}
-
-fn participant_has_pending_relay_request(
-    pending_requests: &HashMap<String, PendingRelayRequest>,
-    participant: &str,
-    now: u64,
-) -> bool {
-    pending_requests.values().any(|request| {
-        request.participant == participant
-            && now.saturating_sub(request.requested_at) < RELAY_REQUEST_RETRY_AFTER_SECS
-    })
-}
-
-fn participants_needing_relay(
-    app: &AppConfig,
-    own_pubkey: Option<&str>,
-    presence: &PeerPresenceBook,
-    tunnel_runtime: &CliTunnelRuntime,
-    relay_sessions: &HashMap<String, ActiveRelaySession>,
-    pending_requests: &HashMap<String, PendingRelayRequest>,
-    now: u64,
-) -> Vec<String> {
-    if app.private_mesh_uses_fips() {
-        return Vec::new();
-    }
-    let runtime_peers = tunnel_runtime.peer_status().ok();
-    app.participant_pubkeys_hex()
-        .into_iter()
-        .filter(|participant| Some(participant.as_str()) != own_pubkey)
-        .filter(|participant| presence.announcement_for(participant).is_some())
-        .filter(|participant| {
-            relay_sessions
-                .get(participant)
-                .is_none_or(|session| !relay_session_is_active(session, now))
-        })
-        .filter(|participant| {
-            !participant_has_pending_relay_request(pending_requests, participant, now)
-        })
-        .filter(|participant| {
-            let Some(announcement) = presence.announcement_for(participant) else {
-                return false;
-            };
-            let runtime_peer = peer_runtime_lookup(announcement, runtime_peers.as_ref());
-            !runtime_peer.is_some_and(peer_has_recent_handshake)
-        })
-        .collect()
-}
-
-async fn probe_relay_provider_datapath(
-    requester_ingress_endpoint: &str,
-    target_ingress_endpoint: &str,
-) -> Result<()> {
-    let requester_ingress = requester_ingress_endpoint
-        .parse::<SocketAddr>()
-        .with_context(|| format!("invalid requester ingress {requester_ingress_endpoint}"))?;
-    let target_ingress = target_ingress_endpoint
-        .parse::<SocketAddr>()
-        .with_context(|| format!("invalid target ingress {target_ingress_endpoint}"))?;
-    let requester_socket = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0)))
-        .await
-        .context("failed to bind requester probe socket")?;
-    let target_socket = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0)))
-        .await
-        .context("failed to bind target probe socket")?;
-    let nonce_b_to_a = format!("nvpn-relay-probe-b-to-a:{requester_ingress}:{target_ingress}");
-    let nonce_a_to_b = format!("nvpn-relay-probe-a-to-b:{target_ingress}:{requester_ingress}");
-    let mut buf = [0_u8; 512];
-
-    requester_socket
-        .send_to(b"nvpn-relay-probe-bind", requester_ingress)
-        .await
-        .context("failed to bind requester probe leg")?;
-    target_socket
-        .send_to(nonce_b_to_a.as_bytes(), target_ingress)
-        .await
-        .context("failed to send target-side relay probe")?;
-    let (read, src) = tokio::time::timeout(
-        Duration::from_millis(750),
-        requester_socket.recv_from(&mut buf),
-    )
-    .await
-    .context("timed out waiting for requester-side relay probe")?
-    .context("failed to receive requester-side relay probe")?;
-    if src != requester_ingress || &buf[..read] != nonce_b_to_a.as_bytes() {
-        return Err(anyhow!(
-            "requester-side relay probe did not loop through the expected ingress"
-        ));
-    }
-
-    requester_socket
-        .send_to(nonce_a_to_b.as_bytes(), requester_ingress)
-        .await
-        .context("failed to send requester-side relay probe")?;
-    let (read, src) = tokio::time::timeout(
-        Duration::from_millis(750),
-        target_socket.recv_from(&mut buf),
-    )
-    .await
-    .context("timed out waiting for target-side relay probe")?
-    .context("failed to receive target-side relay probe")?;
-    if src != target_ingress || &buf[..read] != nonce_a_to_b.as_bytes() {
-        return Err(anyhow!(
-            "target-side relay probe did not loop through the expected ingress"
-        ));
-    }
-
-    Ok(())
-}
-
-async fn probe_relay_provider(
-    relays: &[String],
-    secret_key: &str,
-    relay_pubkey: &str,
-    now: u64,
-) -> Result<RelayProviderProbeOutcome> {
-    let probe_client = RelayServiceClient::from_secret_key(secret_key)?;
-    probe_client.connect(relays).await?;
-    tokio::time::sleep(Duration::from_millis(150)).await;
-
-    let request_id = format!("probe:{relay_pubkey}:{now}");
-    let request = RelayProbeRequest {
-        request_id: request_id.clone(),
-        requested_at: now,
-    };
-    let publish_result = probe_client
-        .publish_to(ServicePayload::RelayProbeRequest(request), relay_pubkey)
-        .await;
-    if let Err(error) = publish_result {
-        probe_client.disconnect().await;
-        return Err(error);
-    }
-
-    let deadline =
-        tokio::time::Instant::now() + Duration::from_secs(RELAY_PROVIDER_PROBE_TIMEOUT_SECS);
-    let outcome = loop {
-        let wait_for = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if wait_for.is_zero() {
-            break RelayProviderProbeOutcome::Failed;
-        }
-        let Some(message) = tokio::time::timeout(wait_for, probe_client.recv())
-            .await
-            .ok()
-            .flatten()
-        else {
-            break RelayProviderProbeOutcome::Failed;
-        };
-        match message.payload {
-            ServicePayload::RelayProbeGranted(granted)
-                if granted.request_id == request_id && granted.relay_pubkey == relay_pubkey =>
-            {
-                let probe = probe_relay_provider_datapath(
-                    &granted.requester_ingress_endpoint,
-                    &granted.target_ingress_endpoint,
-                )
-                .await;
-                break if probe.is_ok() {
-                    RelayProviderProbeOutcome::Verified
-                } else {
-                    RelayProviderProbeOutcome::Failed
-                };
-            }
-            ServicePayload::RelayProbeRejected(rejected)
-                if rejected.request_id == request_id && rejected.relay_pubkey == relay_pubkey =>
-            {
-                break RelayProviderProbeOutcome::Rejected(rejected.retry_after_secs);
-            }
-            _ => continue,
-        }
-    };
-
-    probe_client.disconnect().await;
-    Ok(outcome)
-}
-
-async fn proactively_probe_relay_providers(
-    relays: &[String],
-    secret_key: &str,
-    relay_pubkeys: &[String],
-    relay_provider_verifications: &mut RelayProviderVerificationBook,
-    now: u64,
-) -> Result<usize> {
-    let candidates = relay_pubkeys
-        .iter()
-        .map(String::as_str)
-        .filter(|relay_pubkey| {
-            relay_provider_probe_due(relay_provider_verifications, relay_pubkey, now)
-        })
-        .take(MAX_PARALLEL_RELAY_PROVIDER_PROBES)
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    let mut probed = 0usize;
-
-    for relay_pubkey in candidates {
-        note_relay_provider_probe_attempt(relay_provider_verifications, &relay_pubkey, now);
-        match probe_relay_provider(relays, secret_key, &relay_pubkey, now).await {
-            Ok(RelayProviderProbeOutcome::Verified) => {
-                eprintln!("relay: proactive probe verified {relay_pubkey}");
-                note_verified_relay_provider(relay_provider_verifications, &relay_pubkey, now);
-                probed = probed.saturating_add(1);
-            }
-            Ok(RelayProviderProbeOutcome::Rejected(retry_after_secs)) => {
-                eprintln!("relay: proactive probe rejected by {relay_pubkey}");
-                note_failed_relay_provider(
-                    relay_provider_verifications,
-                    &relay_pubkey,
-                    now,
-                    retry_after_secs,
-                );
-                probed = probed.saturating_add(1);
-            }
-            Ok(RelayProviderProbeOutcome::Failed) => {
-                eprintln!("relay: proactive probe failed for {relay_pubkey}");
-                note_failed_relay_provider(
-                    relay_provider_verifications,
-                    &relay_pubkey,
-                    now,
-                    Some(RELAY_PROVIDER_PROBE_RETRY_AFTER_SECS),
-                );
-                probed = probed.saturating_add(1);
-            }
-            Err(error) => {
-                eprintln!("relay: proactive probe failed for {relay_pubkey}: {error}");
-                note_failed_relay_provider(
-                    relay_provider_verifications,
-                    &relay_pubkey,
-                    now,
-                    Some(RELAY_PROVIDER_PROBE_RETRY_AFTER_SECS),
-                );
-                probed = probed.saturating_add(1);
-            }
-        }
-    }
-
-    Ok(probed)
-}
-
-async fn discover_relay_operator_pubkeys(
-    relays: &[String],
-    relay_provider_verifications: &RelayProviderVerificationBook,
-    now: u64,
-) -> Result<Vec<String>> {
-    let mut candidates = discover_node_records(
-        relays,
-        NODE_RECORD_RELAY_TAG,
-        Duration::from_secs(RELAY_DISCOVERY_LOOKBACK_SECS),
-    )
-    .await?
-    .into_iter()
-    .filter_map(|(pubkey, record)| record.has_service(NodeServiceKind::Relay).then_some(pubkey))
-    .filter(|pubkey| !relay_provider_in_failure_cooldown(relay_provider_verifications, pubkey, now))
-    .collect::<Vec<_>>();
-    candidates
-        .sort_by_key(|pubkey| relay_provider_sort_key(relay_provider_verifications, pubkey, now));
-    candidates.dedup();
-    Ok(candidates)
-}
-
-fn relay_candidates_for_participant<'a>(
-    relay_pubkeys: &'a [String],
-    participant: &str,
-    own_pubkey: Option<&str>,
-    relay_failures: &RelayFailureCooldowns,
-    relay_provider_verifications: &RelayProviderVerificationBook,
-    now: u64,
-) -> Vec<&'a str> {
-    let mut candidates = relay_pubkeys
-        .iter()
-        .map(String::as_str)
-        .filter(|candidate| *candidate != participant && Some(*candidate) != own_pubkey)
-        .filter(|candidate| {
-            !relay_is_in_failure_cooldown(relay_failures, participant, candidate, now)
-        })
-        .filter(|candidate| {
-            !relay_provider_in_failure_cooldown(relay_provider_verifications, candidate, now)
-        })
-        .collect::<Vec<_>>();
-    candidates.sort_by_key(|candidate| {
-        relay_provider_sort_key(relay_provider_verifications, candidate, now)
-    });
-    candidates.truncate(MAX_PARALLEL_RELAY_REQUESTS_PER_PARTICIPANT);
-    candidates
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn maybe_request_public_relay_fallback(
-    service_client: &RelayServiceClient,
-    relays: &[String],
-    app: &AppConfig,
-    own_pubkey: Option<&str>,
-    presence: &PeerPresenceBook,
-    tunnel_runtime: &CliTunnelRuntime,
-    relay_sessions: &HashMap<String, ActiveRelaySession>,
-    relay_failures: &RelayFailureCooldowns,
-    relay_provider_verifications: &mut RelayProviderVerificationBook,
-    pending_requests: &mut HashMap<String, PendingRelayRequest>,
-    now: u64,
-) -> Result<usize> {
-    let participants = participants_needing_relay(
-        app,
-        own_pubkey,
-        presence,
-        tunnel_runtime,
-        relay_sessions,
-        pending_requests,
-        now,
-    );
-    if participants.is_empty() {
-        return Ok(0);
-    }
-
-    let mut relay_pubkeys =
-        discover_relay_operator_pubkeys(relays, relay_provider_verifications, now).await?;
-    if relay_pubkeys.is_empty() {
-        return Ok(0);
-    }
-    let _ = proactively_probe_relay_providers(
-        relays,
-        &app.nostr.secret_key,
-        &relay_pubkeys,
-        relay_provider_verifications,
-        now,
-    )
-    .await?;
-    relay_pubkeys.retain(|pubkey| {
-        !relay_provider_in_failure_cooldown(relay_provider_verifications, pubkey, now)
-    });
-    relay_pubkeys
-        .sort_by_key(|pubkey| relay_provider_sort_key(relay_provider_verifications, pubkey, now));
-    relay_pubkeys.dedup();
-    if relay_pubkeys.is_empty() {
-        return Ok(0);
-    }
-
-    let mut requested = 0usize;
-    for participant in participants {
-        let relay_candidates = relay_candidates_for_participant(
-            &relay_pubkeys,
-            &participant,
-            own_pubkey,
-            relay_failures,
-            relay_provider_verifications,
-            now,
-        );
-        if relay_candidates.is_empty() {
-            continue;
-        }
-
-        for relay_pubkey in relay_candidates {
-            let request_id = format!(
-                "{}:{}:{}:{}",
-                app.effective_network_id(),
-                participant,
-                relay_pubkey,
-                now
-            );
-            let request = RelayAllocationRequest {
-                request_id: request_id.clone(),
-                network_id: app.effective_network_id(),
-                target_pubkey: participant.clone(),
-                requested_at: now,
-            };
-            service_client
-                .publish_to(
-                    ServicePayload::RelayAllocationRequest(request),
-                    relay_pubkey,
-                )
-                .await
-                .with_context(|| {
-                    format!("failed to request relay allocation from {relay_pubkey}")
-                })?;
-            pending_requests.insert(
-                request_id,
-                PendingRelayRequest {
-                    participant: participant.clone(),
-                    relay_pubkey: relay_pubkey.to_string(),
-                    requested_at: now,
-                },
-            );
-            requested += 1;
-        }
-    }
-
-    Ok(requested)
-}
-
-fn accept_relay_allocation_grant(
-    granted: RelayAllocationGranted,
-    pending_requests: &mut HashMap<String, PendingRelayRequest>,
-    relay_sessions: &mut HashMap<String, ActiveRelaySession>,
-    standby_relay_sessions: &mut HashMap<String, Vec<ActiveRelaySession>>,
-    relay_failures: &RelayFailureCooldowns,
-    now: u64,
-) -> RelayGrantAction {
-    if granted.expires_at <= now {
-        return RelayGrantAction::Ignored;
-    }
-    let Some(pending) = pending_requests.remove(&granted.request_id) else {
-        return RelayGrantAction::Ignored;
-    };
-    if pending.relay_pubkey != granted.relay_pubkey {
-        return RelayGrantAction::Ignored;
-    }
-    let participant = pending.participant.clone();
-    if relay_is_in_failure_cooldown(relay_failures, &participant, &pending.relay_pubkey, now) {
-        return RelayGrantAction::Ignored;
-    }
-
-    let session = active_relay_session_from_grant(granted, now);
-    if relay_sessions
-        .get(&participant)
-        .is_some_and(|existing| relay_session_is_active(existing, now))
-    {
-        if queue_standby_relay_session(standby_relay_sessions, &participant, session) {
-            RelayGrantAction::QueuedStandby(participant)
-        } else {
-            RelayGrantAction::Ignored
-        }
-    } else {
-        relay_sessions.insert(participant.clone(), session);
-        RelayGrantAction::Activated(participant)
-    }
-}
-
-fn accept_relay_allocation_rejection(
-    rejected: RelayAllocationRejected,
-    pending_requests: &mut HashMap<String, PendingRelayRequest>,
-    relay_failures: &mut RelayFailureCooldowns,
-    relay_provider_verifications: &mut RelayProviderVerificationBook,
-    now: u64,
-) -> Option<String> {
-    let pending = pending_requests.remove(&rejected.request_id)?;
-    if pending.relay_pubkey != rejected.relay_pubkey {
-        return None;
-    }
-    note_failed_relay(
-        relay_failures,
-        &pending.participant,
-        &pending.relay_pubkey,
-        now,
-    );
-    note_failed_relay_provider(
-        relay_provider_verifications,
-        &pending.relay_pubkey,
-        now,
-        rejected.retry_after_secs,
-    );
-    Some(pending.participant)
 }
 
 fn maybe_reset_targeted_announce_cache_for_hello(
@@ -4398,13 +3536,6 @@ struct DiscoveredPublicSignalEndpoint {
     endpoint: String,
 }
 
-#[derive(Debug, Clone, Default)]
-struct RelayAnnouncementDetails {
-    relay_endpoint: Option<String>,
-    relay_pubkey: Option<String>,
-    relay_expires_at: Option<u64>,
-}
-
 fn refresh_public_signal_endpoint(
     app: &AppConfig,
     listen_port: u16,
@@ -4541,26 +3672,6 @@ fn build_explicit_peer_announcement(
     tunnel_ip: String,
     advertised_routes: Vec<String>,
 ) -> PeerAnnouncement {
-    build_explicit_peer_announcement_with_relay(
-        node_id,
-        public_key,
-        endpoint,
-        local_endpoint,
-        tunnel_ip,
-        advertised_routes,
-        RelayAnnouncementDetails::default(),
-    )
-}
-
-fn build_explicit_peer_announcement_with_relay(
-    node_id: String,
-    public_key: String,
-    endpoint: String,
-    local_endpoint: String,
-    tunnel_ip: String,
-    advertised_routes: Vec<String>,
-    relay: RelayAnnouncementDetails,
-) -> PeerAnnouncement {
     let public_endpoint = endpoint_can_advertise_public_override(&endpoint, &local_endpoint)
         .then_some(endpoint.clone());
     let endpoint = if public_endpoint.is_some() {
@@ -4575,9 +3686,6 @@ fn build_explicit_peer_announcement_with_relay(
         endpoint,
         local_endpoint: Some(local_endpoint),
         public_endpoint,
-        relay_endpoint: relay.relay_endpoint,
-        relay_pubkey: relay.relay_pubkey,
-        relay_expires_at: relay.relay_expires_at,
         tunnel_ip,
         advertised_routes,
         timestamp: unix_timestamp(),
@@ -4591,9 +3699,6 @@ fn announcement_fingerprint(announcement: &PeerAnnouncement) -> String {
         announcement.endpoint.as_str(),
         announcement.local_endpoint.as_deref().unwrap_or(""),
         announcement.public_endpoint.as_deref().unwrap_or(""),
-        announcement.relay_endpoint.as_deref().unwrap_or(""),
-        announcement.relay_pubkey.as_deref().unwrap_or(""),
-        &announcement.relay_expires_at.unwrap_or(0).to_string(),
         announcement.tunnel_ip.as_str(),
         &announcement.advertised_routes.join(","),
     ]
@@ -4874,14 +3979,6 @@ fn runtime_endpoint_is_viable_for_peer(
     own_local_endpoints: &[String],
 ) -> bool {
     if !endpoint_is_local_only(runtime_endpoint) {
-        return true;
-    }
-
-    if announcement
-        .relay_endpoint
-        .as_deref()
-        .is_some_and(|endpoint| endpoint == runtime_endpoint)
-    {
         return true;
     }
 
@@ -5536,7 +4633,6 @@ async fn publish_private_announce_to_participants(
     app: &AppConfig,
     tunnel_runtime: &CliTunnelRuntime,
     public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
-    relay_sessions: &HashMap<String, ActiveRelaySession>,
     outbound_announces: &mut OutboundAnnounceBook,
     participants: &[String],
     peer_announcements: Option<&HashMap<String, PeerAnnouncement>>,
@@ -5574,23 +4670,13 @@ async fn publish_private_announce_to_participants(
         let endpoint = public_endpoint
             .clone()
             .unwrap_or_else(|| local_endpoint.clone());
-        let relay_session = relay_sessions.get(&participant);
-        let relay_fields = relay_session
-            .filter(|session| relay_session_is_active(session, unix_timestamp()))
-            .map(|session| RelayAnnouncementDetails {
-                relay_endpoint: Some(session.advertised_ingress_endpoint.clone()),
-                relay_pubkey: Some(session.relay_pubkey.clone()),
-                relay_expires_at: Some(session.expires_at),
-            })
-            .unwrap_or_default();
-        let announcement = build_explicit_peer_announcement_with_relay(
+        let announcement = build_explicit_peer_announcement(
             app.node.id.clone(),
             app.node.public_key.clone(),
             endpoint,
             local_endpoint,
             app.node.tunnel_ip.clone(),
             runtime_effective_advertised_routes(app),
-            relay_fields,
         );
         let fingerprint = announcement_fingerprint(&announcement);
         if !outbound_announces.needs_send(&participant, &fingerprint, now, retry_after_secs) {
@@ -5619,7 +4705,6 @@ async fn publish_private_announce_to_active_peers(
     presence: &PeerPresenceBook,
     tunnel_runtime: &CliTunnelRuntime,
     public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
-    relay_sessions: &HashMap<String, ActiveRelaySession>,
     outbound_announces: &mut OutboundAnnounceBook,
 ) -> Result<usize> {
     let participants = active_private_announce_participants(app, own_pubkey, presence);
@@ -5629,7 +4714,6 @@ async fn publish_private_announce_to_active_peers(
         app,
         tunnel_runtime,
         public_signal_endpoint,
-        relay_sessions,
         outbound_announces,
         &participants,
         Some(presence.active()),
@@ -5688,7 +4772,6 @@ async fn publish_private_announce_to_known_peers(
     presence: &PeerPresenceBook,
     tunnel_runtime: &CliTunnelRuntime,
     public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
-    relay_sessions: &HashMap<String, ActiveRelaySession>,
     outbound_announces: &mut OutboundAnnounceBook,
 ) -> Result<usize> {
     let participants = known_private_announce_participants(app, own_pubkey, presence);
@@ -5698,7 +4781,6 @@ async fn publish_private_announce_to_known_peers(
         app,
         tunnel_runtime,
         public_signal_endpoint,
-        relay_sessions,
         outbound_announces,
         &participants,
         Some(presence.known()),
@@ -5715,7 +4797,6 @@ async fn publish_private_announce_repair_to_known_peers(
     presence: &PeerPresenceBook,
     tunnel_runtime: &CliTunnelRuntime,
     public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
-    relay_sessions: &HashMap<String, ActiveRelaySession>,
     outbound_announces: &mut OutboundAnnounceBook,
 ) -> Result<usize> {
     let runtime_peers = tunnel_runtime.peer_status().ok();
@@ -5731,7 +4812,6 @@ async fn publish_private_announce_repair_to_known_peers(
         app,
         tunnel_runtime,
         public_signal_endpoint,
-        relay_sessions,
         outbound_announces,
         &participants,
         Some(presence.known()),
@@ -5801,25 +4881,21 @@ fn planned_tunnel_peers_for_local_endpoints(
         let Some(announcement) = peer_announcements.get(participant) else {
             continue;
         };
-        let effective_announcement = announcement.without_expired_relay(now);
-        path_book.refresh_from_announcement(participant.clone(), &effective_announcement, now);
+        path_book.refresh_from_announcement(participant.clone(), announcement, now);
         let selected_endpoint = path_book
             .select_endpoint_for_local_endpoints(
                 participant,
-                &effective_announcement,
+                announcement,
                 own_local_endpoints,
                 now,
                 PEER_PATH_RETRY_AFTER_SECS,
             )
             .unwrap_or_else(|| {
-                select_peer_endpoint_from_local_endpoints(
-                    &effective_announcement,
-                    own_local_endpoints,
-                )
+                select_peer_endpoint_from_local_endpoints(announcement, own_local_endpoints)
             });
         if peer_endpoint_requires_public_signal(
             app,
-            &effective_announcement,
+            announcement,
             &selected_endpoint,
             own_local_endpoints,
         ) {
@@ -5830,7 +4906,7 @@ fn planned_tunnel_peers_for_local_endpoints(
             participant: participant.clone(),
             endpoint: selected_endpoint.clone(),
             peer: tunnel_peer_from_endpoint(
-                &effective_announcement,
+                announcement,
                 &selected_endpoint,
                 route_assignments
                     .get(participant)
@@ -5969,7 +5045,6 @@ fn pending_nat_punch_targets_for_local_endpoints(
         .filter(|participant| Some(participant.as_str()) != own_pubkey)
         .filter_map(|participant| {
             let announcement = peer_announcements.get(participant)?;
-            let effective_announcement = announcement.without_expired_relay(now);
             if peer_runtime_lookup(announcement, runtime_peers)
                 .is_some_and(peer_has_recent_handshake)
             {
@@ -5994,20 +5069,17 @@ fn pending_nat_punch_targets_for_local_endpoints(
             let selected_endpoint = path_book
                 .select_endpoint_for_local_endpoints(
                     participant,
-                    &effective_announcement,
+                    announcement,
                     own_local_endpoints,
                     now,
                     PEER_PATH_RETRY_AFTER_SECS,
                 )
                 .unwrap_or_else(|| {
-                    select_peer_endpoint_from_local_endpoints(
-                        &effective_announcement,
-                        own_local_endpoints,
-                    )
+                    select_peer_endpoint_from_local_endpoints(announcement, own_local_endpoints)
                 });
             if peer_endpoint_requires_public_signal(
                 app,
-                &effective_announcement,
+                announcement,
                 &selected_endpoint,
                 own_local_endpoints,
             ) {
@@ -6364,17 +5436,6 @@ fn selected_exit_node_ready_for_default_route(
         return false;
     };
 
-    if announcement
-        .relay_endpoint
-        .as_deref()
-        .is_some_and(|relay_endpoint| relay_endpoint == planned.endpoint)
-        && announcement
-            .relay_expires_at
-            .is_none_or(|expires_at| expires_at > now)
-    {
-        return true;
-    }
-
     let Some(runtime_peer) = runtime_peers.and_then(|peers| peers.get(&planned.peer.pubkey_hex))
     else {
         let own_local_endpoints = runtime_local_signal_endpoints(app, app.node.listen_port);
@@ -6455,19 +5516,17 @@ fn apply_presence_runtime_update(
     app: &AppConfig,
     own_pubkey: Option<&str>,
     presence: &PeerPresenceBook,
-    relay_sessions: &HashMap<String, ActiveRelaySession>,
     path_book: &mut PeerPathBook,
     now: u64,
     tunnel_runtime: &mut CliTunnelRuntime,
     magic_dns_runtime: Option<&ConnectMagicDnsRuntime>,
 ) -> Result<()> {
-    let effective_announcements =
-        effective_peer_announcements_for_runtime(presence.known(), relay_sessions, now);
+    let effective_announcements = presence.known();
     if !app.private_mesh_uses_fips() {
-        tunnel_runtime.apply(app, own_pubkey, &effective_announcements, path_book, now)?;
+        tunnel_runtime.apply(app, own_pubkey, effective_announcements, path_book, now)?;
     }
     if let Some(runtime) = magic_dns_runtime {
-        runtime.refresh_records(app, &effective_announcements);
+        runtime.refresh_records(app, effective_announcements);
     }
     Ok(())
 }
@@ -7525,6 +6584,5 @@ mod tests {
     mod routing;
     mod runtime_misc;
     mod service_cli;
-    mod stats_cli;
     pub(crate) mod support;
 }

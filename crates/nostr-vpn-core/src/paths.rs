@@ -13,7 +13,6 @@ const OBSERVED_PUBLIC_ENDPOINT_STICKY_SECS: u64 = 180;
 enum PeerPathSource {
     Local,
     Public,
-    Relay,
     Legacy,
     Observed,
 }
@@ -24,10 +23,6 @@ impl PeerPathSource {
     }
 
     fn rank(self, same_subnet_local: bool) -> u8 {
-        if matches!(self, Self::Relay) {
-            return 5;
-        }
-
         if same_subnet_local {
             return 4;
         }
@@ -36,7 +31,6 @@ impl PeerPathSource {
             Self::Public | Self::Observed => 2,
             Self::Legacy => 1,
             Self::Local => 0,
-            Self::Relay => 5,
         }
     }
 }
@@ -92,22 +86,15 @@ impl PeerPathBook {
         let state = self.peers.entry(participant).or_default();
         let mut changed = false;
         let announced_endpoints = announcement_endpoints(announcement);
-        let announced_relay_endpoints = announced_endpoints
-            .iter()
-            .filter(|(_, source)| matches!(source, PeerPathSource::Relay))
-            .map(|(endpoint, _)| endpoint.clone())
-            .collect::<HashSet<_>>();
 
         let before = state.endpoints.len();
         state.endpoints.retain(|endpoint, tracked| {
-            (tracked.source != PeerPathSource::Relay
-                || announced_relay_endpoints.contains(endpoint))
-                && !observed_endpoint_superseded_by_announcement(
-                    endpoint,
-                    tracked,
-                    &announced_endpoints,
-                    seen_at,
-                )
+            !observed_endpoint_superseded_by_announcement(
+                endpoint,
+                tracked,
+                &announced_endpoints,
+                seen_at,
+            )
         });
         if state.endpoints.len() != before {
             changed = true;
@@ -219,32 +206,6 @@ impl PeerPathBook {
     pub fn retain_participants(&mut self, participants: &HashSet<String>) {
         self.peers
             .retain(|participant, _| participants.contains(participant));
-    }
-
-    pub fn remove_relay_paths_for_participant(&mut self, participant: &str) -> bool {
-        let Some(state) = self.peers.get_mut(participant) else {
-            return false;
-        };
-
-        let before = state.endpoints.len();
-        state
-            .endpoints
-            .retain(|_, tracked| tracked.source != PeerPathSource::Relay);
-        let mut changed = state.endpoints.len() != before;
-
-        if let Some(current_endpoint) = state.current_endpoint.as_deref()
-            && !state.endpoints.contains_key(current_endpoint)
-        {
-            state.current_endpoint = None;
-            changed = true;
-        }
-
-        if state.endpoints.is_empty() {
-            self.peers.remove(participant);
-            changed = true;
-        }
-
-        changed
     }
 
     pub fn endpoint_has_recent_success_for_local_endpoints(
@@ -404,13 +365,6 @@ fn announcement_endpoints(announcement: &PeerAnnouncement) -> Vec<(String, PeerP
         endpoints.push((public_endpoint.to_string(), PeerPathSource::Public));
     }
 
-    if let Some(relay_endpoint) = announcement.relay_endpoint.as_deref()
-        && !relay_endpoint.trim().is_empty()
-        && seen.insert(relay_endpoint.to_string())
-    {
-        endpoints.push((relay_endpoint.to_string(), PeerPathSource::Relay));
-    }
-
     if !announcement.endpoint.trim().is_empty() && seen.insert(announcement.endpoint.clone()) {
         endpoints.push((announcement.endpoint.clone(), PeerPathSource::Legacy));
     }
@@ -524,16 +478,13 @@ mod tests {
     use super::PeerPathBook;
     use crate::control::PeerAnnouncement;
 
-    fn sample_peer_announcement(relay_endpoint: Option<&str>) -> PeerAnnouncement {
+    fn sample_peer_announcement() -> PeerAnnouncement {
         PeerAnnouncement {
             node_id: "peer-a".to_string(),
             public_key: "peer-public-key".to_string(),
             endpoint: "203.0.113.20:51820".to_string(),
             local_endpoint: Some("192.168.1.20:51820".to_string()),
             public_endpoint: Some("203.0.113.20:51820".to_string()),
-            relay_endpoint: relay_endpoint.map(str::to_string),
-            relay_pubkey: relay_endpoint.map(|_| "relay-pubkey".to_string()),
-            relay_expires_at: relay_endpoint.map(|_| 500),
             tunnel_ip: "10.44.0.2/32".to_string(),
             advertised_routes: Vec::new(),
             timestamp: 100,
@@ -541,52 +492,16 @@ mod tests {
     }
 
     #[test]
-    fn refresh_from_announcement_drops_relay_paths_that_are_no_longer_advertised() {
-        let participant = "11".repeat(32);
-        let mut paths = PeerPathBook::default();
-        let relay_announcement = sample_peer_announcement(Some("198.51.100.30:40001"));
-        paths.refresh_from_announcement(participant.clone(), &relay_announcement, 100);
-        paths.note_selected(participant.clone(), "198.51.100.30:40001", 100);
-
-        let direct_only = sample_peer_announcement(None);
-        paths.refresh_from_announcement(participant.clone(), &direct_only, 101);
-
-        let selected = paths
-            .select_endpoint_for_local_endpoints(&participant, &direct_only, &[], 101, 5)
-            .expect("selected endpoint");
-
-        assert_eq!(selected, "203.0.113.20:51820");
-    }
-
-    #[test]
-    fn refresh_from_announcement_replaces_stale_relay_path_with_new_endpoint() {
-        let participant = "11".repeat(32);
-        let mut paths = PeerPathBook::default();
-        let relay_a = sample_peer_announcement(Some("198.51.100.30:40001"));
-        paths.refresh_from_announcement(participant.clone(), &relay_a, 100);
-        paths.note_selected(participant.clone(), "198.51.100.30:40001", 100);
-
-        let relay_b = sample_peer_announcement(Some("198.51.100.30:40002"));
-        paths.refresh_from_announcement(participant.clone(), &relay_b, 101);
-
-        let selected = paths
-            .select_endpoint_for_local_endpoints(&participant, &relay_b, &[], 101, 5)
-            .expect("selected endpoint");
-
-        assert_eq!(selected, "198.51.100.30:40002");
-    }
-
-    #[test]
     fn refresh_from_announcement_keeps_observed_public_port_with_recent_success() {
         let participant = "11".repeat(32);
         let mut paths = PeerPathBook::default();
-        let announcement = sample_peer_announcement(None);
+        let announcement = sample_peer_announcement();
 
         paths.refresh_from_announcement(participant.clone(), &announcement, 100);
         paths.note_success(participant.clone(), "203.0.113.20:33063", 100);
         paths.note_selected(participant.clone(), "203.0.113.20:33063", 100);
 
-        let refreshed = sample_peer_announcement(None);
+        let refreshed = sample_peer_announcement();
         paths.refresh_from_announcement(participant.clone(), &refreshed, 101);
 
         let selected = paths

@@ -103,13 +103,6 @@ export const mockState: UiState = {
   advertiseExitNode: false,
   advertisedRoutes: [],
   effectiveAdvertisedRoutes: [],
-  usePublicRelayFallback: true,
-  relayForOthers: false,
-  provideNatAssist: false,
-  relayOperatorRunning: false,
-  relayOperatorStatus: 'Relay operator disabled',
-  natAssistRunning: false,
-  natAssistStatus: 'NAT assist disabled',
   magicDnsSuffix: 'nvpn',
   magicDnsStatus: 'System DNS active for .nvpn via 127.0.0.1:1053',
   autoconnect: true,
@@ -154,7 +147,6 @@ export const mockState: UiState = {
     { url: 'wss://relay.snort.social', state: 'unknown', statusText: 'not checked' },
   ],
   relaySummary: { up: 0, down: 0, checking: 0, unknown: 3 },
-  relayOperator: null,
   lanPeers: defaultMockLanPeers(),
 }
 

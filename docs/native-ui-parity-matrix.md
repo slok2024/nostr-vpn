@@ -96,10 +96,7 @@ Legend:
 | Port mapping status | `PortMappingStatus` | UPnP/NAT-PMP/PCP state | Required | Required | Required | Required | Required | Show active protocol and external endpoint. |
 | FIPS relay list | `relays`, `add_relay`, `remove_relay` | Relay config + status | Required | Required | Required | Required | Required | At least one relay required. |
 | Relay state badges | `RelayView` | Up/down/checking/unknown status | Required | Required | Required | Required | Required | Keep status text. |
-| Session/path options | `usePublicRelayFallback`, `autoconnect` | Settings patch | Required | Required | Required | Required | Required | Text should be platform neutral. |
-| Relay fallback participants | `relayFallbackParticipants` | Derived active relay fallback list | Required | Required | Required | Required | Required | Preserve per-peer fallback visibility. |
-| Public relay/NAT assist controls | `PublicServicesPanel.svelte` | Settings patch + runtime operator state | Hidden | Hidden | Hidden | Hidden | Hidden | Component exists but is not mounted in `App.svelte`; decide before rewrite whether to expose or remove. |
-| Relay operator detail | `RelayOperatorView` | Operator identity, ingress, totals, sessions | Hidden | Hidden | Hidden | Hidden | Hidden | Same as above. |
+| Session options | `autoconnect` | Settings patch | Required | Required | Required | Required | Required | Text should be platform neutral. |
 | Background service panel | `ServiceActionPanel.svelte` | Service status, service repair recommendation, actions | Desktop | Desktop | Desktop | N/A | N/A | Mobile should not show desktop service install/repair UI. |
 | Install/reinstall service | `install_system_service` | Desktop service action | Required | Required | Required | N/A | N/A | May require admin/UAC/sudo/polkit flow. |
 | Enable/disable service | `enable_system_service`, `disable_system_service` | Desktop service action | Required | Required | Required | N/A | N/A | Current macOS copy references launchd; native copy should use platform-specific terms. |

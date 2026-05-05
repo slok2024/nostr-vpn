@@ -462,21 +462,6 @@ impl NvpnBackend {
             restart_required = true;
         }
 
-        if let Some(use_public_relay_fallback) = patch.use_public_relay_fallback {
-            self.config.use_public_relay_fallback = use_public_relay_fallback;
-            restart_required = true;
-        }
-
-        if let Some(relay_for_others) = patch.relay_for_others {
-            self.config.relay_for_others = relay_for_others;
-            restart_required = true;
-        }
-
-        if let Some(provide_nat_assist) = patch.provide_nat_assist {
-            self.config.provide_nat_assist = provide_nat_assist;
-            restart_required = true;
-        }
-
         if let Some(magic_dns_suffix) = patch.magic_dns_suffix {
             self.config.magic_dns_suffix = magic_dns_suffix;
             restart_required = true;

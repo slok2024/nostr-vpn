@@ -375,19 +375,6 @@ pub(crate) fn compact_age_text(age_secs: u64) -> String {
     }
 }
 
-pub(crate) fn compact_remaining_text(remaining_secs: u64) -> String {
-    const MINUTE: u64 = 60;
-    const HOUR: u64 = 60 * MINUTE;
-    const DAY: u64 = 24 * HOUR;
-
-    match remaining_secs {
-        0..MINUTE => format!("{remaining_secs}s left"),
-        MINUTE..HOUR => format!("{}m left", remaining_secs / MINUTE),
-        HOUR..DAY => format!("{}h left", remaining_secs / HOUR),
-        _ => format!("{}d left", remaining_secs / DAY),
-    }
-}
-
 pub(crate) fn join_request_age_text(requested_at: u64) -> String {
     let age_secs = epoch_secs_to_system_time(requested_at)
         .and_then(|requested_at| requested_at.elapsed().ok())

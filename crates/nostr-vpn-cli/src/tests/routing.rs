@@ -10,8 +10,6 @@ mod routing_peer_paths;
 mod routing_planning;
 #[path = "routing_platform_helpers.rs"]
 mod routing_platform_helpers;
-#[path = "routing_relays.rs"]
-mod routing_relays;
 #[path = "routing_runtime_endpoints.rs"]
 mod routing_runtime_endpoints;
 

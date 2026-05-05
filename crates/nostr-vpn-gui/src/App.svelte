@@ -32,7 +32,6 @@
   import HeroStatusPanel from './HeroStatusPanel.svelte'
   import AdvancedPanels from './AdvancedPanels.svelte'
   import InviteShareSection from './InviteShareSection.svelte'
-  import PublicServicesPanel from './PublicServicesPanel.svelte'
   import RoutingPanel from './RoutingPanel.svelte'
   import SavedNetworksPanel from './SavedNetworksPanel.svelte'
   import ServiceActionPanel from './ServiceActionPanel.svelte'
@@ -1159,7 +1158,6 @@
 
     <AdvancedPanels
       {state}
-      {activeNetworkView}
       bind:relayInput
       {onAddRelay}
       onRemoveRelay={(relayUrl) => runAction(() => removeRelay(relayUrl))}

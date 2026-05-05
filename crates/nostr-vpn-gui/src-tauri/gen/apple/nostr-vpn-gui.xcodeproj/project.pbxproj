@@ -93,7 +93,6 @@
 		83944203EA96CE766A011117 /* PacketTunnel.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PacketTunnel.entitlements; sourceTree = "<group>"; };
 		87CF3F9EA0A2CB476F47BB27 /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
 		8D1812EA6F6DD8DAF60D35A0 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
-		926221BB6408764E19BBE1DC /* relay_operator_state.rs */ = {isa = PBXFileReference; path = relay_operator_state.rs; sourceTree = "<group>"; };
 		942D02896A51B8BCA6C937F4 /* nostr-vpn-gui_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "nostr-vpn-gui_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		99EF4EA412F6FC730D1CA1BD /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 		9FC7C44E6EE8EE1BEB8C38B0 /* PacketTunnel-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "PacketTunnel-Bridging-Header.h"; sourceTree = "<group>"; };
@@ -268,7 +267,6 @@
 				AD2A2F522E85AA57F63AFC81 /* mobile_wg.rs */,
 				6E9B0420E233ED12B380B3AE /* path_resolution.rs */,
 				DF696AF10B2F7612AF3DE1CC /* peer_state.rs */,
-				926221BB6408764E19BBE1DC /* relay_operator_state.rs */,
 				35EE1DF28CD9918716C0AA56 /* service_status.rs */,
 				B082D3D5A798169CC3BCB072 /* tauri_commands.rs */,
 				F7A8F684CBAD2820D0193A99 /* tray_runtime.rs */,

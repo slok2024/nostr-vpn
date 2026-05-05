@@ -430,14 +430,6 @@ export const selectedExitNodeBadgeText = (state: UiState) => {
   return `Exit ${label}`
 }
 
-export const publicRelayFallbackStatusText = (state: UiState) => {
-  if (state.usePublicRelayFallback) {
-    return 'Legacy WireGuard fallback can still use public relays for non-FIPS paths.'
-  }
-
-  return 'FIPS private mesh paths stay in-app; legacy WireGuard relay fallback is disabled.'
-}
-
 export const formatTrafficBytes = (bytes: number) => {
   if (!Number.isFinite(bytes) || bytes <= 0) {
     return '0 B'
@@ -459,42 +451,6 @@ export const participantTrafficText = (participant: ParticipantView) =>
 
 export const formatTrafficRate = (bytesPerSecond: number) =>
   `${formatTrafficBytes(bytesPerSecond)}/s`
-
-export const relayFallbackParticipants = (network: NetworkView) =>
-  network.participants.filter((participant) => participant.relayPathActive)
-
-export const relayFallbackSummaryText = (network: NetworkView) => {
-  const participants = relayFallbackParticipants(network)
-  if (participants.length === 0) {
-    return 'No peers are currently using relay fallback.'
-  }
-
-  const totals = participants.reduce(
-    (acc, participant) => ({
-      rx: acc.rx + participant.rxBytes,
-      tx: acc.tx + participant.txBytes,
-    }),
-    { rx: 0, tx: 0 },
-  )
-  const verb = participants.length === 1 ? 'is' : 'are'
-  return `${participants.length} peer${participants.length === 1 ? '' : 's'} ${verb} currently using relay fallback · rx ${formatTrafficBytes(totals.rx)} · tx ${formatTrafficBytes(totals.tx)}`
-}
-
-export const relayOperatorSummaryText = (state: UiState) => {
-  const relay = state.relayOperator
-  if (!relay) {
-    return 'No local relay operator snapshot yet.'
-  }
-
-  if (relay.activeSessionCount === 0) {
-    return `No active relayed sessions right now · total ${formatTrafficBytes(relay.totalForwardedBytes)} across ${relay.totalSessionsServed} sessions`
-  }
-
-  return `${relay.activeSessionCount} active relayed session${relay.activeSessionCount === 1 ? '' : 's'} · ${formatTrafficRate(relay.currentForwardBps)} · total ${formatTrafficBytes(relay.totalForwardedBytes)}`
-}
-
-export const relaySessionTrafficText = (bytesFromRequester: number, bytesFromTarget: number) =>
-  `A→B ${formatTrafficBytes(bytesFromRequester)} · B→A ${formatTrafficBytes(bytesFromTarget)}`
 
 export const formatCountdown = (totalSecs: number) => {
   const minutes = Math.floor(totalSecs / 60)

@@ -57,7 +57,7 @@ Tailscale-like:
 - keep a sticky current path until a better one proves itself,
 - probe alternate paths without rebuilding the tunnel,
 - rebind sockets only on real underlay changes,
-- keep endpoint success history and relay fallback policy in one place.
+- keep endpoint success history and path rotation policy in one place.
 
 At that point, disruptive same-port punching becomes a last-resort bootstrap
 tool instead of the normal stale-peer recovery path.

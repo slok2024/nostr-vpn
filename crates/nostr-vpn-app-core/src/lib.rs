@@ -14,9 +14,9 @@ pub use platform::{
 };
 pub use state::{
     DaemonPeerState, DaemonRuntimeState, InboundJoinRequestView, LanPeerView, NetworkView,
-    OutboundJoinRequestView, ParticipantView, RelayOperatorSessionView, RelayOperatorView,
-    RelaySummary, RelayView, SettingsPatch, TrayExitNodeEntry, TrayMenuItemSpec, TrayNetworkGroup,
-    TrayRuntimeState, UiState, empty_state_json,
+    OutboundJoinRequestView, ParticipantView, RelaySummary, RelayView, SettingsPatch,
+    TrayExitNodeEntry, TrayMenuItemSpec, TrayNetworkGroup, TrayRuntimeState, UiState,
+    empty_state_json,
 };
 
 uniffi::setup_scaffolding!();

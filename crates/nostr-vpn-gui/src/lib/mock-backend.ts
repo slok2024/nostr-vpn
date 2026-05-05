@@ -227,8 +227,6 @@ const upsertMockParticipant = (networkId: string, npub: string, alias = '') => {
     tunnelIp: '10.44.0.2/32',
     magicDnsAlias,
     magicDnsName: composeMagicDnsName(magicDnsAlias, mockState.magicDnsSuffix),
-    relayPathActive: false,
-    runtimeEndpoint: '',
     txBytes: 0,
     rxBytes: 0,
     advertisedRoutes: [],
@@ -478,9 +476,6 @@ export const updateSettingsMock = (patch: SettingsPatch) => {
       .split(',')
       .map((value) => value.trim())
       .filter((value) => value.length > 0)
-  }
-  if (patch.usePublicRelayFallback !== undefined) {
-    mockState.usePublicRelayFallback = patch.usePublicRelayFallback
   }
   if (patch.autoconnect !== undefined) {
     mockState.autoconnect = patch.autoconnect

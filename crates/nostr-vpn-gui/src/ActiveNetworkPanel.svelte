@@ -260,9 +260,6 @@
             <div class="item-sub" data-testid="participant-status-text">
               {participant.magicDnsName || participant.magicDnsAlias || 'No alias'} | {participant.statusText} | {participant.lastSignalText} | {participant.tunnelIp}
               | {participantTrafficText(participant)}
-              {#if participant.relayPathActive && participant.runtimeEndpoint}
-                | fallback {participant.runtimeEndpoint}
-              {/if}
               {#if participant.advertisedRoutes.length > 0}
                 | routes {participant.advertisedRoutes.join(', ')}
               {/if}
@@ -285,9 +282,6 @@
               <span class="badge participant-badge ok" data-testid="participant-admin-badge">
                 Admin
               </span>
-            {/if}
-            {#if participant.relayPathActive}
-              <span class="badge participant-badge warn">Relay fallback</span>
             {/if}
             {#if participant.offersExitNode}
               <span class="badge participant-badge warn">Private exit</span>

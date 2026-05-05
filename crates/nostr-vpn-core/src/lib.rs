@@ -12,12 +12,9 @@ pub mod magic_dns;
 pub mod nat;
 mod network_roster;
 mod network_routes;
-pub mod node_record;
 pub mod paths;
 pub mod platform_paths;
 pub mod presence;
-pub mod relay;
-pub mod service_signaling;
 pub mod signaling;
 pub mod wireguard;
 

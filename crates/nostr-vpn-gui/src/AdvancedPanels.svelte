@@ -1,19 +1,11 @@
 <script lang="ts">
   import { Trash2 } from 'lucide-svelte'
 
-  import {
-    healthBadgeClass,
-    healthSummaryText,
-    participantTrafficText,
-    publicRelayFallbackStatusText,
-    relayFallbackParticipants,
-    relayFallbackSummaryText,
-  } from './lib/app-view'
+  import { healthBadgeClass, healthSummaryText } from './lib/app-view'
   import { reconcileAutoOpenPanelState } from './lib/collapsible-panels.js'
-  import type { NetworkView, SettingsPatch, UiState } from './lib/types'
+  import type { SettingsPatch, UiState } from './lib/types'
 
   export let state: UiState
-  export let activeNetworkView: NetworkView
   export let relayInput = ''
   export let onAddRelay: () => Promise<void>
   export let onRemoveRelay: (relayUrl: string) => Promise<void>
@@ -166,23 +158,10 @@
         <div class="panel-kicker">Connection</div>
         <h2>Session & Paths</h2>
       </div>
-      <div class="section-meta">Startup & fallback</div>
+      <div class="section-meta">Startup</div>
     </summary>
 
     <div class="collapsible-body">
-      <label class="toggle-row">
-        <input
-          type="checkbox"
-          checked={state.usePublicRelayFallback}
-          on:change={(event) =>
-            onUpdateSettings({
-              usePublicRelayFallback: (event.target as HTMLInputElement).checked,
-            })}
-        />
-        <span>Use legacy WireGuard relay fallback</span>
-      </label>
-      <div class="config-path settings-note">{publicRelayFallbackStatusText(state)}</div>
-
       <label class="toggle-row">
         <input
           type="checkbox"
@@ -194,30 +173,6 @@
         />
         <span>Auto-connect session on app start</span>
       </label>
-
-      <div class="section-meta">Current fallback</div>
-      <div class="config-path settings-note">{relayFallbackSummaryText(activeNetworkView)}</div>
-      {#if relayFallbackParticipants(activeNetworkView).length > 0}
-        <div class="stack rows">
-          {#each relayFallbackParticipants(activeNetworkView) as participant}
-            <div class="item-row">
-              <div class="item-main">
-                <div class="item-title">
-                  {participant.magicDnsName || participant.magicDnsAlias || participant.npub}
-                </div>
-                <div class="item-sub">
-                  {participant.runtimeEndpoint
-                    ? `fallback ${participant.runtimeEndpoint}`
-                    : 'fallback active'} | {participantTrafficText(participant)}
-                </div>
-              </div>
-              <div class="participant-badges">
-                <span class="badge participant-badge warn">Fallback</span>
-              </div>
-            </div>
-          {/each}
-        </div>
-      {/if}
     </div>
   </details>
 {/if}

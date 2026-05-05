@@ -119,7 +119,7 @@ The broker owns reusable resources:
 - FIPS peer links
 - Nostr advert cache
 - NAT/STUN state
-- bridge and relay paths
+- bridge paths
 - metrics and path selection
 
 The app still owns private-network policy:

@@ -39,7 +39,6 @@ pub(crate) fn build_mobile_runtime_state(
                 endpoint: runtime_status
                     .map(|status| status.endpoint.to_string())
                     .unwrap_or_else(|| announcement.endpoint.clone()),
-                relay_endpoint: announcement.relay_endpoint.clone(),
                 runtime_endpoint: runtime_status.map(|status| status.endpoint.to_string()),
                 tx_bytes: 0,
                 rx_bytes: 0,
@@ -84,10 +83,6 @@ pub(crate) fn build_mobile_runtime_state(
         health: Vec::new(),
         network: Default::default(),
         port_mapping: Default::default(),
-        relay_operator_running: false,
-        relay_operator_status: "Relay operator disabled".to_string(),
-        nat_assist_running: false,
-        nat_assist_status: "NAT assist disabled".to_string(),
         peers,
     }
 }

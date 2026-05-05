@@ -19,7 +19,6 @@ struct PeerSnapshot {
     reachable: Option<bool>,
     last_handshake_at: Option<SystemTime>,
     endpoint: Option<String>,
-    runtime_endpoint: Option<String>,
     tx_bytes: u64,
     rx_bytes: u64,
     error: Option<String>,
@@ -105,7 +104,6 @@ fn peer_snapshots(
                     reachable: Some(peer.reachable),
                     last_handshake_at: peer.last_handshake_at.and_then(epoch_secs_to_system_time),
                     endpoint: (!peer.endpoint.trim().is_empty()).then(|| peer.endpoint.clone()),
-                    runtime_endpoint: peer.runtime_endpoint.clone(),
                     tx_bytes: peer.tx_bytes,
                     rx_bytes: peer.rx_bytes,
                     error: if peer.reachable {
@@ -267,19 +265,6 @@ fn participant_view(
             .map(|value| value.offers_exit_node)
             .unwrap_or(false)
     };
-    let relay_path_active = snapshot
-        .and_then(|value| value.runtime_endpoint.as_deref())
-        .zip(snapshot.and_then(|value| value.endpoint.as_deref()))
-        .is_some_and(|(runtime_endpoint, endpoint)| runtime_endpoint != endpoint)
-        || snapshot
-            .and_then(|value| value.runtime_endpoint.as_deref())
-            .is_some_and(|runtime_endpoint| {
-                snapshot
-                    .and_then(|value| value.endpoint.as_deref())
-                    .is_none()
-                    && !runtime_endpoint.trim().is_empty()
-            });
-
     ParticipantView {
         npub: to_npub(participant),
         pubkey_hex: participant.to_string(),
@@ -288,10 +273,6 @@ fn participant_view(
             .unwrap_or_else(|| "-".to_string()),
         magic_dns_alias,
         magic_dns_name,
-        relay_path_active,
-        runtime_endpoint: snapshot
-            .and_then(|value| value.runtime_endpoint.clone())
-            .unwrap_or_default(),
         tx_bytes: snapshot.map(|value| value.tx_bytes).unwrap_or(0),
         rx_bytes: snapshot.map(|value| value.rx_bytes).unwrap_or(0),
         advertised_routes,

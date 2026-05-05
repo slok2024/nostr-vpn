@@ -12,45 +12,10 @@ pub struct PeerAnnouncement {
     pub local_endpoint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_endpoint: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub relay_endpoint: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub relay_pubkey: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub relay_expires_at: Option<u64>,
     pub tunnel_ip: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub advertised_routes: Vec<String>,
     pub timestamp: u64,
-}
-
-impl PeerAnnouncement {
-    pub fn with_relay(
-        mut self,
-        relay_endpoint: Option<String>,
-        relay_pubkey: Option<String>,
-        relay_expires_at: Option<u64>,
-    ) -> Self {
-        self.relay_endpoint = relay_endpoint.filter(|value| !value.trim().is_empty());
-        self.relay_pubkey = relay_pubkey.filter(|value| !value.trim().is_empty());
-        self.relay_expires_at = relay_expires_at;
-        self
-    }
-
-    pub fn without_expired_relay(&self, now: u64) -> Self {
-        if self
-            .relay_expires_at
-            .is_some_and(|expires_at| expires_at <= now)
-        {
-            let mut out = self.clone();
-            out.relay_endpoint = None;
-            out.relay_pubkey = None;
-            out.relay_expires_at = None;
-            out
-        } else {
-            self.clone()
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default)]

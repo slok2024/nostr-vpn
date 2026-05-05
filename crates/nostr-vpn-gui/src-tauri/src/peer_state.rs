@@ -16,7 +16,6 @@ pub(crate) struct PeerLinkStatus {
     pub(crate) reachable: Option<bool>,
     pub(crate) last_handshake_at: Option<SystemTime>,
     pub(crate) endpoint: Option<String>,
-    pub(crate) relay_endpoint: Option<String>,
     pub(crate) runtime_endpoint: Option<String>,
     pub(crate) tx_bytes: u64,
     pub(crate) rx_bytes: u64,
@@ -312,28 +311,6 @@ pub(crate) fn apply_network_invite_to_active_network(
     }
 
     Ok(())
-}
-
-pub(crate) fn peer_link_uses_relay_path(link: &PeerLinkStatus) -> bool {
-    let Some(relay_endpoint) = link
-        .relay_endpoint
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    else {
-        return false;
-    };
-
-    if let Some(runtime_endpoint) = link
-        .runtime_endpoint
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        return runtime_endpoint == relay_endpoint;
-    }
-
-    link.endpoint
-        .as_deref()
-        .is_some_and(|endpoint| endpoint == relay_endpoint)
 }
 
 pub(crate) fn connected_configured_peer_count(

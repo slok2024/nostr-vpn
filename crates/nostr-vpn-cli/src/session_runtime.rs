@@ -81,7 +81,6 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
     let mut presence = PeerPresenceBook::default();
     let mut path_book = PeerPathBook::default();
     let mut outbound_announces = OutboundAnnounceBook::default();
-    let mut relay_sessions: HashMap<String, ActiveRelaySession> = HashMap::new();
     let iface = args.iface.clone();
     let mut tunnel_runtime = CliTunnelRuntime::new(iface.clone());
     #[cfg(feature = "embedded-fips")]
@@ -137,7 +136,6 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
         &app,
         own_pubkey.as_deref(),
         &presence,
-        &relay_sessions,
         &mut path_book,
         unix_timestamp(),
         &mut tunnel_runtime,
@@ -205,7 +203,6 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                             &presence,
                             &tunnel_runtime,
                             public_signal_endpoint.as_ref(),
-                            &relay_sessions,
                             &mut outbound_announces,
                         )
                         .await
@@ -255,7 +252,6 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                     &app,
                     own_pubkey.as_deref(),
                     &presence,
-                    &relay_sessions,
                     &mut path_book,
                     unix_timestamp(),
                     &mut tunnel_runtime,
@@ -279,7 +275,6 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                         &presence,
                         &tunnel_runtime,
                         public_signal_endpoint.as_ref(),
-                        &relay_sessions,
                         &mut outbound_announces,
                     )
                     .await
@@ -399,7 +394,6 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                         &app,
                         own_pubkey.as_deref(),
                         &presence,
-                        &relay_sessions,
                         &mut path_book,
                         unix_timestamp(),
                         &mut tunnel_runtime,
@@ -451,7 +445,6 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                         &presence,
                         &tunnel_runtime,
                         public_signal_endpoint.as_ref(),
-                        &relay_sessions,
                         &mut outbound_announces,
                     )
                     .await
@@ -466,21 +459,6 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
             }
             _ = announce_interval.tick() => {
                 let now = unix_timestamp();
-                if prune_active_relay_sessions(&mut relay_sessions, now) {
-                    outbound_announces.clear();
-                    last_nat_punch_attempt = None;
-                    apply_presence_runtime_update(
-                        &app,
-                        own_pubkey.as_deref(),
-                        &presence,
-                        &relay_sessions,
-                        &mut path_book,
-                        now,
-                        &mut tunnel_runtime,
-                        magic_dns_runtime.as_ref(),
-                    )
-                    .context("failed to apply tunnel update after relay expiry")?;
-                }
                 let removed =
                     presence.prune_stale(now, peer_signal_timeout_secs(args.announce_interval_secs));
                 for participant in &removed {
@@ -500,7 +478,6 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                         &app,
                         own_pubkey.as_deref(),
                         &presence,
-                        &relay_sessions,
                         &mut path_book,
                         now,
                         &mut tunnel_runtime,
@@ -537,7 +514,6 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                     &presence,
                     &tunnel_runtime,
                     public_signal_endpoint.as_ref(),
-                    &relay_sessions,
                     &mut outbound_announces,
                 )
                 .await
@@ -605,7 +581,6 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                             &app,
                             &tunnel_runtime,
                             public_signal_endpoint.as_ref(),
-                            &relay_sessions,
                             &mut outbound_announces,
                             std::slice::from_ref(&sender_pubkey),
                             Some(presence.known()),
@@ -622,7 +597,6 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                     &app,
                     own_pubkey.as_deref(),
                     &presence,
-                    &relay_sessions,
                     &mut path_book,
                     unix_timestamp(),
                     &mut tunnel_runtime,
@@ -664,7 +638,6 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                         &app,
                         &tunnel_runtime,
                         public_signal_endpoint.as_ref(),
-                        &relay_sessions,
                         &mut outbound_announces,
                         std::slice::from_ref(&sender_pubkey),
                         Some(presence.known()),
@@ -757,11 +730,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
     let mut outbound_announces = OutboundAnnounceBook::default();
     #[cfg(feature = "embedded-fips")]
     let mut fips_join_request_sends: HashMap<String, u64> = HashMap::new();
-    let mut relay_sessions: HashMap<String, ActiveRelaySession> = HashMap::new();
-    let mut standby_relay_sessions: HashMap<String, Vec<ActiveRelaySession>> = HashMap::new();
-    let mut relay_failures: RelayFailureCooldowns = HashMap::new();
-    let mut relay_provider_verifications: RelayProviderVerificationBook = HashMap::new();
-    let mut pending_relay_requests: HashMap<String, PendingRelayRequest> = HashMap::new();
     let iface = args.iface.clone();
     let mut tunnel_runtime = CliTunnelRuntime::new(iface.clone());
     #[cfg(feature = "embedded-fips")]
@@ -794,27 +762,11 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
         app.node.listen_port,
     );
     let mut last_written_peer_cache = None;
-    let mut relay_operator_runtime = LocalRelayOperatorRuntime {
-        status: if app.relay_for_others {
-            "Waiting for relay operator startup".to_string()
-        } else {
-            "Relay operator disabled".to_string()
-        },
-        nat_assist_status: if app.provide_nat_assist {
-            "Waiting for NAT assist startup".to_string()
-        } else {
-            "NAT assist disabled".to_string()
-        },
-        ..LocalRelayOperatorRuntime::default()
-    };
-    let mut relay_operator_process = None;
 
     let mut client = NostrSignalingClient::from_secret_key_with_networks(
         &app.nostr.secret_key,
         signaling_networks_for_app(&app),
     )?;
-    let mut service_client = RelayServiceClient::from_secret_key(&app.nostr.secret_key)?;
-    let mut relay_service_connected = false;
 
     if daemon_session_active(true, expected_peers) {
         refresh_public_signal_endpoint_with_port_mapping(
@@ -853,21 +805,12 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
         &app,
         own_pubkey.as_deref(),
         &presence,
-        &relay_sessions,
         &mut path_book,
         unix_timestamp(),
         &mut tunnel_runtime,
         magic_dns_runtime.as_ref(),
     )
     .context("failed to initialize tunnel runtime")?;
-    sync_local_relay_operator(
-        &config_path,
-        &app,
-        &relays,
-        public_signal_endpoint.as_ref(),
-        &mut relay_operator_process,
-        &mut relay_operator_runtime,
-    )?;
     if restored_peer_cache && daemon_session_active(true, expected_peers) {
         let mut bootstrap_nat_attempt = None;
         if let Err(error) = maybe_run_nat_punch(
@@ -953,7 +896,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
             relay_connected,
             &network_snapshot.summary(network_changed_at, captive_portal),
             &port_mapping_runtime.status(),
-            &relay_operator_runtime,
         ),
     )?;
 
@@ -995,25 +937,15 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                 }
 
                 client.disconnect().await;
-                service_client.disconnect().await;
-                relay_service_connected = false;
                 client = NostrSignalingClient::from_secret_key_with_networks(
                     &app.nostr.secret_key,
                     signaling_networks_for_app(&app),
                 )?;
-                service_client = RelayServiceClient::from_secret_key(&app.nostr.secret_key)?;
 
                 match client.connect(&relays).await {
                     Ok(()) => {
                         relay_connected = true;
                         reconnect_attempt = 0;
-                        relay_service_connected = match service_client.connect(&relays).await {
-                            Ok(()) => true,
-                            Err(error) => {
-                                eprintln!("daemon: relay service connect failed: {error}");
-                                false
-                            }
-                        };
                         if let Err(error) = publish_active_network_roster(&client, &app, None).await
                         {
                             eprintln!("daemon: roster publish failed after reconnect: {error}");
@@ -1037,7 +969,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                 &presence,
                                 &tunnel_runtime,
                                 public_signal_endpoint.as_ref(),
-                                &relay_sessions,
                                 &mut outbound_announces,
                             )
                             .await
@@ -1081,68 +1012,24 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                 if !daemon_session_active(session_enabled, expected_peers) || !relay_connected {
                     continue;
                 }
-                let now = unix_timestamp();
-                let relay_sessions_changed =
-                    prune_active_relay_sessions(&mut relay_sessions, now)
-                    | prune_standby_relay_sessions(&mut standby_relay_sessions, now)
-                    | prune_relay_failure_cooldowns(&mut relay_failures, now)
-                    | prune_relay_provider_verifications(&mut relay_provider_verifications, now);
-                if relay_sessions_changed {
-                    outbound_announces.clear();
-                    last_nat_punch_attempt = None;
-                    if let Err(error) = apply_presence_runtime_update(
-                        &app,
-                        own_pubkey.as_deref(),
-                        &presence,
-                        &relay_sessions,
-                        &mut path_book,
-                        now,
-                        &mut tunnel_runtime,
-                        magic_dns_runtime.as_ref(),
-                    ) {
-                        session_status = format!("Relay expiry update failed ({error})");
-                    }
-                }
-
-                            if let Err(error) = maybe_run_nat_punch(
-                                &app,
-                                own_pubkey.as_deref(),
-                                presence.active(),
-                                &mut path_book,
+                if let Err(error) = maybe_run_nat_punch(
+                    &app,
+                    own_pubkey.as_deref(),
+                    presence.active(),
+                    &mut path_book,
                     &mut tunnel_runtime,
                     &mut public_signal_endpoint,
                     &mut last_nat_punch_attempt,
                 ) {
                     eprintln!("nat: periodic hole-punch failed: {error}");
-                        }
-                        let _ = prune_pending_relay_requests(&mut pending_relay_requests, now);
-                        if app.use_public_relay_fallback
-                            && relay_service_connected
-                            && let Err(error) = maybe_request_public_relay_fallback(
-                                &service_client,
-                                &relays,
-                                &app,
-                                own_pubkey.as_deref(),
-                                &presence,
-                                &tunnel_runtime,
-                                &relay_sessions,
-                                &relay_failures,
-                                &mut relay_provider_verifications,
-                                &mut pending_relay_requests,
-                                now,
-                            )
-                            .await
-                        {
-                            eprintln!("relay: allocation request failed: {error}");
-                        }
-                        if let Err(error) = publish_private_announce_to_active_peers(
-                            &client,
-                            &app,
+                }
+                if let Err(error) = publish_private_announce_to_active_peers(
+                    &client,
+                    &app,
                     own_pubkey.as_deref(),
                     &presence,
                     &tunnel_runtime,
                     public_signal_endpoint.as_ref(),
-                    &relay_sessions,
                     &mut outbound_announces,
                 )
                 .await
@@ -1230,7 +1117,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     &app,
                     own_pubkey.as_deref(),
                     &presence,
-                    &relay_sessions,
                     &mut path_book,
                     unix_timestamp(),
                     &mut tunnel_runtime,
@@ -1254,7 +1140,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                         &presence,
                         &tunnel_runtime,
                         public_signal_endpoint.as_ref(),
-                        &relay_sessions,
                         &mut outbound_announces,
                     )
                     .await
@@ -1394,7 +1279,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                         &app,
                         own_pubkey.as_deref(),
                         &presence,
-                        &relay_sessions,
                         &mut path_book,
                         unix_timestamp(),
                         &mut tunnel_runtime,
@@ -1434,9 +1318,7 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                         }
                     }
                     client.disconnect().await;
-                    service_client.disconnect().await;
                     relay_connected = false;
-                    relay_service_connected = false;
                     reconnect_attempt = 0;
                     reconnect_due = Instant::now();
                     outbound_announces.clear();
@@ -1479,7 +1361,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                         &presence,
                         &tunnel_runtime,
                         public_signal_endpoint.as_ref(),
-                        &relay_sessions,
                         &mut outbound_announces,
                     )
                     .await
@@ -1493,7 +1374,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                 }
             }
             _ = state_interval.tick() => {
-                let now = unix_timestamp();
                 if daemon_log_compact_check_due(&mut last_log_compact_check)
                     && let Err(error) = compact_daemon_log_if_needed(&config_path)
                 {
@@ -1547,49 +1427,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                         }
                     }
                 }
-                let changed_relay_participants = reconcile_active_relay_sessions(
-                    &presence,
-                    tunnel_runtime.peer_status().ok().as_ref(),
-                    &mut relay_sessions,
-                    &mut standby_relay_sessions,
-                    &mut relay_failures,
-                    &mut relay_provider_verifications,
-                    &mut pending_relay_requests,
-                    now,
-                );
-                if !changed_relay_participants.is_empty() {
-                    last_nat_punch_attempt = None;
-                    for participant in &changed_relay_participants {
-                        outbound_announces.forget(participant);
-                    }
-                    if let Err(error) = apply_presence_runtime_update(
-                        &app,
-                        own_pubkey.as_deref(),
-                        &presence,
-                        &relay_sessions,
-                        &mut path_book,
-                        now,
-                        &mut tunnel_runtime,
-                        magic_dns_runtime.as_ref(),
-                    ) {
-                        session_status = format!("Relay failover update failed ({error})");
-                    } else if relay_connected
-                        && let Err(error) = publish_private_announce_to_participants(
-                            &client,
-                            &app,
-                            &tunnel_runtime,
-                            public_signal_endpoint.as_ref(),
-                            &relay_sessions,
-                            &mut outbound_announces,
-                            &changed_relay_participants,
-                            Some(presence.known()),
-                            None,
-                        )
-                        .await
-                    {
-                        eprintln!("relay: failover announce failed: {error}");
-                    }
-                }
 
                 if let Some(request) = take_daemon_control_request(&config_path) {
                     let control_result = match request {
@@ -1616,18 +1453,12 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                             public_signal_endpoint = None;
                             presence = PeerPresenceBook::default();
                             path_book.clear();
-                            relay_sessions.clear();
-                            standby_relay_sessions.clear();
-                            relay_failures.clear();
-                            relay_provider_verifications.clear();
-                            pending_relay_requests.clear();
                             outbound_announces.clear();
                             last_nat_punch_attempt = None;
                             if let Err(error) = apply_presence_runtime_update(
                                 &app,
                                 own_pubkey.as_deref(),
                                 &presence,
-                                &relay_sessions,
                                 &mut path_book,
                                 unix_timestamp(),
                                 &mut tunnel_runtime,
@@ -1679,7 +1510,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                     &app,
                                     own_pubkey.as_deref(),
                                     &presence,
-                                    &relay_sessions,
                                     &mut path_book,
                                     unix_timestamp(),
                                     &mut tunnel_runtime,
@@ -1792,7 +1622,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                                                 &presence,
                                                                 &tunnel_runtime,
                                                                 public_signal_endpoint.as_ref(),
-                                                                &relay_sessions,
                                                                 &mut outbound_announces,
                                                             ).await {
                                                                 session_status = format!(
@@ -1850,7 +1679,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                         &app,
                                         own_pubkey.as_deref(),
                                         &presence,
-                                        &relay_sessions,
                                         &mut path_book,
                                         unix_timestamp(),
                                         &mut tunnel_runtime,
@@ -1908,16 +1736,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     {
                         session_status = format!("FIPS private mesh update failed ({error})");
                     }
-                    if let Err(error) = sync_local_relay_operator(
-                        &config_path,
-                        &app,
-                        &relays,
-                        public_signal_endpoint.as_ref(),
-                        &mut relay_operator_process,
-                        &mut relay_operator_runtime,
-                    ) {
-                        eprintln!("relay operator: sync failed after control request: {error}");
-                    }
                     let _ = persist_daemon_runtime_state(
                         &state_file,
                         &app,
@@ -1931,7 +1749,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                         relay_connected,
                         &network_snapshot.summary(network_changed_at, captive_portal),
                         &port_mapping_runtime.status(),
-                        &relay_operator_runtime,
                     );
                     if let Err(error) =
                         persist_daemon_network_cleanup_state(&config_path, &tunnel_runtime)
@@ -1980,7 +1797,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                             &app,
                             own_pubkey.as_deref(),
                             &presence,
-                            &relay_sessions,
                             &mut path_book,
                             now,
                             &mut tunnel_runtime,
@@ -2012,16 +1828,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                 ) {
                     eprintln!("daemon: failed to persist peer cache: {error}");
                 }
-                if let Err(error) = sync_local_relay_operator(
-                    &config_path,
-                    &app,
-                    &relays,
-                    public_signal_endpoint.as_ref(),
-                    &mut relay_operator_process,
-                    &mut relay_operator_runtime,
-                ) {
-                    eprintln!("relay operator: sync failed: {error}");
-                }
                 let _ = persist_daemon_runtime_state(
                     &state_file,
                     &app,
@@ -2035,7 +1841,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     relay_connected,
                     &network_snapshot.summary(network_changed_at, captive_portal),
                     &port_mapping_runtime.status(),
-                    &relay_operator_runtime,
                 );
                 if let Err(error) =
                     persist_daemon_network_cleanup_state(&config_path, &tunnel_runtime)
@@ -2138,7 +1943,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                                     &app,
                                                     own_pubkey.as_deref(),
                                                     &presence,
-                                                    &relay_sessions,
                                                     &mut path_book,
                                                     unix_timestamp(),
                                                     &mut tunnel_runtime,
@@ -2227,7 +2031,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                             &app,
                             &tunnel_runtime,
                             public_signal_endpoint.as_ref(),
-                            &relay_sessions,
                             &mut outbound_announces,
                             std::slice::from_ref(&sender_pubkey),
                             Some(presence.known()),
@@ -2244,7 +2047,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     &app,
                     own_pubkey.as_deref(),
                     &presence,
-                    &relay_sessions,
                     &mut path_book,
                     unix_timestamp(),
                     &mut tunnel_runtime,
@@ -2286,7 +2088,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                             &app,
                             &tunnel_runtime,
                             public_signal_endpoint.as_ref(),
-                            &relay_sessions,
                             &mut outbound_announces,
                             std::slice::from_ref(&sender_pubkey),
                             Some(presence.known()),
@@ -2316,82 +2117,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     &mut last_mesh_count,
                 );
             }
-            service_message = async {
-                if relay_session_active(
-                    session_enabled,
-                    expected_peers,
-                    app.join_requests_enabled(),
-                ) && relay_connected && relay_service_connected
-                {
-                    service_client.recv().await
-                } else {
-                    std::future::pending().await
-                }
-            } => {
-                let Some(service_message) = service_message else {
-                    relay_service_connected = false;
-                    continue;
-                };
-                let now = unix_timestamp();
-                match service_message.payload {
-                    ServicePayload::RelayAllocationGranted(granted) => {
-                        match accept_relay_allocation_grant(
-                            granted,
-                            &mut pending_relay_requests,
-                            &mut relay_sessions,
-                            &mut standby_relay_sessions,
-                            &relay_failures,
-                            now,
-                        ) {
-                            RelayGrantAction::Activated(participant) => {
-                                outbound_announces.forget(&participant);
-                                if let Err(error) = apply_presence_runtime_update(
-                                    &app,
-                                    own_pubkey.as_deref(),
-                                    &presence,
-                                    &relay_sessions,
-                                    &mut path_book,
-                                    now,
-                                    &mut tunnel_runtime,
-                                    magic_dns_runtime.as_ref(),
-                                ) {
-                                    session_status = format!("Relay fallback update failed ({error})");
-                                } else if let Err(error) = publish_private_announce_to_participants(
-                                    &client,
-                                    &app,
-                                    &tunnel_runtime,
-                                    public_signal_endpoint.as_ref(),
-                                    &relay_sessions,
-                                    &mut outbound_announces,
-                                    std::slice::from_ref(&participant),
-                                    Some(presence.known()),
-                                    None,
-                                )
-                                .await
-                                {
-                                    eprintln!("relay: targeted relay announce failed: {error}");
-                                }
-                            }
-                            RelayGrantAction::QueuedStandby(_) | RelayGrantAction::Ignored => {}
-                        }
-                    }
-                    ServicePayload::RelayAllocationRejected(rejected) => {
-                        if let Some(participant) = accept_relay_allocation_rejection(
-                            rejected,
-                            &mut pending_relay_requests,
-                            &mut relay_failures,
-                            &mut relay_provider_verifications,
-                            now,
-                        ) {
-                            outbound_announces.forget(&participant);
-                        }
-                    }
-                    ServicePayload::RelayAllocationRequest(_)
-                    | ServicePayload::RelayProbeRequest(_)
-                    | ServicePayload::RelayProbeGranted(_)
-                    | ServicePayload::RelayProbeRejected(_) => {}
-                }
-            }
         }
     }
 
@@ -2403,13 +2128,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
             .await;
     }
     client.disconnect().await;
-    service_client.disconnect().await;
-    stop_local_relay_operator(
-        &mut relay_operator_process,
-        &mut relay_operator_runtime,
-        "Relay operator stopped",
-        "NAT assist stopped",
-    );
     port_mapping_runtime.stop().await;
     #[cfg(feature = "embedded-fips")]
     if let Some(runtime) = fips_tunnel_runtime
@@ -2438,11 +2156,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
         network: network_snapshot.summary(network_changed_at, captive_portal),
         port_mapping: PortMappingStatus::default(),
         peers: Vec::new(),
-        relay_operator_running: false,
-        relay_operator_pid: None,
-        relay_operator_status: relay_operator_runtime.status.clone(),
-        nat_assist_running: false,
-        nat_assist_status: relay_operator_runtime.nat_assist_status.clone(),
     };
     let _ = write_daemon_state(&state_file, &final_state);
 
@@ -2578,7 +2291,6 @@ pub(crate) fn build_daemon_runtime_state(
     relay_connected: bool,
     network: &NetworkSummary,
     port_mapping: &PortMappingStatus,
-    relay_operator: &LocalRelayOperatorRuntime,
 ) -> DaemonRuntimeState {
     let own_pubkey = app.own_nostr_pubkey_hex().ok();
     let runtime_peers = tunnel_runtime.peer_status().ok();
@@ -2608,7 +2320,6 @@ pub(crate) fn build_daemon_runtime_state(
                 node_id: String::new(),
                 tunnel_ip,
                 endpoint: "fips".to_string(),
-                relay_endpoint: None,
                 runtime_endpoint: reachable.then(|| "fips".to_string()),
                 tx_bytes: status.map(|status| status.tx_bytes).unwrap_or(0),
                 rx_bytes: status.map(|status| status.rx_bytes).unwrap_or(0),
@@ -2640,7 +2351,6 @@ pub(crate) fn build_daemon_runtime_state(
                     node_id: String::new(),
                     tunnel_ip: String::new(),
                     endpoint: String::new(),
-                    relay_endpoint: None,
                     runtime_endpoint: None,
                     tx_bytes: 0,
                     rx_bytes: 0,
@@ -2665,7 +2375,6 @@ pub(crate) fn build_daemon_runtime_state(
                 node_id: announcement.node_id.clone(),
                 tunnel_ip: announcement.tunnel_ip.clone(),
                 endpoint: announcement.endpoint.clone(),
-                relay_endpoint: announcement.relay_endpoint.clone(),
                 runtime_endpoint: runtime_peer.and_then(|peer| peer.endpoint.clone()),
                 tx_bytes: runtime_peer.map(|peer| peer.tx_bytes).unwrap_or(0),
                 rx_bytes: runtime_peer.map(|peer| peer.rx_bytes).unwrap_or(0),
@@ -2731,11 +2440,6 @@ pub(crate) fn build_daemon_runtime_state(
         network: network.clone(),
         port_mapping: port_mapping.clone(),
         peers,
-        relay_operator_running: relay_operator.running,
-        relay_operator_pid: relay_operator.pid,
-        relay_operator_status: relay_operator.status.clone(),
-        nat_assist_running: relay_operator.nat_assist_running,
-        nat_assist_status: relay_operator.nat_assist_status.clone(),
     }
 }
 
@@ -2753,7 +2457,6 @@ pub(crate) fn persist_daemon_runtime_state(
     relay_connected: bool,
     network: &NetworkSummary,
     port_mapping: &PortMappingStatus,
-    relay_operator: &LocalRelayOperatorRuntime,
 ) -> Result<()> {
     write_daemon_state(
         path,
@@ -2769,7 +2472,6 @@ pub(crate) fn persist_daemon_runtime_state(
             relay_connected,
             network,
             port_mapping,
-            relay_operator,
         ),
     )
 }

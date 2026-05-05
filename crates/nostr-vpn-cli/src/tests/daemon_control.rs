@@ -201,7 +201,6 @@ fn persist_daemon_runtime_state_marks_resuming_as_active() {
         false,
         &nostr_vpn_core::diagnostics::NetworkSummary::default(),
         &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
-        &crate::LocalRelayOperatorRuntime::default(),
     )
     .expect("persist daemon runtime state");
 
@@ -497,7 +496,6 @@ fn daemon_runtime_state_tracks_live_endpoint_and_listen_port() {
         true,
         &nostr_vpn_core::diagnostics::NetworkSummary::default(),
         &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
-        &crate::LocalRelayOperatorRuntime::default(),
     );
     let daemon = crate::DaemonStatus {
         running: true,
@@ -551,34 +549,6 @@ fn daemon_pid_scan_ignores_shell_wrappers_that_mention_nvpn_daemon() {
     let pids = daemon_pids_from_ps_output(ps, config_path);
 
     assert_eq!(pids, vec![2433301]);
-}
-
-#[test]
-fn relay_operator_advertise_host_prefers_public_signal_endpoint() {
-    let mut config = AppConfig::generated();
-    config.node.endpoint = "192.168.1.40:51820".to_string();
-    let public_endpoint = crate::DiscoveredPublicSignalEndpoint {
-        listen_port: 51820,
-        endpoint: "203.0.113.8:51820".to_string(),
-    };
-
-    assert_eq!(
-        crate::relay_operator_advertise_host(&config, Some(&public_endpoint)),
-        Some("203.0.113.8".to_string())
-    );
-}
-
-#[test]
-fn relay_operator_advertise_host_rejects_private_endpoint_without_public_mapping() {
-    let mut config = AppConfig::generated();
-    config.node.endpoint = "192.168.1.40:51820".to_string();
-    assert_eq!(crate::relay_operator_advertise_host(&config, None), None);
-
-    config.node.endpoint = "198.51.100.7:51820".to_string();
-    assert_eq!(
-        crate::relay_operator_advertise_host(&config, None),
-        Some("198.51.100.7".to_string())
-    );
 }
 
 #[test]

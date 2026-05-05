@@ -22,7 +22,6 @@ fn clap_includes_tailscale_style_commands() {
         "connect",
         "down",
         "status",
-        "stats",
         "set",
         "ping",
         "netcheck",

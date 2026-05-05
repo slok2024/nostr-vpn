@@ -10,9 +10,9 @@ pub(crate) struct RelayStatus {
 
 pub(crate) use nostr_vpn_app_core::{
     DaemonRuntimeState, InboundJoinRequestView, LanPeerView, NetworkView, OutboundJoinRequestView,
-    ParticipantView, RelayOperatorSessionView, RelayOperatorView, RelaySummary, RelayView,
-    RuntimePlatform, SettingsPatch, TrayExitNodeEntry, TrayMenuItemSpec, TrayNetworkGroup,
-    TrayRuntimeState, UiState, current_runtime_capabilities, current_runtime_platform,
+    ParticipantView, RelaySummary, RelayView, RuntimePlatform, SettingsPatch, TrayExitNodeEntry,
+    TrayMenuItemSpec, TrayNetworkGroup, TrayRuntimeState, UiState, current_runtime_capabilities,
+    current_runtime_platform,
 };
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
@@ -55,38 +55,6 @@ pub(crate) struct CliServiceStatusResponse {
 pub(crate) struct CliDaemonStatus {
     pub(crate) running: bool,
     pub(crate) state: Option<DaemonRuntimeState>,
-}
-
-pub(crate) fn parse_service_operator_state(
-    raw: &[u8],
-) -> Result<SharedServiceOperatorState, serde_json::Error> {
-    match serde_json::from_slice::<SharedServiceOperatorState>(raw) {
-        Ok(state)
-            if state.relay.is_some()
-                || state.nat_assist.is_some()
-                || !state.operator_pubkey.trim().is_empty() =>
-        {
-            Ok(state)
-        }
-        Err(service_error) => match serde_json::from_slice::<SharedRelayOperatorState>(raw) {
-            Ok(relay_state) => Ok(SharedServiceOperatorState {
-                updated_at: relay_state.updated_at,
-                operator_pubkey: relay_state.relay_pubkey.clone(),
-                relay: Some(relay_state),
-                nat_assist: None,
-            }),
-            Err(_) => Err(service_error),
-        },
-        Ok(_) => match serde_json::from_slice::<SharedRelayOperatorState>(raw) {
-            Ok(relay_state) => Ok(SharedServiceOperatorState {
-                updated_at: relay_state.updated_at,
-                operator_pubkey: relay_state.relay_pubkey.clone(),
-                relay: Some(relay_state),
-                nat_assist: None,
-            }),
-            Err(service_error) => Err(service_error),
-        },
-    }
 }
 
 pub(crate) fn within_peer_online_grace(
