@@ -249,6 +249,8 @@ Changes since v0.2.26.
   assert.match(notes, /### Fixed/)
   assert.match(notes, /Nostr VPN for iOS public beta/)
   assert.match(notes, /https:\/\/testflight\.apple\.com\/join\/jPRVxbSv/)
+  assert.match(notes, /### Most People Will Want/)
+  assert.match(notes, /### Command Line/)
   assert.match(notes, /Windows x64 CLI/)
   assert.match(notes, /Built Windows x64 CLI inside a local Parallels VM\./)
   assert.match(notes, /Linux musl CLI skipped because cross was unavailable\./)
@@ -272,4 +274,35 @@ test('renderReleaseNotes omits CLI skip boilerplate and can link assets', () => 
   )
   assert.doesNotMatch(notes, /verify skipped by CLI options/)
   assert.doesNotMatch(notes, /windows skipped by CLI options/)
+})
+
+test('renderReleaseNotes groups common app downloads before advanced files', () => {
+  const notes = renderReleaseNotes({
+    tag: 'v0.3.23',
+    commit: 'abc123',
+    assetNames: [
+      'nostr-vpn-v0.3.23-android-arm64.aab',
+      'nostr-vpn-v0.3.23-android-arm64.apk',
+      'nostr-vpn-v0.3.23-linux-x64.AppImage',
+      'nostr-vpn-v0.3.23-linux-x64.deb',
+      'nostr-vpn-v0.3.23-macos-arm64.app.tar.gz',
+      'nostr-vpn-v0.3.23-macos-arm64.dmg',
+      'nostr-vpn-v0.3.23-windows-x64-setup.exe',
+      'nvpn-aarch64-apple-darwin.tar.gz',
+      'nvpn-v0.3.23-aarch64-apple-darwin.tar.gz',
+      'nvpn-v0.3.23-x86_64-pc-windows-msvc.zip',
+      'nvpn-v0.3.23-x86_64-unknown-linux-musl.tar.gz',
+      'nvpn-x86_64-unknown-linux-musl.tar.gz',
+    ],
+  })
+
+  assert.match(notes, /### Most People Will Want[\s\S]*Nostr VPN for macOS \(Apple Silicon\)/)
+  assert.match(notes, /### Most People Will Want[\s\S]*Nostr VPN for Linux \(AppImage\)/)
+  assert.match(notes, /### Most People Will Want[\s\S]*Nostr VPN for Windows/)
+  assert.match(notes, /### Command Line[\s\S]*macOS Apple Silicon CLI: `nvpn-aarch64-apple-darwin\.tar\.gz`/)
+  assert.match(notes, /### Command Line[\s\S]*Linux x64 CLI: `nvpn-x86_64-unknown-linux-musl\.tar\.gz`/)
+  assert.match(notes, /### Other Files[\s\S]*Android arm64 AAB/)
+  assert.match(notes, /### Other Files[\s\S]*macOS Apple Silicon updater archive/)
+  assert.doesNotMatch(notes, /nvpn-v0\.3\.23-aarch64-apple-darwin\.tar\.gz/)
+  assert.doesNotMatch(notes, /nvpn-v0\.3\.23-x86_64-unknown-linux-musl\.tar\.gz/)
 })

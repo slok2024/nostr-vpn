@@ -155,6 +155,9 @@ export function autoDetectWindowsVmName(prlctlListOutput) {
 }
 
 export function describeAsset(name) {
+  if (/^nostr-vpn-.*-macos-arm64\.zip$/.test(name)) {
+    return 'macOS Apple Silicon app archive'
+  }
   if (/^nostr-vpn-.*-macos-arm64\.dmg$/.test(name)) {
     return 'macOS Apple Silicon disk image'
   }
@@ -202,6 +205,109 @@ export function describeAsset(name) {
   }
 
   return name
+}
+
+function firstMatchingAsset(assetNames, patterns) {
+  for (const pattern of patterns) {
+    const name = assetNames.find((assetName) => pattern.test(assetName))
+    if (name) {
+      return name
+    }
+  }
+  return null
+}
+
+function assetReference(name, assetBaseUrl = '') {
+  if (assetBaseUrl) {
+    return `[${name}](${assetBaseUrl}/${encodeURIComponent(name)})`
+  }
+  return `\`${name}\``
+}
+
+function pushAssetLine(lines, usedAssets, assetNames, label, patterns, assetBaseUrl = '') {
+  const name = firstMatchingAsset(assetNames, patterns)
+  if (!name) {
+    return null
+  }
+
+  usedAssets.add(name)
+  lines.push(`- ${label}: ${assetReference(name, assetBaseUrl)}`)
+  return name
+}
+
+function markMatchingAssetsUsed(usedAssets, assetNames, patterns) {
+  for (const name of assetNames) {
+    if (patterns.some((pattern) => pattern.test(name))) {
+      usedAssets.add(name)
+    }
+  }
+}
+
+function pushDownloadSections(lines, assetNames, assetBaseUrl = '') {
+  const sortedNames = [...assetNames].sort((left, right) => left.localeCompare(right))
+  const usedAssets = new Set()
+
+  lines.push('## Downloads', '', '### Most People Will Want', '')
+
+  pushAssetLine(lines, usedAssets, sortedNames, 'Nostr VPN for macOS (Apple Silicon)', [
+    /^nostr-vpn-.*-macos-arm64\.dmg$/,
+    /^nostr-vpn-.*-macos-arm64\.zip$/,
+  ], assetBaseUrl)
+  pushAssetLine(lines, usedAssets, sortedNames, 'Nostr VPN for Linux (AppImage)', [
+    /^nostr-vpn-.*-linux-x64\.AppImage$/,
+  ], assetBaseUrl)
+  pushAssetLine(lines, usedAssets, sortedNames, 'Nostr VPN for Debian/Ubuntu (.deb)', [
+    /^nostr-vpn-.*-linux-x64\.deb$/,
+  ], assetBaseUrl)
+  pushAssetLine(lines, usedAssets, sortedNames, 'Nostr VPN for Windows', [
+    /^nostr-vpn-.*-windows-x64-setup\.exe$/,
+  ], assetBaseUrl)
+  pushAssetLine(lines, usedAssets, sortedNames, 'Nostr VPN for Android', [
+    /^nostr-vpn-.*-android-arm64\.apk$/,
+  ], assetBaseUrl)
+  lines.push(`- Nostr VPN for iOS public beta: [TestFlight](${IOS_TESTFLIGHT_PUBLIC_BETA_URL})`)
+
+  const cliLines = []
+  const addCliAsset = (label, preferredPatterns, duplicatePatterns = preferredPatterns) => {
+    const name = firstMatchingAsset(sortedNames, preferredPatterns)
+    if (!name) {
+      return
+    }
+    usedAssets.add(name)
+    markMatchingAssetsUsed(usedAssets, sortedNames, duplicatePatterns)
+    cliLines.push(`- ${label}: ${assetReference(name, assetBaseUrl)}`)
+  }
+
+  addCliAsset('macOS Apple Silicon CLI', [
+    /^nvpn-aarch64-apple-darwin\.tar\.gz$/,
+    /^nvpn-v.*-aarch64-apple-darwin\.tar\.gz$/,
+  ], [/^nvpn(?:-v.*)?-aarch64-apple-darwin\.tar\.gz$/])
+  addCliAsset('Linux x64 CLI', [
+    /^nvpn-x86_64-unknown-linux-musl\.tar\.gz$/,
+    /^nvpn-v.*-x86_64-unknown-linux-musl\.tar\.gz$/,
+  ], [/^nvpn(?:-v.*)?-x86_64-unknown-linux-musl\.tar\.gz$/])
+  addCliAsset('Linux ARM64 CLI', [
+    /^nvpn-aarch64-unknown-linux-musl\.tar\.gz$/,
+    /^nvpn-v.*-aarch64-unknown-linux-musl\.tar\.gz$/,
+  ], [/^nvpn(?:-v.*)?-aarch64-unknown-linux-musl\.tar\.gz$/])
+  addCliAsset('Windows x64 CLI', [/^nvpn-v.*-x86_64-pc-windows-msvc\.zip$/])
+  addCliAsset('Windows ARM64 CLI', [/^nvpn-v.*-aarch64-pc-windows-msvc\.zip$/])
+
+  if (cliLines.length > 0) {
+    lines.push('', '### Command Line', '', ...cliLines)
+  }
+
+  const otherLines = []
+  for (const name of sortedNames) {
+    if (usedAssets.has(name)) {
+      continue
+    }
+    otherLines.push(`- ${describeAsset(name)}: ${assetReference(name, assetBaseUrl)}`)
+  }
+
+  if (otherLines.length > 0) {
+    lines.push('', '### Other Files', '', ...otherLines)
+  }
 }
 
 export function androidReleaseAssetName(tag, { extension = 'apk', signed = true } = {}) {
@@ -252,19 +358,7 @@ export function renderReleaseNotes({
     lines.push('## Changes', '', ...changelogSection.split('\n'), '')
   }
 
-  lines.push(
-    '## Downloads',
-    '',
-    `- Nostr VPN for iOS public beta: [TestFlight](${IOS_TESTFLIGHT_PUBLIC_BETA_URL})`,
-  )
-
-  for (const name of [...assetNames].sort((left, right) => left.localeCompare(right))) {
-    if (assetBaseUrl) {
-      lines.push(`- ${describeAsset(name)}: [${name}](${assetBaseUrl}/${name})`)
-    } else {
-      lines.push(`- ${describeAsset(name)}: \`${name}\``)
-    }
-  }
+  pushDownloadSections(lines, assetNames, assetBaseUrl)
 
   if (commit || builtLines.length > 0) {
     lines.push('', '## Release Build', '')

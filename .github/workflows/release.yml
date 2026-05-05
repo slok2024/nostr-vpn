@@ -894,6 +894,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -916,110 +921,44 @@ jobs:
           MACOS_ARTIFACT_PUBLISHED: ${{ needs.build-macos-app.outputs.macos_artifact_published }}
           MACOS_ARTIFACT_SKIP_REASON: ${{ needs.build-macos-app.outputs.macos_artifact_skip_reason }}
         run: |
-          {
-            echo "## Downloads"
-            echo
-            echo "### Most people"
-            echo
-            if [ "${MACOS_ARTIFACT_PUBLISHED}" = "true" ]; then
-              echo "- [Nostr VPN for macOS (Apple Silicon)](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-macos-arm64.zip)"
-            fi
-            if [ "${LINUX_APP_RELEASED}" = "success" ]; then
-              echo "- [Nostr VPN for Linux (AppImage)](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-linux-x64.AppImage)"
-              echo "- [Nostr VPN for Debian/Ubuntu (.deb)](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-linux-x64.deb)"
-            fi
-            if [ "${WINDOWS_APP_RELEASED}" = "success" ]; then
-              echo "- [Nostr VPN for Windows](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-windows-x64-setup.exe)"
-            fi
-            if [ "${ANDROID_APP_RELEASED}" = "success" ]; then
-              echo "- [Nostr VPN for Android](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-android-arm64.apk)"
-            fi
-            echo "- [Nostr VPN for iOS public beta](https://testflight.apple.com/join/jPRVxbSv)"
-            echo
-            if [ "${MACOS_ARTIFACT_PUBLISHED}" != "true" ]; then
-              case "${MACOS_ARTIFACT_SKIP_REASON}" in
-                apple-developer-agreement-inactive)
-                  echo "> Note: The macOS desktop app is not included in this GitHub release because the Apple Developer agreement for notarization is missing or expired."
-                  ;;
-                macos-release-secrets-missing)
-                  echo "> Note: The macOS desktop app is not included in this GitHub release because the macOS signing/notarization secrets are not fully configured."
-                  ;;
-                macos-app-build-failed)
-                  echo "> Note: The macOS desktop app is not included in this GitHub release because the macOS app build failed."
-                  ;;
-                macos-code-signing-failed)
-                  echo "> Note: The macOS desktop app is not included in this GitHub release because macOS code signing failed."
-                  ;;
-                *)
-                  echo "> Note: The macOS desktop app is not included in this GitHub release because the macOS notarization step failed."
-                  ;;
-              esac
-              echo "> If you only need macOS today, use the CLI tarball below or build from source."
-              echo
-            fi
-            if [ "${WINDOWS_APP_RELEASED}" != "success" ]; then
-              echo "> Note: The Windows desktop app is not included in this GitHub release because the Windows build did not complete."
-              echo
-            fi
-            if [ "${ANDROID_APP_RELEASED}" != "success" ]; then
-              echo "> Note: The Android app is not included in this GitHub release because the Android build did not complete."
-              echo
-            fi
-            if [ "${LINUX_APP_RELEASED}" != "success" ]; then
-              echo "> Note: The Linux desktop app is not included in this GitHub release because the Linux build did not complete."
-              echo
-            fi
-            echo "### Headless CLI downloads"
-            echo "- [macOS Apple Silicon CLI](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-aarch64-apple-darwin.tar.gz)"
-            echo "- [Windows x86_64 CLI](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-${RELEASE_TAG}-x86_64-pc-windows-msvc.zip)"
-            echo "- [Linux x86_64 CLI](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-x86_64-unknown-linux-musl.tar.gz)"
-            echo "- [Linux ARM64 CLI](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-aarch64-unknown-linux-musl.tar.gz)"
-            echo
-            echo '### Quick CLI install (Apple Silicon macOS/Linux)'
-            echo '```bash'
-            echo 'case "$(uname -s)/$(uname -m)" in'
-            echo '  Darwin/arm64) ASSET=nvpn-aarch64-apple-darwin.tar.gz ;;'
-            echo '  Linux/x86_64) ASSET=nvpn-x86_64-unknown-linux-musl.tar.gz ;;'
-            echo '  Linux/aarch64|Linux/arm64) ASSET=nvpn-aarch64-unknown-linux-musl.tar.gz ;;'
-            echo '  Darwin/x86_64)'
-            echo '    echo "No GitHub CLI tarball is published for Intel macOS. Build from source instead." >&2'
-            echo '    exit 1'
-            echo '    ;;'
-            echo '  *)'
-            echo '    echo "Unsupported platform: $(uname -s)/$(uname -m)" >&2'
-            echo '    exit 1'
-            echo '    ;;'
-            echo 'esac'
-            echo 'curl -fsSL "https://github.com/'"${RELEASE_REPOSITORY}"'/releases/download/'"${RELEASE_TAG}"'/${ASSET}" | tar -xz && cd nvpn && ./install.sh'
-            echo '```'
-            echo
-            echo 'That command auto-detects the matching Apple Silicon macOS/Linux CLI tarball, extracts `nvpn`, and runs the bundled installer.'
-            echo
-            echo '### Manual CLI install'
-            echo '```bash'
-            echo '# macOS Apple Silicon'
-            echo "curl -LO https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-aarch64-apple-darwin.tar.gz"
-            echo
-            echo '# Linux x86_64'
-            echo "curl -LO https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-x86_64-unknown-linux-musl.tar.gz"
-            echo
-            echo '# Linux ARM64'
-            echo "curl -LO https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-aarch64-unknown-linux-musl.tar.gz"
-            echo
-            echo 'tar -xzf nvpn-*.tar.gz && cd nvpn && ./install.sh'
-            echo '```'
-            echo
-            echo 'For Intel macOS, build/install from source instead:'
-            echo '```bash'
-            echo "cargo install --git https://github.com/${RELEASE_REPOSITORY} --locked --bin nvpn nostr-vpn-cli"
-            echo '```'
-            echo
-            echo '### Verify'
-            echo '```bash'
-            echo 'nvpn --help'
-            echo 'nvpn init --participant npub1...alice --participant npub1...bob'
-            echo '```'
-          } > release-notes.md
+          skipped_args=()
+          if [ "${MACOS_ARTIFACT_PUBLISHED}" != "true" ]; then
+            case "${MACOS_ARTIFACT_SKIP_REASON}" in
+              apple-developer-agreement-inactive)
+                skipped_args+=(--skipped-line "macOS desktop app: Apple Developer agreement for notarization is missing or expired.")
+                ;;
+              macos-release-secrets-missing)
+                skipped_args+=(--skipped-line "macOS desktop app: macOS signing/notarization secrets are not fully configured.")
+                ;;
+              macos-app-build-failed)
+                skipped_args+=(--skipped-line "macOS desktop app: app build failed.")
+                ;;
+              macos-code-signing-failed)
+                skipped_args+=(--skipped-line "macOS desktop app: code signing failed.")
+                ;;
+              *)
+                skipped_args+=(--skipped-line "macOS desktop app: notarization failed.")
+                ;;
+            esac
+          fi
+          if [ "${WINDOWS_APP_RELEASED}" != "success" ]; then
+            skipped_args+=(--skipped-line "Windows desktop app: build did not complete.")
+          fi
+          if [ "${ANDROID_APP_RELEASED}" != "success" ]; then
+            skipped_args+=(--skipped-line "Android app: build did not complete.")
+          fi
+          if [ "${LINUX_APP_RELEASED}" != "success" ]; then
+            skipped_args+=(--skipped-line "Linux desktop app: build did not complete.")
+          fi
+
+          node scripts/render-release-notes.mjs \
+            --tag "${RELEASE_TAG}" \
+            --commit "${GITHUB_SHA}" \
+            --asset-dir artifacts \
+            --asset-base-url "https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}" \
+            --changelog CHANGELOG.md \
+            --out release-notes.md \
+            "${skipped_args[@]}"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
