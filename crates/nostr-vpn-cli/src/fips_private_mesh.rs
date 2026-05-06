@@ -1296,7 +1296,9 @@ mod tests {
         FipsEndpointTransportConfig, FipsPrivateMeshRuntime, FipsPrivateTunnelConfig,
         fips_endpoint_config,
     };
-    use fips_endpoint::{Config, PeerConfig as FipsPeerConfig, TransportInstances, UdpConfig};
+    use fips_endpoint::{
+        Config, ConnectPolicy, PeerConfig as FipsPeerConfig, TransportInstances, UdpConfig,
+    };
     use nostr_sdk::prelude::{Keys, ToBech32};
     use nostr_vpn_core::config::{AppConfig, derive_mesh_tunnel_ip};
     use nostr_vpn_core::fips_mesh::FipsMeshPeerConfig;
@@ -1411,18 +1413,23 @@ mod tests {
         assert!(config.route_targets.contains(&"::/0".to_string()));
     }
 
-    fn direct_udp_endpoint_config(local_port: u16, peer_npub: &str, peer_port: u16) -> Config {
+    fn direct_udp_endpoint_config(
+        local_port: u16,
+        peer_npub: &str,
+        peer_port: u16,
+        auto_connect: bool,
+    ) -> Config {
         let mut config = Config::new();
         config.transports.udp = TransportInstances::Single(UdpConfig {
             bind_addr: Some(format!("127.0.0.1:{local_port}")),
             accept_connections: Some(true),
             ..UdpConfig::default()
         });
-        config.peers.push(FipsPeerConfig::new(
-            peer_npub,
-            "udp",
-            format!("127.0.0.1:{peer_port}"),
-        ));
+        let mut peer = FipsPeerConfig::new(peer_npub, "udp", format!("127.0.0.1:{peer_port}"));
+        if !auto_connect {
+            peer.connect_policy = ConnectPolicy::Manual;
+        }
+        config.peers.push(peer);
         config
     }
 
@@ -1443,6 +1450,31 @@ mod tests {
             last_error
                 .map(|error| error.to_string())
                 .unwrap_or_else(|| "unknown error".to_string())
+        );
+    }
+
+    async fn wait_for_fips_peer(runtime: &FipsPrivateMeshRuntime, peer_npub: &str) {
+        let mut last_snapshot = Vec::new();
+        let mut last_error = None;
+        for _ in 0..50 {
+            match runtime.endpoint.peers().await {
+                Ok(peers) => {
+                    if peers.iter().any(|peer| {
+                        peer.npub == peer_npub && peer.transport_addr.as_deref().is_some()
+                    }) {
+                        return;
+                    }
+                    last_snapshot = peers;
+                }
+                Err(error) => last_error = Some(error),
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!(
+            "FIPS peer {peer_npub} did not establish; last snapshot: {last_snapshot:?}; last error: {}",
+            last_error
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "none".to_string())
         );
     }
 
@@ -1470,7 +1502,7 @@ mod tests {
                 endpoint_npub: bob_npub.clone(),
                 allowed_ips: vec![format!("{bob_ip}/32")],
             }],
-            direct_udp_endpoint_config(alice_port, &bob_npub, bob_port),
+            direct_udp_endpoint_config(alice_port, &bob_npub, bob_port, true),
         )
         .await
         .expect("alice endpoint should bind");
@@ -1482,10 +1514,13 @@ mod tests {
                 endpoint_npub: alice_npub.clone(),
                 allowed_ips: vec![format!("{alice_ip}/32")],
             }],
-            direct_udp_endpoint_config(bob_port, &alice_npub, alice_port),
+            direct_udp_endpoint_config(bob_port, &alice_npub, alice_port, false),
         )
         .await
         .expect("bob endpoint should bind");
+
+        wait_for_fips_peer(&alice_runtime, &bob_npub).await;
+        wait_for_fips_peer(&bob_runtime, &alice_npub).await;
 
         let alice_to_bob = ipv4_packet(alice_ip, bob_ip);
         send_with_retry(&alice_runtime, &alice_to_bob).await;

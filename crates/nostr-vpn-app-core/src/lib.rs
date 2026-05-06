@@ -3,6 +3,7 @@ pub mod c_abi;
 mod ffi;
 mod invite;
 mod lan_pairing;
+mod mobile_tunnel;
 pub mod native_state;
 pub mod platform;
 pub mod state;

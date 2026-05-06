@@ -2,8 +2,10 @@ import Foundation
 
 final class NativeCoreClient {
     private var handle: OpaquePointer?
+    private let dataDir: String
 
     init(dataDir: String, appVersion: String) {
+        self.dataDir = dataDir
         handle = dataDir.withCString { dataDirPointer in
             appVersion.withCString { versionPointer in
                 nostr_vpn_app_new(dataDirPointer, versionPointer)
@@ -70,6 +72,12 @@ final class NativeCoreClient {
             return QrDecodeResult(error: "Invalid QR decode response")
         }
         return result
+    }
+
+    func mobileTunnelConfigJson() -> String {
+        dataDir.withCString { dataDirPointer in
+            consume(nostr_vpn_mobile_tunnel_config_json(dataDirPointer))
+        }
     }
 
     private func parseState(_ json: String) -> AppState {

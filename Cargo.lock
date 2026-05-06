@@ -2844,6 +2844,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "dirs",
+ "fips-endpoint",
  "image",
  "jni",
  "nostr-sdk 0.35.0",
@@ -2852,6 +2853,7 @@ dependencies = [
  "rqrr",
  "serde",
  "serde_json",
+ "tokio",
  "uniffi",
 ]
 

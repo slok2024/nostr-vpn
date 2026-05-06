@@ -2,7 +2,7 @@ package org.nostrvpn.app.core
 
 import org.json.JSONObject
 
-class AppCoreClient(dataDir: String, appVersion: String) : AutoCloseable {
+class AppCoreClient(private val dataDir: String, appVersion: String) : AutoCloseable {
     private var handle: Long = NativeCore.appNew(dataDir, appVersion)
 
     fun state(): AppState = parseAppState(NativeCore.stateJson(requireHandle()))
@@ -13,6 +13,8 @@ class AppCoreClient(dataDir: String, appVersion: String) : AutoCloseable {
         parseAppState(NativeCore.dispatchJson(requireHandle(), action.toString()))
 
     fun qrMatrix(invite: String): JSONObject = JSONObject(NativeCore.qrMatrixJson(invite))
+
+    fun mobileTunnelConfigJson(): String = NativeCore.mobileTunnelConfigJson(dataDir)
 
     override fun close() {
         val current = handle

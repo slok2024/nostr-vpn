@@ -1,22 +1,28 @@
 use std::ffi::{CStr, CString, c_char};
 use std::ptr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use image::ImageReader;
 #[cfg(target_os = "android")]
 use jni::JNIEnv;
 #[cfg(target_os = "android")]
-use jni::objects::{JClass, JString};
+use jni::objects::{JByteArray, JClass, JString};
 #[cfg(target_os = "android")]
-use jni::sys::{jlong, jstring};
+use jni::sys::{jboolean, jint, jlong, jstring};
 use qrcode::QrCode;
 use serde::Serialize;
 
+use crate::mobile_tunnel::{MobileTunnel, tunnel_config_json};
 use crate::{FfiApp, NativeAppAction, NativeAppState};
 
 pub struct NvpnAppHandle {
     app: Arc<FfiApp>,
+}
+
+pub struct NvpnMobileTunnelHandle {
+    tunnel: MobileTunnel,
 }
 
 #[derive(Debug, Serialize)]
@@ -119,6 +125,67 @@ pub extern "C" fn nostr_vpn_decode_qr_image_json(path: *const c_char) -> *mut c_
         },
     );
     json_string(&result)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn nostr_vpn_mobile_tunnel_config_json(data_dir: *const c_char) -> *mut c_char {
+    json_raw_string(tunnel_config_json(&c_string_lossy(data_dir)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn nostr_vpn_mobile_tunnel_new(
+    config_json: *const c_char,
+) -> *mut NvpnMobileTunnelHandle {
+    let config_json = c_string_lossy(config_json);
+    match MobileTunnel::start(&config_json) {
+        Ok(tunnel) => Box::into_raw(Box::new(NvpnMobileTunnelHandle { tunnel })),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn nostr_vpn_mobile_tunnel_free(handle: *mut NvpnMobileTunnelHandle) {
+    if handle.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(handle));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn nostr_vpn_mobile_tunnel_send_packet(
+    handle: *const NvpnMobileTunnelHandle,
+    packet: *const u8,
+    len: usize,
+) -> bool {
+    if handle.is_null() || packet.is_null() || len == 0 {
+        return false;
+    }
+    let tunnel = unsafe { &*handle };
+    let packet = unsafe { std::slice::from_raw_parts(packet, len) };
+    tunnel.tunnel.send_packet(packet)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn nostr_vpn_mobile_tunnel_next_packet(
+    handle: *const NvpnMobileTunnelHandle,
+    out: *mut u8,
+    capacity: usize,
+    timeout_ms: u32,
+) -> isize {
+    if handle.is_null() || out.is_null() || capacity == 0 {
+        return -1;
+    }
+    let tunnel = unsafe { &*handle };
+    let out = unsafe { std::slice::from_raw_parts_mut(out, capacity) };
+    match tunnel
+        .tunnel
+        .next_packet(out, Duration::from_millis(u64::from(timeout_ms)))
+    {
+        Ok(len) => isize::try_from(len).unwrap_or(-1),
+        Err(_) => -1,
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -243,6 +310,103 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_decodeQrImageJson(
     jni_json_string(env, &result)
 }
 
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelConfigJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    data_dir: JString<'_>,
+) -> jstring {
+    let data_dir = jni_string_lossy(&mut env, &data_dir);
+    jni_raw_string(env, tunnel_config_json(&data_dir))
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelNew(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    config_json: JString<'_>,
+) -> jlong {
+    let config_json = jni_string_lossy(&mut env, &config_json);
+    match MobileTunnel::start(&config_json) {
+        Ok(tunnel) => Box::into_raw(Box::new(NvpnMobileTunnelHandle { tunnel })) as jlong,
+        Err(_) => 0,
+    }
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelFree(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) {
+    if handle == 0 {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(handle as *mut NvpnMobileTunnelHandle));
+    }
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelSendPacket(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    packet: JByteArray<'_>,
+    len: jint,
+) -> jboolean {
+    let Some(tunnel) = tunnel_from_jlong(handle) else {
+        return 0;
+    };
+    let Ok(mut bytes) = env.convert_byte_array(&packet) else {
+        return 0;
+    };
+    let len = usize::try_from(len).unwrap_or(0).min(bytes.len());
+    bytes.truncate(len);
+    u8::from(tunnel.tunnel.send_packet(&bytes))
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelNextPacket(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    out: JByteArray<'_>,
+    timeout_ms: jint,
+) -> jint {
+    let Some(tunnel) = tunnel_from_jlong(handle) else {
+        return -1;
+    };
+    let Ok(capacity) = env.get_array_length(&out) else {
+        return -1;
+    };
+    let mut buffer = vec![0_u8; usize::try_from(capacity).unwrap_or(0)];
+    let timeout_ms = u64::try_from(timeout_ms).unwrap_or(0);
+    let len = match tunnel
+        .tunnel
+        .next_packet(&mut buffer, Duration::from_millis(timeout_ms))
+    {
+        Ok(len) => len,
+        Err(_) => return -1,
+    };
+    if len == 0 {
+        return 0;
+    }
+    let signed = buffer[..len]
+        .iter()
+        .map(|byte| i8::from_ne_bytes([*byte]))
+        .collect::<Vec<_>>();
+    if env.set_byte_array_region(&out, 0, &signed).is_err() {
+        return -1;
+    }
+    jint::try_from(len).unwrap_or(-1)
+}
+
 fn app_from_handle<'a>(handle: *const NvpnAppHandle) -> Result<&'a NvpnAppHandle> {
     if handle.is_null() {
         return Err(anyhow!("native app handle is null"));
@@ -256,6 +420,14 @@ fn app_from_jlong<'a>(handle: jlong) -> Result<&'a NvpnAppHandle> {
         return Err(anyhow!("native app handle is null"));
     }
     Ok(unsafe { &*(handle as *const NvpnAppHandle) })
+}
+
+#[cfg(target_os = "android")]
+fn tunnel_from_jlong<'a>(handle: jlong) -> Option<&'a NvpnMobileTunnelHandle> {
+    if handle == 0 {
+        return None;
+    }
+    Some(unsafe { &*(handle as *const NvpnMobileTunnelHandle) })
 }
 
 fn c_string_lossy(value: *const c_char) -> String {
@@ -292,7 +464,12 @@ fn jni_state_json(
 fn jni_json_string(env: JNIEnv<'_>, value: &impl Serialize) -> jstring {
     let json =
         serde_json::to_string(value).unwrap_or_else(|error| format!(r#"{{"error":"{error}"}}"#));
-    env.new_string(json)
+    jni_raw_string(env, json)
+}
+
+#[cfg(target_os = "android")]
+fn jni_raw_string(env: JNIEnv<'_>, value: String) -> jstring {
+    env.new_string(value)
         .map_or(ptr::null_mut(), |value| value.into_raw())
 }
 
@@ -301,6 +478,10 @@ fn json_string(value: &impl Serialize) -> *mut c_char {
         Ok(json) => into_c_string(json),
         Err(error) => into_c_string(format!(r#"{{"error":"{error}"}}"#)),
     }
+}
+
+fn json_raw_string(value: String) -> *mut c_char {
+    into_c_string(value)
 }
 
 fn into_c_string(value: String) -> *mut c_char {

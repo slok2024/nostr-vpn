@@ -55,5 +55,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: to.iris.nvpn.ios.PacketTunnel
         INFOPLIST_FILE: PacketTunnel/Info.plist
         CODE_SIGN_ENTITLEMENTS: PacketTunnel/PacketTunnel.entitlements
+        HEADER_SEARCH_PATHS: $(PROJECT_DIR)/Bindings
+        SWIFT_OBJC_BRIDGING_HEADER: Bindings/NostrVpnAppCoreC.h
     dependencies:
+      - framework: Frameworks/NostrVpnAppCore.xcframework
+        embed: false
       - sdk: NetworkExtension.framework

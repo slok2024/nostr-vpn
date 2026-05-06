@@ -14,6 +14,7 @@ import kotlinx.coroutines.delay
 import org.json.JSONObject
 import org.nostrvpn.app.core.AppCoreClient
 import org.nostrvpn.app.core.NativeActions
+import org.nostrvpn.app.vpn.NostrVpnService
 
 class MainActivity : ComponentActivity() {
     private var deepLink by mutableStateOf<String?>(null)
@@ -26,10 +27,26 @@ class MainActivity : ComponentActivity() {
         setContent {
             var state by remember { mutableStateOf(core.state()) }
             val dispatch: (JSONObject) -> Unit = { action ->
+                val wasActive = state.sessionActive
                 state = try {
                     core.dispatch(action)
                 } catch (error: Exception) {
                     state.copy(error = error.message ?: "Android action failed")
+                }
+                if (!wasActive && state.sessionActive) {
+                    startService(
+                        Intent(this, NostrVpnService::class.java)
+                            .setAction(NostrVpnService.ACTION_CONNECT)
+                            .putExtra(
+                                NostrVpnService.EXTRA_CONFIG_JSON,
+                                core.mobileTunnelConfigJson(),
+                            ),
+                    )
+                } else if (wasActive && !state.sessionActive) {
+                    startService(
+                        Intent(this, NostrVpnService::class.java)
+                            .setAction(NostrVpnService.ACTION_DISCONNECT),
+                    )
                 }
             }
 

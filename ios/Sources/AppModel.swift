@@ -73,7 +73,11 @@ final class AppModel: ObservableObject {
                 dispatch(NativeActions.disconnectSession(), status: "Disconnecting")
             } else {
                 do {
-                    try await vpnController.start(state: state, network: activeNetwork)
+                    try await vpnController.start(
+                        state: state,
+                        network: activeNetwork,
+                        tunnelConfigJson: core.mobileTunnelConfigJson()
+                    )
                     dispatch(NativeActions.connectSession(), status: "Connecting")
                 } catch {
                     statusMessage = error.localizedDescription

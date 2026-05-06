@@ -2,11 +2,12 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::{PublicKey, ToBech32};
+use serde::{Deserialize, Serialize};
 
 use crate::config::normalize_nostr_pubkey;
 use crate::data_plane::{MeshPeerStatus, PrivateDataPlane, PrivatePacket};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FipsMeshPeerConfig {
     pub participant_pubkey: String,
     pub endpoint_npub: String,

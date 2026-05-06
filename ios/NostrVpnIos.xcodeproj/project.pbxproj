@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		050CC6FAA230A6EDA894CCF8 /* PacketTunnelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8ECBFB09C508ED9BE10C907 /* PacketTunnelController.swift */; };
+		0A933AB006CCAF79C262D8CB /* NostrVpnAppCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1432941BCEFBEB848E748486 /* NostrVpnAppCore.xcframework */; };
 		134D0AE1F2653934E68D66F4 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 620E8362A0A3215BB8EFF1F5 /* RootView.swift */; };
 		2CDAA4060234E6D83A9E2876 /* NostrVpnAppCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1432941BCEFBEB848E748486 /* NostrVpnAppCore.xcframework */; };
 		2EEA35334ED681D30F23D58F /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C8BAA0EBA6F30832FC35B6E6 /* NetworkExtension.framework */; };
@@ -69,6 +70,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0A933AB006CCAF79C262D8CB /* NostrVpnAppCore.xcframework in Frameworks */,
 				2EEA35334ED681D30F23D58F /* NetworkExtension.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -391,6 +393,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.entitlements;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Frameworks\"",
+				);
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/Bindings";
 				INFOPLIST_FILE = PacketTunnel/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -401,6 +408,7 @@
 				PRODUCT_MODULE_NAME = PacketTunnel;
 				PRODUCT_NAME = "Nostr VPN Tunnel";
 				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = Bindings/NostrVpnAppCoreC.h;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -409,6 +417,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.entitlements;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Frameworks\"",
+				);
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/Bindings";
 				INFOPLIST_FILE = PacketTunnel/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -419,6 +432,7 @@
 				PRODUCT_MODULE_NAME = PacketTunnel;
 				PRODUCT_NAME = "Nostr VPN Tunnel";
 				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = Bindings/NostrVpnAppCoreC.h;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
