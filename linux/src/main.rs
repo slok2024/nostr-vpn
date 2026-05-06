@@ -1,11 +1,15 @@
 mod deep_link;
 mod qr;
 mod qr_scan;
+mod tray;
+mod updater;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
+use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
@@ -71,27 +75,43 @@ impl Drafts {
 struct AppModel {
     core: Arc<FfiApp>,
     state: NativeAppState,
+    window: adw::ApplicationWindow,
     page: Page,
     sidebar: gtk::Box,
     content: gtk::Box,
     drafts: Drafts,
     notice: String,
+    tray: tray::TrayRuntime,
+    update: updater::UpdateState,
+    update_sender: Sender<updater::UpdateEvent>,
+    update_receiver: Receiver<updater::UpdateEvent>,
+    allow_close: bool,
+    service_settling: bool,
 }
 
 impl AppModel {
-    fn new(sidebar: gtk::Box, content: gtk::Box) -> Self {
+    fn new(window: adw::ApplicationWindow, sidebar: gtk::Box, content: gtk::Box) -> Self {
         let core = FfiApp::new(default_data_dir(), env!("CARGO_PKG_VERSION").to_string());
         let state = core.state();
         let mut drafts = Drafts::default();
         drafts.sync_from_state(&state);
+        let tray = tray::TrayRuntime::start(&state);
+        let (update_sender, update_receiver) = mpsc::channel();
         Self {
             core,
             state,
+            window,
             page: Page::Devices,
             sidebar,
             content,
             drafts,
             notice: String::new(),
+            tray,
+            update: updater::UpdateState::default(),
+            update_sender,
+            update_receiver,
+            allow_close: false,
+            service_settling: false,
         }
     }
 }
@@ -193,6 +213,7 @@ fn build_ui(app: &adw::Application, runtime: &AppRuntime, present: bool) {
     window.set_content(Some(&toolbar));
 
     let model = Rc::new(RefCell::new(AppModel::new(
+        window.clone(),
         sidebar.clone(),
         content.clone(),
     )));
@@ -201,6 +222,18 @@ fn build_ui(app: &adw::Application, runtime: &AppRuntime, present: bool) {
     {
         let model = model.clone();
         refresh_button.connect_clicked(move |_| refresh_now(&model));
+    }
+    {
+        let model = model.clone();
+        window.connect_close_request(move |window| {
+            let model = model.borrow();
+            if model.state.close_to_tray_on_close && !model.allow_close {
+                window.set_visible(false);
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
     }
 
     render(&model);
@@ -212,6 +245,16 @@ fn build_ui(app: &adw::Application, runtime: &AppRuntime, present: bool) {
             glib::ControlFlow::Continue
         });
     }
+    {
+        let model = model.clone();
+        glib::timeout_add_local(Duration::from_millis(250), move || {
+            drain_tray_commands(&model);
+            drain_update_events(&model);
+            glib::ControlFlow::Continue
+        });
+    }
+
+    check_updates(&model, false);
 
     if present {
         window.present();
@@ -222,15 +265,229 @@ fn build_ui(app: &adw::Application, runtime: &AppRuntime, present: bool) {
 fn refresh_now(app: &AppRef) {
     let core = app.borrow().core.clone();
     let state = core.refresh();
-    app.borrow_mut().state = state;
+    set_state(app, state);
     render(app);
 }
 
 fn dispatch(app: &AppRef, action: NativeAppAction) {
+    let settle_service = matches!(
+        &action,
+        NativeAppAction::InstallSystemService
+            | NativeAppAction::UninstallSystemService
+            | NativeAppAction::EnableSystemService
+            | NativeAppAction::DisableSystemService
+    );
+    if let NativeAppAction::UpdateSettings { patch } = &action {
+        if let Some(enabled) = patch.launch_on_startup {
+            if let Err(error) = configure_launch_on_startup(enabled) {
+                set_notice(app, error);
+                return;
+            }
+        }
+    }
     let core = app.borrow().core.clone();
     let state = core.dispatch(action);
-    app.borrow_mut().state = state;
+    set_state(app, state);
     render(app);
+    if settle_service {
+        start_service_settlement_polling(app);
+    }
+}
+
+fn set_state(app: &AppRef, state: NativeAppState) {
+    let mut model = app.borrow_mut();
+    model.tray.update(&state);
+    model.state = state;
+}
+
+fn drain_tray_commands(app: &AppRef) {
+    let commands = app.borrow_mut().tray.drain();
+    for command in commands {
+        match command {
+            tray::TrayCommand::ShowWindow => show_window(app),
+            tray::TrayCommand::ToggleSession => {
+                let active = app.borrow().state.session_active;
+                dispatch(
+                    app,
+                    if active {
+                        NativeAppAction::DisconnectSession
+                    } else {
+                        NativeAppAction::ConnectSession
+                    },
+                );
+            }
+            tray::TrayCommand::ToggleExitOffer => {
+                let enabled = !app.borrow().state.advertise_exit_node;
+                dispatch(
+                    app,
+                    NativeAppAction::UpdateSettings {
+                        patch: SettingsPatch {
+                            advertise_exit_node: Some(enabled),
+                            ..SettingsPatch::default()
+                        },
+                    },
+                );
+            }
+            tray::TrayCommand::CopyThisDevice => {
+                let value = tray::this_device_copy_value(&app.borrow().state);
+                if !value.trim().is_empty() {
+                    copy_text(&value);
+                }
+            }
+            tray::TrayCommand::CopyPeer(npub) => copy_text(&npub),
+            tray::TrayCommand::SetExitNode(npub) => {
+                dispatch(
+                    app,
+                    NativeAppAction::UpdateSettings {
+                        patch: SettingsPatch {
+                            exit_node: Some(npub),
+                            ..SettingsPatch::default()
+                        },
+                    },
+                );
+            }
+            tray::TrayCommand::Refresh => refresh_now(app),
+            tray::TrayCommand::Quit => quit_app(app),
+        }
+    }
+}
+
+fn check_updates(app: &AppRef, manual: bool) {
+    let (current_version, sender) = {
+        let mut model = app.borrow_mut();
+        if model.update.checking || model.update.downloading {
+            return;
+        }
+        model.update.checking = true;
+        if manual {
+            model.update.status = "Checking for updates".to_string();
+        }
+        (model.state.app_version.clone(), model.update_sender.clone())
+    };
+    render(app);
+    updater::check(current_version, manual, sender);
+}
+
+fn download_update(app: &AppRef) {
+    let (asset, sender) = {
+        let mut model = app.borrow_mut();
+        if model.update.checking || model.update.downloading {
+            return;
+        }
+        let Some(asset) = model.update.asset.clone() else {
+            model.update.status = "No Linux update asset found".to_string();
+            render(app);
+            return;
+        };
+        model.update.downloading = true;
+        model.update.status = format!("Downloading {}", model.update.version);
+        (asset, model.update_sender.clone())
+    };
+    render(app);
+    updater::download(asset, sender);
+}
+
+fn drain_update_events(app: &AppRef) {
+    let events = {
+        let model = app.borrow();
+        model.update_receiver.try_iter().collect::<Vec<_>>()
+    };
+    if events.is_empty() {
+        return;
+    }
+
+    {
+        let mut model = app.borrow_mut();
+        for event in events {
+            match event {
+                updater::UpdateEvent::Checked { manual, result } => {
+                    model.update.checking = false;
+                    match result {
+                        Ok(check) => {
+                            model.update.available = check.newer;
+                            model.update.version = check.tag.clone();
+                            model.update.asset = if check.newer { check.asset } else { None };
+                            if check.newer {
+                                model.update.status = if model.update.asset.is_some() {
+                                    format!("Update {} available", check.tag)
+                                } else {
+                                    format!(
+                                        "Update {} found without a Linux desktop asset",
+                                        check.tag
+                                    )
+                                };
+                            } else if manual {
+                                model.update.status = "Up to date".to_string();
+                            } else {
+                                model.update.status.clear();
+                            }
+                        }
+                        Err(error) => {
+                            if manual {
+                                model.update.status = error;
+                            } else {
+                                model.update.status.clear();
+                            }
+                        }
+                    }
+                }
+                updater::UpdateEvent::Downloaded(result) => {
+                    model.update.downloading = false;
+                    match result {
+                        Ok(path) => {
+                            model.update.status = format!(
+                                "Downloaded {}",
+                                path.file_name()
+                                    .and_then(|name| name.to_str())
+                                    .unwrap_or("update")
+                            );
+                        }
+                        Err(error) => {
+                            model.update.status = error;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    render(app);
+}
+
+fn show_window(app: &AppRef) {
+    let window = app.borrow().window.clone();
+    window.present();
+}
+
+fn quit_app(app: &AppRef) {
+    let window = {
+        let mut model = app.borrow_mut();
+        model.allow_close = true;
+        model.window.clone()
+    };
+    if let Some(application) = window.application() {
+        application.quit();
+    }
+}
+
+fn start_service_settlement_polling(app: &AppRef) {
+    app.borrow_mut().service_settling = true;
+    render(app);
+
+    let app = app.clone();
+    let attempts = Rc::new(Cell::new(0));
+    glib::timeout_add_local(Duration::from_millis(700), move || {
+        refresh_now(&app);
+        let next = attempts.get() + 1;
+        attempts.set(next);
+        if next >= 8 {
+            app.borrow_mut().service_settling = false;
+            render(&app);
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
 }
 
 fn drain_pending_urls(runtime: &AppRuntime) {
@@ -861,8 +1118,15 @@ fn build_share_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         let app = app.clone();
         image.connect_clicked(move |button| choose_invite_qr_image(&app, button));
     }
+    let camera = gtk::Button::from_icon_name("camera-photo-symbolic");
+    camera.set_tooltip_text(Some("Scan QR"));
+    {
+        let app = app.clone();
+        camera.connect_clicked(move |button| scan_invite_qr(&app, button));
+    }
     import_row.append(&invite_entry);
     import_row.append(&import);
+    import_row.append(&camera);
     import_row.append(&image);
     column.append(&import_row);
 
@@ -994,6 +1258,19 @@ fn choose_invite_qr_image(app: &AppRef, button: &gtk::Button) {
             Err(error) => set_notice(&app, error),
         }
     });
+}
+
+fn scan_invite_qr(app: &AppRef, button: &gtk::Button) {
+    let parent = button
+        .root()
+        .and_then(|root| root.downcast::<gtk::Window>().ok());
+    let app_for_result = app.clone();
+    let app_for_error = app.clone();
+    qr_scan::open_scanner(
+        parent.as_ref(),
+        move |invite| import_invite(&app_for_result, invite),
+        move |error| set_notice(&app_for_error, error),
+    );
 }
 
 fn build_routing_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
@@ -1359,6 +1636,15 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         );
     }
 
+    let (service_settling, tray_error, update) = {
+        let model = app.borrow();
+        (
+            model.service_settling,
+            model.tray.last_error(),
+            model.update.clone(),
+        )
+    };
+
     let status_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     status_row.append(&badge(
         if state.service_installed {
@@ -1391,16 +1677,46 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     if service_repair_recommended(state) {
         status_row.append(&badge("Repair available", "warn"));
     }
+    if service_settling {
+        status_row.append(&badge("Settling", "muted"));
+    }
+    let update_badge = if update.available {
+        format!("Update {}", update.version)
+    } else {
+        "Current".to_string()
+    };
+    status_row.append(&badge(
+        &update_badge,
+        if update.available { "warn" } else { "ok" },
+    ));
+    if update.checking {
+        status_row.append(&badge("Checking", "muted"));
+    }
+    if update.downloading {
+        status_row.append(&badge("Downloading", "muted"));
+    }
     system.append(&status_row);
 
-    if !state.service_status_detail.trim().is_empty() {
-        let detail = gtk::Label::new(Some(&state.service_status_detail));
+    let status_detail = first_non_empty(&[&update.status, &state.service_status_detail]);
+    if let Some(status_detail) = status_detail {
+        let detail = gtk::Label::new(Some(&status_detail));
         detail.add_css_class("caption");
         detail.add_css_class("dim-label");
         detail.set_xalign(0.0);
         detail.set_wrap(true);
         detail.set_selectable(true);
         system.append(&detail);
+    }
+
+    if let Some(error) = tray_error {
+        if !error.trim().is_empty() {
+            let detail = gtk::Label::new(Some(&format!("Tray unavailable: {error}")));
+            detail.add_css_class("caption");
+            detail.add_css_class("dim-label");
+            detail.set_xalign(0.0);
+            detail.set_wrap(true);
+            system.append(&detail);
+        }
     }
 
     let cli_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -1419,6 +1735,22 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         cli.connect_clicked(move |_| dispatch(&app, NativeAppAction::InstallCli));
     }
     cli_row.append(&cli);
+    let check_update_button = icon_text_button("Check Updates", "view-refresh-symbolic");
+    check_update_button.set_sensitive(!update.checking && !update.downloading);
+    {
+        let app = app.clone();
+        check_update_button.connect_clicked(move |_| check_updates(&app, true));
+    }
+    cli_row.append(&check_update_button);
+    let download_update_button = icon_text_button("Download Update", "folder-download-symbolic");
+    download_update_button.set_sensitive(
+        update.available && update.asset.is_some() && !update.checking && !update.downloading,
+    );
+    {
+        let app = app.clone();
+        download_update_button.connect_clicked(move |_| download_update(&app));
+    }
+    cli_row.append(&download_update_button);
     let uninstall_cli = icon_text_button("Uninstall CLI", "edit-delete-symbolic");
     uninstall_cli.set_sensitive(state.cli_install_supported && state.cli_installed);
     {
@@ -2225,6 +2557,70 @@ fn copy_text(value: &str) {
     if let Some(display) = gtk::gdk::Display::default() {
         display.clipboard().set_text(value);
     }
+}
+
+fn configure_launch_on_startup(enabled: bool) -> Result<(), String> {
+    let path = autostart_desktop_path().ok_or_else(|| "Autostart path unavailable".to_string())?;
+    if enabled {
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("App executable not found: {error}"))?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| "Autostart path unavailable".to_string())?;
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create autostart directory: {error}"))?;
+        std::fs::write(&path, autostart_desktop_entry(&executable))
+            .map_err(|error| format!("Could not write autostart entry: {error}"))?;
+    } else if path.exists() {
+        std::fs::remove_file(&path)
+            .map_err(|error| format!("Could not remove autostart entry: {error}"))?;
+    }
+    Ok(())
+}
+
+fn autostart_desktop_path() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .map(|config| config.join("autostart").join("to.iris.nvpn.desktop"))
+}
+
+fn autostart_desktop_entry(executable: &std::path::Path) -> String {
+    format!(
+        "[Desktop Entry]\nType=Application\nName=Nostr VPN\nExec={} --autostart\nIcon=nostr-vpn\nTerminal=false\nCategories=Network;Security;\nX-GNOME-Autostart-enabled=true\n",
+        desktop_exec_escape(&executable.to_string_lossy())
+    )
+}
+
+fn desktop_exec_escape(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if matches!(
+            ch,
+            ' ' | '\t'
+                | '\n'
+                | '"'
+                | '\''
+                | '\\'
+                | '>'
+                | '<'
+                | '~'
+                | '|'
+                | '&'
+                | ';'
+                | '$'
+                | '*'
+                | '?'
+                | '#'
+                | '('
+                | ')'
+                | '`'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
 }
 
 fn default_data_dir() -> String {

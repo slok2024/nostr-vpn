@@ -17,6 +17,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 nostr-vpn-app-core = { path = "../crates/nostr-vpn-app-core" }
 qrcode = { version = "0.14", default-features = false }
 rqrr = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [package.metadata.deb]
 name = "nostr-vpn"
@@ -25,6 +27,7 @@ copyright = "Nostr VPN"
 extended-description = "Simple private networks over FIPS and Nostr."
 section = "net"
 priority = "optional"
+depends = "$auto, curl, xdg-utils, zbar-tools"
 assets = [
     ["target/release/nostr-vpn", "usr/bin/", "755"],
     ["resources/nostr-vpn-16.png", "usr/share/icons/hicolor/16x16/apps/nostr-vpn.png", "644"],

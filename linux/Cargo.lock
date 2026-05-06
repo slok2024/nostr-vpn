@@ -2100,6 +2100,8 @@ dependencies = [
  "nostr-vpn-app-core",
  "qrcode",
  "rqrr",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
