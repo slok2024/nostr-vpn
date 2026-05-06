@@ -40,6 +40,7 @@ pub struct OutgoingFipsPacket {
 #[derive(Debug, Clone)]
 pub struct FipsMeshRuntime {
     peers: Vec<FipsMeshPeerRuntime>,
+    local_routes: Vec<IpRoute>,
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +59,13 @@ struct IpRoute {
 
 impl FipsMeshRuntime {
     pub fn new(peers: Vec<FipsMeshPeerConfig>) -> Self {
+        Self::with_local_routes(peers, Vec::new())
+    }
+
+    pub fn with_local_routes(
+        peers: Vec<FipsMeshPeerConfig>,
+        local_allowed_ips: Vec<String>,
+    ) -> Self {
         let peers = peers
             .into_iter()
             .map(|peer| {
@@ -75,8 +83,15 @@ impl FipsMeshRuntime {
                 }
             })
             .collect();
+        let local_routes = local_allowed_ips
+            .iter()
+            .filter_map(|route| IpRoute::parse(route))
+            .collect();
 
-        Self { peers }
+        Self {
+            peers,
+            local_routes,
+        }
     }
 
     pub fn route_outbound_packet(&self, packet: &[u8]) -> Option<OutgoingFipsPacket> {
@@ -102,10 +117,20 @@ impl FipsMeshRuntime {
 
         let source_pubkey = normalize_nostr_pubkey(source_npub).ok()?;
         let packet_source = packet_source(data)?;
-        let peer = self.peers.iter().find(|peer| {
-            peer.endpoint_pubkey.as_deref() == Some(source_pubkey.as_str())
-                && peer.routes.iter().any(|route| route.matches(packet_source))
-        })?;
+        let peer = self.select_peer_for_ip(packet_source)?;
+        if peer.endpoint_pubkey.as_deref() != Some(source_pubkey.as_str()) {
+            return None;
+        }
+        if !self.local_routes.is_empty() {
+            let packet_destination = packet_destination(data)?;
+            if !self
+                .local_routes
+                .iter()
+                .any(|route| route.matches(packet_destination))
+            {
+                return None;
+            }
+        }
 
         Some(PrivatePacket {
             source_pubkey: peer.participant_pubkey.clone(),
@@ -152,16 +177,39 @@ impl FipsMeshRuntime {
     }
 
     fn select_peer_for_ip(&self, destination: IpAddr) -> Option<&FipsMeshPeerRuntime> {
-        self.peers
-            .iter()
-            .flat_map(|peer| {
-                peer.routes
-                    .iter()
-                    .filter(move |route| route.matches(destination))
-                    .map(move |route| (peer, route.prefix_len))
-            })
-            .max_by_key(|(_, prefix_len)| *prefix_len)
-            .map(|(peer, _)| peer)
+        let mut best = None;
+        let mut ambiguous = false;
+
+        for peer in &self.peers {
+            for route in &peer.routes {
+                if !route.matches(destination) {
+                    continue;
+                }
+                match best {
+                    None => {
+                        best = Some((peer, route.prefix_len));
+                        ambiguous = false;
+                    }
+                    Some((_, best_prefix)) if route.prefix_len > best_prefix => {
+                        best = Some((peer, route.prefix_len));
+                        ambiguous = false;
+                    }
+                    Some((best_peer, best_prefix))
+                        if route.prefix_len == best_prefix
+                            && best_peer.participant_pubkey != peer.participant_pubkey =>
+                    {
+                        ambiguous = true;
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+
+        if ambiguous {
+            None
+        } else {
+            best.map(|(peer, _)| peer)
+        }
     }
 }
 
@@ -431,6 +479,106 @@ mod tests {
             runtime
                 .receive_endpoint_data(Some(&peer.endpoint_npub), &packet)
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn inbound_endpoint_data_rejects_broad_route_spoofing_specific_peer_source() {
+        let general = TestPeer::generate();
+        let specific = TestPeer::generate();
+        let packet = ipv4_packet(Ipv4Addr::new(10, 44, 22, 44), Ipv4Addr::new(10, 44, 10, 1));
+        let runtime = FipsMeshRuntime::new(vec![
+            FipsMeshPeerConfig {
+                participant_pubkey: general.participant_pubkey,
+                endpoint_npub: general.endpoint_npub.clone(),
+                allowed_ips: vec!["10.44.0.0/16".to_string()],
+            },
+            FipsMeshPeerConfig {
+                participant_pubkey: specific.participant_pubkey,
+                endpoint_npub: specific.endpoint_npub,
+                allowed_ips: vec!["10.44.22.44/32".to_string()],
+            },
+        ]);
+
+        assert!(
+            runtime
+                .receive_endpoint_data(Some(&general.endpoint_npub), &packet)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn equal_prefix_route_ambiguity_is_dropped() {
+        let first = TestPeer::generate();
+        let second = TestPeer::generate();
+        let packet = ipv4_packet(Ipv4Addr::new(10, 44, 22, 44), Ipv4Addr::new(10, 44, 10, 1));
+        let runtime = FipsMeshRuntime::new(vec![
+            FipsMeshPeerConfig {
+                participant_pubkey: first.participant_pubkey,
+                endpoint_npub: first.endpoint_npub.clone(),
+                allowed_ips: vec!["10.44.22.44/32".to_string()],
+            },
+            FipsMeshPeerConfig {
+                participant_pubkey: second.participant_pubkey,
+                endpoint_npub: second.endpoint_npub,
+                allowed_ips: vec!["10.44.22.44/32".to_string()],
+            },
+        ]);
+
+        assert!(runtime.route_outbound_packet(&packet).is_none());
+        assert!(
+            runtime
+                .receive_endpoint_data(Some(&first.endpoint_npub), &packet)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn local_routes_limit_inbound_packet_destinations() {
+        let peer = TestPeer::generate();
+        let runtime = FipsMeshRuntime::with_local_routes(
+            vec![FipsMeshPeerConfig {
+                participant_pubkey: peer.participant_pubkey,
+                endpoint_npub: peer.endpoint_npub.clone(),
+                allowed_ips: vec!["10.44.22.44/32".to_string()],
+            }],
+            vec!["10.44.10.1/32".to_string()],
+        );
+        let admitted = ipv4_packet(Ipv4Addr::new(10, 44, 22, 44), Ipv4Addr::new(10, 44, 10, 1));
+        let rejected = ipv4_packet(Ipv4Addr::new(10, 44, 22, 44), Ipv4Addr::new(10, 44, 10, 2));
+
+        assert!(
+            runtime
+                .receive_endpoint_data(Some(&peer.endpoint_npub), &admitted)
+                .is_some()
+        );
+        assert!(
+            runtime
+                .receive_endpoint_data(Some(&peer.endpoint_npub), &rejected)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn local_default_route_allows_exit_node_destinations() {
+        let peer = TestPeer::generate();
+        let runtime = FipsMeshRuntime::with_local_routes(
+            vec![FipsMeshPeerConfig {
+                participant_pubkey: peer.participant_pubkey,
+                endpoint_npub: peer.endpoint_npub.clone(),
+                allowed_ips: vec!["10.44.22.44/32".to_string()],
+            }],
+            vec!["0.0.0.0/0".to_string()],
+        );
+        let packet = ipv4_packet(
+            Ipv4Addr::new(10, 44, 22, 44),
+            Ipv4Addr::new(203, 0, 113, 10),
+        );
+
+        assert!(
+            runtime
+                .receive_endpoint_data(Some(&peer.endpoint_npub), &packet)
+                .is_some()
         );
     }
 

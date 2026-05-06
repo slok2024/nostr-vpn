@@ -85,7 +85,7 @@ impl FipsPrivateMeshRuntime {
     ) -> Result<Self> {
         let scope = format!("nostr-vpn:{}", network_id.as_ref().trim());
         let config = fips_endpoint_config(&scope, relays, &peers, None);
-        Self::bind_with_config(identity_nsec, scope, peers, config).await
+        Self::bind_with_config(identity_nsec, scope, peers, config, Vec::new()).await
     }
 
     async fn bind_with_config(
@@ -93,6 +93,7 @@ impl FipsPrivateMeshRuntime {
         scope: impl Into<String>,
         peers: Vec<FipsMeshPeerConfig>,
         config: Config,
+        local_allowed_ips: Vec<String>,
     ) -> Result<Self> {
         let scope = scope.into();
         let endpoint = FipsEndpoint::builder()
@@ -106,7 +107,7 @@ impl FipsPrivateMeshRuntime {
 
         Ok(Self {
             endpoint,
-            mesh: RwLock::new(FipsMeshRuntime::new(peers)),
+            mesh: RwLock::new(FipsMeshRuntime::with_local_routes(peers, local_allowed_ips)),
             presence: RwLock::new(HashMap::new()),
         })
     }
@@ -139,11 +140,18 @@ impl FipsPrivateMeshRuntime {
             let Some(message) = self.endpoint.recv().await else {
                 return Ok(None);
             };
-            let Some(source_pubkey) = self.source_pubkey(message.source_npub.as_deref()) else {
-                continue;
-            };
 
             if let Some(frame) = decode_fips_control_frame(&message.data)? {
+                let source_pubkey = {
+                    let mesh = self
+                        .mesh
+                        .read()
+                        .map_err(|_| anyhow!("FIPS mesh route table lock poisoned"))?;
+                    control_frame_source_pubkey(&mesh, message.source_npub.as_deref(), &frame)
+                };
+                let Some(source_pubkey) = source_pubkey else {
+                    continue;
+                };
                 let now = unix_timestamp();
                 self.note_rx(&source_pubkey, message.data.len(), now)?;
                 match frame {
@@ -269,12 +277,16 @@ impl FipsPrivateMeshRuntime {
         Ok(hosts)
     }
 
-    pub(crate) fn replace_peers(&self, peers: Vec<FipsMeshPeerConfig>) -> Result<()> {
+    pub(crate) fn replace_peers(
+        &self,
+        peers: Vec<FipsMeshPeerConfig>,
+        local_allowed_ips: Vec<String>,
+    ) -> Result<()> {
         *self
             .mesh
             .write()
             .map_err(|_| anyhow!("FIPS mesh route table lock poisoned"))? =
-            FipsMeshRuntime::new(peers);
+            FipsMeshRuntime::with_local_routes(peers, local_allowed_ips);
         let configured = self
             .mesh
             .read()
@@ -358,15 +370,6 @@ impl FipsPrivateMeshRuntime {
         Ok(())
     }
 
-    fn source_pubkey(&self, source_npub: Option<&str>) -> Option<String> {
-        let source_npub = source_npub?;
-        self.mesh
-            .read()
-            .ok()
-            .and_then(|mesh| mesh.participant_for_endpoint_npub(source_npub))
-            .or_else(|| normalize_nostr_pubkey(source_npub).ok())
-    }
-
     fn note_tx(&self, participant: &str, len: usize) -> Result<()> {
         let participant = normalize_nostr_pubkey(participant)?;
         let mut presence = self
@@ -394,6 +397,19 @@ impl FipsPrivateMeshRuntime {
     pub(crate) async fn shutdown(self) -> Result<(), FipsEndpointError> {
         self.endpoint.shutdown().await
     }
+}
+
+fn control_frame_source_pubkey(
+    mesh: &FipsMeshRuntime,
+    source_npub: Option<&str>,
+    frame: &FipsControlFrame,
+) -> Option<String> {
+    let source_npub = source_npub?;
+    mesh.participant_for_endpoint_npub(source_npub).or_else(|| {
+        matches!(frame, FipsControlFrame::JoinRequest { .. })
+            .then(|| normalize_nostr_pubkey(source_npub).ok())
+            .flatten()
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -562,6 +578,14 @@ impl FipsPrivateTunnelConfig {
             control_plane_bypass_hosts: crate::control_plane_bypass_ipv4_hosts(app),
         })
     }
+
+    fn local_allowed_ips(&self) -> Vec<String> {
+        let mut routes = vec![self.local_address.clone()];
+        routes.extend(self.local_advertised_routes.iter().cloned());
+        routes.sort();
+        routes.dedup();
+        routes
+    }
 }
 
 fn local_interface_address_for_tunnel(tunnel_ip: &str) -> String {
@@ -621,12 +645,14 @@ impl FipsPrivateTunnelRuntime {
         };
         let endpoint_config =
             fips_endpoint_config(&scope, &config.relays, &config.peers, Some(&transport));
+        let local_allowed_ips = config.local_allowed_ips();
         let mesh = Arc::new(
             FipsPrivateMeshRuntime::bind_with_config(
                 config.identity_nsec.clone(),
                 scope,
                 config.peers.clone(),
                 endpoint_config,
+                local_allowed_ips,
             )
             .await?,
         );
@@ -695,7 +721,8 @@ impl FipsPrivateTunnelRuntime {
     }
 
     pub(crate) async fn apply_config(&mut self, config: FipsPrivateTunnelConfig) -> Result<()> {
-        self.mesh.replace_peers(config.peers.clone())?;
+        self.mesh
+            .replace_peers(config.peers.clone(), config.local_allowed_ips())?;
         self.apply_interface_config(&config).await?;
         self.config = config;
         Ok(())
@@ -1310,14 +1337,18 @@ fn unix_timestamp() -> u64 {
 mod tests {
     use super::{
         FipsEndpointTransportConfig, FipsPrivateMeshRuntime, FipsPrivateTunnelConfig,
-        fips_endpoint_config,
+        control_frame_source_pubkey, fips_endpoint_config,
     };
     use fips_endpoint::{
         Config, ConnectPolicy, PeerConfig as FipsPeerConfig, TransportInstances, UdpConfig,
     };
     use nostr_sdk::prelude::{Keys, ToBech32};
     use nostr_vpn_core::config::{AppConfig, derive_mesh_tunnel_ip};
-    use nostr_vpn_core::fips_mesh::FipsMeshPeerConfig;
+    use nostr_vpn_core::fips_control::FipsControlFrame;
+    use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
+    use nostr_vpn_core::join_requests::MeshJoinRequest;
+    use nostr_vpn_core::signaling::NetworkRoster;
+    use std::collections::HashMap;
     use std::net::{Ipv4Addr, UdpSocket};
     use std::time::Duration;
 
@@ -1333,6 +1364,63 @@ mod tests {
         packet[16..20].copy_from_slice(&destination.octets());
         packet[20..].copy_from_slice(&payload);
         packet
+    }
+
+    #[test]
+    fn control_frames_from_rostered_endpoint_resolve_to_participant() {
+        let keys = Keys::generate();
+        let participant_pubkey = keys.public_key().to_hex();
+        let endpoint_npub = keys.public_key().to_bech32().expect("npub");
+        let mesh = FipsMeshRuntime::new(vec![FipsMeshPeerConfig {
+            participant_pubkey: participant_pubkey.clone(),
+            endpoint_npub: endpoint_npub.clone(),
+            allowed_ips: vec!["10.44.1.2/32".to_string()],
+        }]);
+        let frame = FipsControlFrame::Ping {
+            network_id: "network".to_string(),
+            sent_at: 42,
+        };
+
+        assert_eq!(
+            control_frame_source_pubkey(&mesh, Some(&endpoint_npub), &frame),
+            Some(participant_pubkey)
+        );
+    }
+
+    #[test]
+    fn control_frames_from_unknown_endpoints_are_limited_to_join_requests() {
+        let keys = Keys::generate();
+        let unknown_pubkey = keys.public_key().to_hex();
+        let unknown_npub = keys.public_key().to_bech32().expect("npub");
+        let mesh = FipsMeshRuntime::new(Vec::new());
+        let ping = FipsControlFrame::Ping {
+            network_id: "network".to_string(),
+            sent_at: 42,
+        };
+        let roster = FipsControlFrame::Roster {
+            network_id: "network".to_string(),
+            roster: NetworkRoster {
+                network_name: "network".to_string(),
+                participants: Vec::new(),
+                admins: Vec::new(),
+                aliases: HashMap::new(),
+                signed_at: 42,
+            },
+        };
+        let join_request = FipsControlFrame::JoinRequest {
+            requested_at: 42,
+            request: MeshJoinRequest {
+                network_id: "network".to_string(),
+                requester_node_name: "new-device".to_string(),
+            },
+        };
+
+        assert!(control_frame_source_pubkey(&mesh, Some(&unknown_npub), &ping).is_none());
+        assert!(control_frame_source_pubkey(&mesh, Some(&unknown_npub), &roster).is_none());
+        assert_eq!(
+            control_frame_source_pubkey(&mesh, Some(&unknown_npub), &join_request),
+            Some(unknown_pubkey)
+        );
     }
 
     #[tokio::test]
@@ -1519,6 +1607,7 @@ mod tests {
                 allowed_ips: vec![format!("{bob_ip}/32")],
             }],
             direct_udp_endpoint_config(alice_port, &bob_npub, bob_port, true),
+            vec![format!("{alice_ip}/32")],
         )
         .await
         .expect("alice endpoint should bind");
@@ -1531,6 +1620,7 @@ mod tests {
                 allowed_ips: vec![format!("{alice_ip}/32")],
             }],
             direct_udp_endpoint_config(bob_port, &alice_npub, alice_port, false),
+            vec![format!("{bob_ip}/32")],
         )
         .await
         .expect("bob endpoint should bind");

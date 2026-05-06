@@ -396,14 +396,14 @@ fn peer_presence_line(
     }
 
     let Some(seen_at) = snapshot.and_then(|value| value.last_signal_seen_at) else {
-        return "nostr unseen".to_string();
+        return String::new();
     };
 
     let age_secs = seen_at
         .elapsed()
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or(0);
-    format!("nostr seen {}", compact_age_text(age_secs))
+    format!("seen {}", compact_age_text(age_secs))
 }
 
 fn transport_state_label(status: TransportStatus) -> &'static str {
