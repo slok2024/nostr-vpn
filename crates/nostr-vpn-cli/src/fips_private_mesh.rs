@@ -19,8 +19,11 @@ use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::net::Ipv4Addr;
 use std::net::{SocketAddr, SocketAddrV4};
-use std::sync::{Arc, RwLock};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::sync::Arc;
+use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use tokio::sync::mpsc;
 
 const FIPS_PEER_ONLINE_GRACE_SECS: u64 = 45;

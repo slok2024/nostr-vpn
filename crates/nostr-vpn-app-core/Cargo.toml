@@ -14,11 +14,21 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 anyhow.workspace = true
 base64.workspace = true
 dirs.workspace = true
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 nostr-sdk.workspace = true
 nostr-vpn-core = { path = "../nostr-vpn-core" }
+qrcode = { version = "0.14", default-features = false }
+rqrr = "0.7"
 serde.workspace = true
 serde_json.workspace = true
 uniffi.workspace = true
 
-[lints]
-workspace = true
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[lints.rust]
+unsafe_code = "allow"

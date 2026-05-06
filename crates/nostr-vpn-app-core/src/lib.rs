@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod c_abi;
 mod ffi;
 mod invite;
 mod lan_pairing;

@@ -1,11 +1,15 @@
-#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default)]
+use serde::{Deserialize, Serialize};
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NativeRelayState {
     pub url: String,
     pub state: String,
     pub status_text: String,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NativeRelaySummary {
     pub up: u64,
     pub down: u64,
@@ -13,7 +17,8 @@ pub struct NativeRelaySummary {
     pub unknown: u64,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NativeParticipantState {
     pub npub: String,
     pub pubkey_hex: String,
@@ -33,14 +38,16 @@ pub struct NativeParticipantState {
     pub last_signal_text: String,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NativeOutboundJoinRequestState {
     pub recipient_npub: String,
     pub recipient_pubkey_hex: String,
     pub requested_at_text: String,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NativeInboundJoinRequestState {
     pub requester_npub: String,
     pub requester_pubkey_hex: String,
@@ -48,7 +55,8 @@ pub struct NativeInboundJoinRequestState {
     pub requested_at_text: String,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NativeNetworkState {
     pub id: String,
     pub name: String,
@@ -66,7 +74,8 @@ pub struct NativeNetworkState {
     pub participants: Vec<NativeParticipantState>,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NativeLanPeerState {
     pub npub: String,
     pub node_name: String,
@@ -77,7 +86,8 @@ pub struct NativeLanPeerState {
     pub last_seen_text: String,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NativeHealthIssue {
     pub code: String,
     pub severity: String,
@@ -85,7 +95,8 @@ pub struct NativeHealthIssue {
     pub detail: String,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NativeNetworkSummary {
     pub default_interface: String,
     pub primary_ipv4: String,
@@ -96,13 +107,15 @@ pub struct NativeNetworkSummary {
     pub captive_portal: String,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NativeProbeStatus {
     pub state: String,
     pub detail: String,
 }
 
-#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NativePortMappingStatus {
     pub upnp: NativeProbeStatus,
     pub nat_pmp: NativeProbeStatus,
@@ -114,7 +127,8 @@ pub struct NativePortMappingStatus {
 }
 
 #[allow(clippy::struct_excessive_bools)]
-#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NativeAppState {
     pub rev: u64,
     pub platform: String,

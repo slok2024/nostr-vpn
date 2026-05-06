@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>NostrVpn.Windows</AssemblyName>
+    <RootNamespace>NostrVpn.Windows</RootNamespace>
+    <ApplicationIcon>Assets\nostr-vpn.ico</ApplicationIcon>
+    <Version>0.3.23</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\nostr-vpn.ico" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\target\$(Configuration)\nostr_vpn_app_core.dll" Condition="Exists('..\..\target\$(Configuration)\nostr_vpn_app_core.dll')" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\target\$(Configuration)\nvpn.exe" Condition="Exists('..\..\target\$(Configuration)\nvpn.exe')" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -10,6 +10,7 @@ info:
     @echo "  just run"
     @echo "  just run-macos"
     @echo "  just run-linux"
+    @echo "  just run-windows"
     @echo
     @echo "Build"
     @echo "  just build"
@@ -26,6 +27,9 @@ info:
     @echo "Linux"
     @echo "  just linux-build"
     @echo
+    @echo "Windows"
+    @echo "  just windows-build"
+    @echo
     @echo "Checks"
     @echo "  just test"
     @echo "  just e2e"
@@ -39,6 +43,7 @@ run:
     @case "$(uname -s)" in \
         Darwin) just run-macos ;; \
         Linux) just run-linux ;; \
+        MINGW*|MSYS*|CYGWIN*) just run-windows ;; \
         *) echo "No local run target for $(uname -s). Use just --list for available commands." >&2; exit 1 ;; \
     esac
 
@@ -48,15 +53,22 @@ run-macos:
 run-linux:
     ./tools/run-linux
 
+run-windows:
+    ./tools/run-windows
+
 build:
     @case "$(uname -s)" in \
         Darwin) just macos-build ;; \
         Linux) just linux-build ;; \
+        MINGW*|MSYS*|CYGWIN*) just windows-build ;; \
         *) cargo build -p nostr-vpn-cli -p nostr-vpn-relay ;; \
     esac
 
 linux-build:
     ./tools/run-linux cargo build
+
+windows-build:
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows-build.ps1
 
 macos-gen-swift:
     ./scripts/macos-build macos-gen-swift

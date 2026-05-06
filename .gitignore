@@ -14,3 +14,5 @@ artifacts/
 macos/.build/
 macos/Frameworks/
 macos/Resources/binaries/
+windows/**/bin/
+windows/**/obj/

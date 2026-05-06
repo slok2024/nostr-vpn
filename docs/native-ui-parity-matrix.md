@@ -11,7 +11,7 @@ native shells while keeping product truth in Rust.
 
 | Layer | macOS | Windows | Linux | Android | iPhone |
 | --- | --- | --- | --- | --- | --- |
-| Shared core | Rust app core exposed through UniFFI | Rust app core exposed through UniFFI | Rust app core used directly or through UniFFI | Rust app core exposed through UniFFI | Rust app core exposed through UniFFI |
+| Shared core | Rust app core exposed through UniFFI | Rust app core exposed through explicit C ABI JSON bridge | Rust app core used directly or through UniFFI | Rust app core exposed through UniFFI | Rust app core exposed through UniFFI |
 | Native shell | SwiftUI/AppKit | WPF/.NET | GTK4/libadwaita Rust | Kotlin/Jetpack Compose | SwiftUI/UIKit |
 | App state owner | Rust | Rust | Rust | Rust | Rust |
 | Rendering owner | Native | Native | Native | Native | Native |
@@ -189,6 +189,23 @@ Status legend:
 | Mock/demo fixtures | `mock-backend.ts` | Ready | `macos/Resources/preview-state.json` provides a native state snapshot for previews and screenshot tests without the old mock backend. | None. |
 | Public relay fallback UI | Removed relay fallback/public services code | Removed | Removed upstream in `origin/master`; native shell also omits those fields and controls. | No parity work unless product reintroduces a public-service feature. |
 
+## Windows App Parity Status
+
+This table tracks the WPF/.NET shell under `windows/` against the current macOS
+and Linux native shells.
+
+| Feature group | Windows status | Native Windows coverage | Remaining parity work |
+| --- | --- | --- | --- |
+| Rust core boundary | Ready | `windows/NostrVpn.Windows` uses the explicit C ABI in `nostr-vpn-app-core/src/c_abi.rs` for JSON state, JSON actions, QR matrix generation, and QR image decode. | Replace with generated C# UniFFI only if UniFFI gains supported C# bindings in the pinned toolchain. |
+| Main shell hierarchy | Ready | WPF two-pane shell renders Devices, Share, Routing, and Settings with the same high-level hierarchy as macOS/Linux. | Continue compact-width and accessibility polish. |
+| Device roster | Partial | Shows participant identity, tunnel IP, status, admin/exit badges, npub copy, and add-device form. | Add inline alias/admin/remove management parity. |
+| Invite share/import | Ready | Renders invite QR through the shared Rust QR matrix, copies invite text, imports pasted invites, decodes QR image files, and shows LAN pairing rows. | Add live camera scanning if a native Windows camera API is selected. |
+| Routing | Ready | Direct route, exit-node candidate selection, advertised route editing, and offer-exit toggle dispatch typed core actions. | Add search/filter polish like macOS. |
+| Settings/service/updater | Partial | Device settings, autoconnect/startup/tray toggles, service/CLI actions, relay editing, and hashtree update check are present. | Add richer service settlement/repair UX and auto-update preferences. |
+| Tray/status area | Ready | Uses native `System.Windows.Forms.NotifyIcon` with open, VPN toggle, exit toggle, this-device copy, network devices, exit-node selection, refresh, and quit. | Add single-instance tray activation routing for already-running deep links. |
+| Deep links/startup | Partial | Registers `nvpn://` under HKCU, handles startup invite URLs, and writes HKCU Run startup entries. | Route deep links into an already-running instance. |
+| Build/run harness | Ready | `scripts/windows-build.ps1` builds Rust DLL/CLI plus WPF and `just run-windows` runs it on Windows. Verified in the Windows 11 Parallels VM with `dotnet build`, Rust build, and an app-window screenshot. | Add packaged installer/MSIX/NSIS target. |
+
 ## Linux App Parity Status
 
 This table tracks the GTK/libadwaita shell under `linux/` against the current
@@ -222,7 +239,7 @@ flow like the Swift app rather than the removed Svelte UI.
 | Phase | Deliverable | Exit criteria |
 | --- | --- | --- |
 | 0. Contract extraction | Move backend state, settings patches, action handlers, derived labels, invite parsing, mesh ID validation, and tray projections into a native-ready Rust app core | `crates/nostr-vpn-app-core` exposes typed UniFFI state/actions and the macOS shell consumes `FfiApp` directly; remaining legacy behavior is tracked as explicit native parity work. |
-| 1. Desktop minimum | macOS, Windows, and Linux render the main status, active network, invite import/share, participant management, routing, diagnostics, relays, service panel, system settings, deep links, and tray/menu actions | Desktop smoke tests can import invites, request/accept join, toggle VPN, and exercise tray actions. macOS and Linux now cover the native shell surface; Windows remains the desktop gap. |
+| 1. Desktop minimum | macOS, Windows, and Linux render the main status, active network, invite import/share, participant management, routing, diagnostics, relays, service panel, system settings, deep links, and tray/menu actions | Desktop smoke tests can import invites, request/accept join, toggle VPN, and exercise tray actions. macOS and Linux cover the native shell surface; Windows now has the WPF baseline and needs remaining parity hardening. |
 | 2. Mobile minimum | Android and iPhone render the same state/action surface with native VPN permission/session control, invite QR scan/share, LAN pairing, saved networks, routing, diagnostics, relays, and deep links | Android emulator/device and iPhone simulator/device smoke tests can import invites and start supported VPN flows |
 | 3. Desktop niceties | Hashtree updater, CLI install/uninstall, startup registration, close-to-tray, service repair prompts, single-instance conflict handling | Legacy desktop e2e scenarios have native replacements |
 | 4. Polish/parity hardening | Platform screenshots, accessibility pass, empty/error states, fixture preview coverage | All rows above are either implemented or explicitly marked removed/deferred in this file |
