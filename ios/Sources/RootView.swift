@@ -212,7 +212,7 @@ private struct HeroCard: View {
                     Text(model.state.sessionStatus)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    Text("\(model.state.connectedPeerCount) of \(model.state.expectedPeerCount) connected")
+                    Text(peerSummary)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -224,6 +224,13 @@ private struct HeroCard: View {
                 .disabled(model.actionInFlight || !model.state.vpnSessionControlSupported)
             }
         }
+    }
+
+    private var peerSummary: String {
+        if model.state.expectedPeerCount == 0 {
+            return "No peers yet"
+        }
+        return "\(model.state.connectedPeerCount) of \(model.state.expectedPeerCount) connected"
     }
 }
 

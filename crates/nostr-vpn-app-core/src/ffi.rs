@@ -241,7 +241,7 @@ impl NativeAppRuntime {
         let active_network = self.config.active_network();
         let daemon_state = self.daemon_state.as_ref();
         let expected_peer_count = daemon_state.map_or_else(
-            || active_network.participants.len() + active_network.admins.len(),
+            || remote_network_participant_count(active_network, &own_pubkey_hex),
             |state| state.expected_peer_count,
         );
         let connected_peer_count = daemon_state.map_or(0, |state| state.connected_peer_count);
@@ -936,7 +936,11 @@ impl NativeAppRuntime {
             .collect::<Vec<_>>();
         let online_count = participants
             .iter()
-            .filter(|participant| participant.reachable)
+            .filter(|participant| participant.pubkey_hex != own_pubkey_hex && participant.reachable)
+            .count() as u64;
+        let expected_count = participants
+            .iter()
+            .filter(|participant| participant.pubkey_hex != own_pubkey_hex)
             .count() as u64;
 
         NativeNetworkState {
@@ -962,7 +966,7 @@ impl NativeAppRuntime {
                 .map(native_inbound_join_request)
                 .collect(),
             online_count,
-            expected_count: participants.len() as u64,
+            expected_count,
             admins,
             participants,
         }
@@ -1321,6 +1325,17 @@ fn native_inbound_join_request(
     }
 }
 
+fn remote_network_participant_count(network: &NetworkConfig, own_pubkey_hex: &str) -> usize {
+    let mut participants = network.participants.clone();
+    participants.extend(network.admins.iter().cloned());
+    participants.sort();
+    participants.dedup();
+    participants
+        .iter()
+        .filter(|participant| participant.as_str() != own_pubkey_hex)
+        .count()
+}
+
 fn native_health_issues(issues: &[HealthIssue]) -> Vec<NativeHealthIssue> {
     issues
         .iter()
@@ -1633,5 +1648,37 @@ mod tests {
 
         assert_eq!(state.error, "boom");
         assert!(!state.own_pubkey_hex.is_empty());
+        assert_eq!(state.expected_peer_count, 0);
+        assert_eq!(state.connected_peer_count, 0);
+        assert_eq!(state.networks[0].expected_count, 0);
+        assert_eq!(state.networks[0].online_count, 0);
+        assert_eq!(state.networks[0].participants.len(), 1);
+    }
+
+    #[test]
+    fn native_peer_counts_exclude_local_participant() {
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        let own_pubkey = runtime
+            .config
+            .own_nostr_pubkey_hex()
+            .expect("generated config should have own pubkey");
+        let peer_pubkey = "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc";
+        runtime.config.networks[0].admins = vec![own_pubkey.clone()];
+        runtime.config.networks[0].participants = vec![peer_pubkey.to_string()];
+
+        let state = runtime.state();
+        let network = &state.networks[0];
+
+        assert_eq!(state.expected_peer_count, 1);
+        assert_eq!(state.connected_peer_count, 0);
+        assert_eq!(network.expected_count, 1);
+        assert_eq!(network.online_count, 0);
+        assert_eq!(network.participants.len(), 2);
+        assert!(
+            network.participants.iter().any(|participant| {
+                participant.pubkey_hex == own_pubkey && participant.reachable
+            })
+        );
     }
 }

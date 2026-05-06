@@ -79,7 +79,7 @@ internal fun Hero(state: AppState, network: NetworkState?, dispatch: (JSONObject
                 )
                 Text(state.sessionStatus, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "${state.connectedPeerCount} of ${state.expectedPeerCount} connected",
+                    peerSummary(state),
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -104,6 +104,13 @@ internal fun Hero(state: AppState, network: NetworkState?, dispatch: (JSONObject
             }
         }
     }
+}
+
+private fun peerSummary(state: AppState): String {
+    if (state.expectedPeerCount == 0L) {
+        return "No peers yet"
+    }
+    return "${state.connectedPeerCount} of ${state.expectedPeerCount} connected"
 }
 
 @Composable
