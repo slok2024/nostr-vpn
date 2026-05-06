@@ -289,7 +289,12 @@ struct RootView: View {
     }
 
     private func manageDevicesSection(_ network: NativeNetworkState) -> some View {
-        DisclosureGroup(isExpanded: $manageDevicesExpanded) {
+        disclosureSection(
+            title: "Manage Devices",
+            systemImage: "slider.horizontal.3",
+            isExpanded: $manageDevicesExpanded,
+            font: .subheadline.weight(.medium)
+        ) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     TextField("npub", text: $participantInput)
@@ -336,9 +341,6 @@ struct RootView: View {
                 }
             }
             .padding(.top, 8)
-        } label: {
-            Label("Manage Devices", systemImage: "slider.horizontal.3")
-                .font(.subheadline.weight(.medium))
         }
     }
 
@@ -500,7 +502,11 @@ struct RootView: View {
                 }
             }
 
-            DisclosureGroup(isExpanded: $advancedRoutesExpanded) {
+            disclosureSection(
+                title: "Subnet Routes",
+                systemImage: "point.3.connected.trianglepath.dotted",
+                isExpanded: $advancedRoutesExpanded
+            ) {
                 surface {
                     Toggle("Offer this device as an exit node", isOn: Binding(
                         get: { state.advertiseExitNode },
@@ -519,9 +525,6 @@ struct RootView: View {
                     }
                 }
                 .padding(.top, 8)
-            } label: {
-                Label("Subnet Routes", systemImage: "point.3.connected.trianglepath.dotted")
-                    .font(.headline)
             }
         }
     }
@@ -561,15 +564,16 @@ struct RootView: View {
             networkSettings
             systemSettings
 
-            DisclosureGroup(isExpanded: $advancedSettingsExpanded) {
+            disclosureSection(
+                title: "Advanced",
+                systemImage: "slider.horizontal.3",
+                isExpanded: $advancedSettingsExpanded
+            ) {
                 VStack(alignment: .leading, spacing: 14) {
                     relaySection
                     diagnosticsSection
                 }
                 .padding(.top, 8)
-            } label: {
-                Label("Advanced", systemImage: "slider.horizontal.3")
-                    .font(.headline)
             }
         }
     }
@@ -668,7 +672,12 @@ struct RootView: View {
                 }
             }
 
-            DisclosureGroup(isExpanded: $savedNetworksExpanded) {
+            disclosureSection(
+                title: "Saved Networks",
+                systemImage: "rectangle.stack",
+                isExpanded: $savedNetworksExpanded,
+                font: .subheadline.weight(.medium)
+            ) {
                 VStack(alignment: .leading, spacing: 10) {
                     if manager.inactiveNetworks.isEmpty {
                         emptyRow("No saved networks", systemImage: "rectangle.stack")
@@ -679,9 +688,6 @@ struct RootView: View {
                     }
                 }
                 .padding(.top, 8)
-            } label: {
-                Text("Saved Networks")
-                    .font(.subheadline.weight(.medium))
             }
         }
     }
@@ -807,7 +813,11 @@ struct RootView: View {
     }
 
     private var diagnosticsSection: some View {
-        DisclosureGroup(isExpanded: $diagnosticsExpanded) {
+        disclosureSection(
+            title: "Diagnostics",
+            systemImage: "waveform.path.ecg",
+            isExpanded: $diagnosticsExpanded
+        ) {
             VStack(alignment: .leading, spacing: 12) {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), alignment: .leading)], alignment: .leading, spacing: 10) {
                     metric("Interface", state.network.defaultInterface.isEmpty ? "unknown" : state.network.defaultInterface)
@@ -834,9 +844,42 @@ struct RootView: View {
                 }
             }
             .padding(.top, 8)
-        } label: {
-            Label("Diagnostics", systemImage: "waveform.path.ecg")
-                .font(.headline)
+        }
+    }
+
+    private func disclosureSection<Content: View>(
+        title: String,
+        systemImage: String,
+        isExpanded: Binding<Bool>,
+        font: Font = .headline,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.14)) {
+                    isExpanded.wrappedValue.toggle()
+                }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 10)
+                        .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
+                    Label(title, systemImage: systemImage)
+                        .font(font)
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(title)
+            .accessibilityValue(isExpanded.wrappedValue ? "Expanded" : "Collapsed")
+
+            if isExpanded.wrappedValue {
+                content()
+            }
         }
     }
 

@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installApplicationIcon()
         observeWindows()
     }
 
@@ -82,6 +83,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for window in NSApp.windows where window.title == "Nostr VPN" {
             window.delegate = self
         }
+    }
+
+    private func installApplicationIcon() {
+        let icon =
+            Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
+                .flatMap(NSImage.init(contentsOf:))
+            ?? NSImage(named: "AppIcon")
+            ?? NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
+        NSApp.applicationIconImage = icon
     }
 
     private func hideMainWindowSoon() {

@@ -51,6 +51,10 @@ run_macos_gen_swift() {
     --language swift \
     --out-dir "$BINDINGS_DIR" \
     --config "$CORE_DIR/uniffi.toml"
+
+  while IFS= read -r -d '' generated_file; do
+    perl -0777 -pi -e 's/[ \t]+$//mg; s/\n*\z/\n/' "$generated_file"
+  done < <(find "$BINDINGS_DIR" -type f \( -name '*.swift' -o -name '*.h' -o -name '*.modulemap' \) -print0)
 }
 
 run_macos_rust() {

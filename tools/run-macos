@@ -5,6 +5,9 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT="$ROOT/macos/NostrVpnMac.xcodeproj"
 SCHEME="NostrVpnMac"
+BUILD_DIR="$ROOT/macos/.build"
+XCODE_CONFIGURATION="${NVPN_MACOS_XCODE_CONFIGURATION:-Debug}"
+HOST_ARCH="$(uname -m)"
 
 "$ROOT/scripts/macos-build" macos-build
 
@@ -12,7 +15,9 @@ APP_PATH="$(
   xcodebuild \
     -project "$PROJECT" \
     -scheme "$SCHEME" \
-    -destination 'platform=macOS' \
+    -configuration "$XCODE_CONFIGURATION" \
+    -derivedDataPath "$BUILD_DIR/DerivedData" \
+    -destination "platform=macOS,arch=$HOST_ARCH" \
     -showBuildSettings 2>/dev/null |
     awk -F' = ' '
       /^[[:space:]]*BUILT_PRODUCTS_DIR = / { dir=$2 }
@@ -22,9 +27,28 @@ APP_PATH="$(
 )"
 
 if [[ -z "${APP_PATH:-}" || ! -d "$APP_PATH" ]]; then
+  APP_PATH="$(find "$BUILD_DIR/DerivedData/Build/Products" -maxdepth 3 -name 'Nostr VPN.app' -type d -print -quit 2>/dev/null || true)"
+fi
+
+if [[ -z "${APP_PATH:-}" || ! -d "$APP_PATH" ]]; then
   echo "Built macOS app not found." >&2
   exit 1
 fi
+
+if pgrep -x "Nostr VPN" >/dev/null 2>&1; then
+  osascript -e 'tell application id "to.iris.nvpn.macos" to quit' >/dev/null 2>&1 || true
+  for _ in {1..30}; do
+    if ! pgrep -x "Nostr VPN" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  pkill -x "Nostr VPN" >/dev/null 2>&1 || true
+fi
+
+touch "$APP_PATH"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+  -f -R -trusted "$APP_PATH" >/dev/null 2>&1 || true
 
 open "$APP_PATH"
 echo "macOS app launched: $APP_PATH"
