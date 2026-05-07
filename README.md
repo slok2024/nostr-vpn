@@ -365,6 +365,8 @@ Desktop updater scripts under [`scripts/`](scripts):
   Runs the Linux app in the Docker dev image, checks a local release manifest, downloads the selected AppImage, and verifies it is executable.
 - `./scripts/e2e-update-windows-vm.sh`
   Runs `scripts/e2e-update-windows.ps1` inside the Windows VM, builds the WPF app, checks a local release manifest, and verifies the selected setup executable downloads.
+- `./tools/run-windows`
+  On macOS, builds and runs the Windows app inside the running Parallels Windows VM. The macOS host is not expected to have PowerShell or .NET installed.
 
 The update E2E scripts set `NVPN_UPDATE_MANIFEST_URL` to a local fixture and suppress opening installers/packages, so they test update selection and download/install preparation without touching production release storage.
 

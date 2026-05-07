@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VM_NAME="${VM_NAME:-${1:-Windows 11}}"
+SHARED_REPO="${NVPN_WINDOWS_SHARED_REPO_PATH:-C:\\Mac\\Home\\src\\nostr-vpn}"
 GUEST_REPO="${GUEST_REPO:-C:\\Users\\sirius\\src\\nostr-vpn}"
 GUEST_ARTIFACT_ROOT="${GUEST_ARTIFACT_ROOT:-C:\\Mac\\Home\\src\\nostr-vpn\\artifacts}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-$ROOT/artifacts}"
@@ -12,20 +13,36 @@ APP_SCREENSHOT="$ARTIFACT_ROOT/windows-e2e-gui.png"
 
 mkdir -p "$ARTIFACT_ROOT"
 
-encode_ps() {
-  iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n'
+run_ps() {
+  local mode="$1"
+  local script="$2"
+  local ps_tmp_dir="$ROOT/target/windows-vm-ps"
+  mkdir -p "$ps_tmp_dir"
+  local host_script
+  host_script="$(mktemp "$ps_tmp_dir/prlctl.XXXXXX")"
+  mv "$host_script" "$host_script.ps1"
+  host_script="$host_script.ps1"
+  printf '%s\n' "$script" >"$host_script"
+
+  local rel_script="${host_script#"$ROOT"/}"
+  rel_script="${rel_script//\//\\}"
+  local guest_script="${SHARED_REPO}\\${rel_script}"
+  local status=0
+  if [[ "$mode" == "system" ]]; then
+    prlctl exec "$VM_NAME" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$guest_script" || status=$?
+  else
+    prlctl exec "$VM_NAME" --current-user powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$guest_script" || status=$?
+  fi
+  rm -f "$host_script"
+  return "$status"
 }
 
 run_ps_system() {
-  local encoded
-  encoded="$(printf '%s' "$1" | encode_ps)"
-  prlctl exec "$VM_NAME" powershell.exe -NoProfile -EncodedCommand "$encoded"
+  run_ps system "$1"
 }
 
 run_ps_user() {
-  local encoded
-  encoded="$(printf '%s' "$1" | encode_ps)"
-  prlctl exec "$VM_NAME" --current-user powershell.exe -NoProfile -EncodedCommand "$encoded"
+  run_ps user "$1"
 }
 
 cleanup_gui() {
@@ -33,6 +50,19 @@ cleanup_gui() {
   rm -f "$FULL_SCREENSHOT"
 }
 trap cleanup_gui EXIT
+
+run_ps_user "\$ErrorActionPreference = \"Stop\"
+\$sharedRepo = \"$SHARED_REPO\"
+\$guestRepo = \"$GUEST_REPO\"
+\$guestRoot = Split-Path \$guestRepo
+New-Item -ItemType Directory -Force -Path \$guestRoot | Out-Null
+robocopy \$sharedRepo \$guestRepo /MIR /XD target dist .git artifacts /XF .env.release.local | Out-Null
+if (\$LASTEXITCODE -ge 8) { throw \"robocopy failed with exit code \$LASTEXITCODE\" }
+exit 0"
+
+run_ps_user "Set-Location \"$GUEST_REPO\"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\windows-build.ps1
+exit \$LASTEXITCODE"
 
 run_ps_system "Set-Location \"$GUEST_REPO\"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\windows-e2e.ps1 -SkipGui

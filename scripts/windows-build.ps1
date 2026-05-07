@@ -29,7 +29,7 @@ function Invoke-Checked {
   }
 }
 
-$CargoArgs = @("build", "-p", "nostr-vpn-app-core", "-p", "nostr-vpn-cli")
+$CargoArgs = @("build", "-p", "nostr-vpn-app-core", "-p", "nostr-vpn-cli", "-p", "nostr-vpn-relay")
 if ($Configuration -eq "Release") {
   $CargoArgs += "--release"
 }
@@ -40,8 +40,11 @@ $AppCargoDir = Join-Path $Root "target\$Configuration"
 New-Item -ItemType Directory -Force -Path $AppCargoDir | Out-Null
 foreach ($FileName in @("nostr_vpn_app_core.dll", "nvpn.exe")) {
   $Source = Join-Path $CargoOutputDir $FileName
+  $Destination = Join-Path $AppCargoDir $FileName
   if (Test-Path $Source) {
-    Copy-Item -Force $Source (Join-Path $AppCargoDir $FileName)
+    if ([System.IO.Path]::GetFullPath($Source) -ine [System.IO.Path]::GetFullPath($Destination)) {
+      Copy-Item -Force $Source $Destination
+    }
   }
 }
 

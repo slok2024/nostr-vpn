@@ -3,8 +3,102 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if command -v pwsh >/dev/null 2>&1; then
-  exec pwsh -NoProfile -ExecutionPolicy Bypass -File "$ROOT/scripts/windows-build.ps1" -Run "$@"
+ps_quote() {
+  local value
+  value="$(printf '%s' "$1" | sed "s/'/''/g")"
+  printf "'%s'" "$value"
+}
+
+default_windows_shared_repo() {
+  if [[ "$ROOT" != "$HOME/"* ]]; then
+    return 1
+  fi
+  local rel="${ROOT#"$HOME/"}"
+  printf 'C:\\Mac\\Home\\%s\n' "${rel//\//\\}"
+}
+
+detect_windows_vm() {
+  prlctl list -a |
+    awk 'NR > 1 && ($2 == "running" || $2 == "suspended") && tolower($0) ~ /windows/ {
+      name = $0
+      sub(/^[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+/, "", name)
+      print name
+      exit
+    }'
+}
+
+run_windows_ps() {
+  local script="$1"
+  local ps_tmp_dir="$ROOT/target/windows-vm-ps"
+  mkdir -p "$ps_tmp_dir"
+  local host_script
+  host_script="$(mktemp "$ps_tmp_dir/prlctl.XXXXXX")"
+  mv "$host_script" "$host_script.ps1"
+  host_script="$host_script.ps1"
+  printf '%s\n' "$script" >"$host_script"
+
+  local rel_script="${host_script#"$ROOT"/}"
+  rel_script="${rel_script//\//\\}"
+  local guest_script="${SHARED_REPO}\\${rel_script}"
+
+  prlctl exec "$VM_NAME" --current-user powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$guest_script"
+  local status=$?
+  rm -f "$host_script"
+  return "$status"
+}
+
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  if ! command -v prlctl >/dev/null 2>&1; then
+    echo "Parallels prlctl is required to build/run Windows from macOS." >&2
+    exit 1
+  fi
+
+  VM_NAME="${NVPN_WINDOWS_VM_NAME:-${VM_NAME:-$(detect_windows_vm)}}"
+  if [[ -z "$VM_NAME" ]]; then
+    echo "No running Windows Parallels VM found; set NVPN_WINDOWS_VM_NAME." >&2
+    exit 1
+  fi
+
+  if [[ -n "${NVPN_WINDOWS_SHARED_REPO_PATH:-}" ]]; then
+    SHARED_REPO="$NVPN_WINDOWS_SHARED_REPO_PATH"
+  else
+    SHARED_REPO="$(default_windows_shared_repo || true)"
+  fi
+  if [[ -z "$SHARED_REPO" ]]; then
+    echo "Could not derive Windows shared repo path; set NVPN_WINDOWS_SHARED_REPO_PATH." >&2
+    exit 1
+  fi
+  GUEST_REPO="${GUEST_REPO:-C:\\Users\\sirius\\src\\nostr-vpn}"
+  if [[ -z "$GUEST_REPO" ]]; then
+    echo "Could not derive Windows guest repo path; set GUEST_REPO." >&2
+    exit 1
+  fi
+
+  PS_ARGS=""
+  for arg in "$@"; do
+    PS_ARGS+=" $(ps_quote "$arg")"
+  done
+
+  PS_SCRIPT="$(cat <<EOF
+\$ErrorActionPreference = "Stop"
+\$sharedRepo = $(ps_quote "$SHARED_REPO")
+\$guestRepo = $(ps_quote "$GUEST_REPO")
+\$guestRoot = Split-Path \$guestRepo
+New-Item -ItemType Directory -Force -Path \$guestRoot | Out-Null
+robocopy \$sharedRepo \$guestRepo /MIR /XD target dist .git artifacts /XF .env.release.local | Out-Null
+if (\$LASTEXITCODE -ge 8) { throw "robocopy failed with exit code \$LASTEXITCODE" }
+Set-Location $(ps_quote "$GUEST_REPO")
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\windows-build.ps1 -Run$PS_ARGS
+exit \$LASTEXITCODE
+EOF
+)"
+  run_windows_ps "$PS_SCRIPT"
+  exit $?
 fi
 
-exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$ROOT/scripts/windows-build.ps1" -Run "$@"
+if command -v powershell.exe >/dev/null 2>&1; then
+  exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$ROOT/scripts/windows-build.ps1" -Run "$@"
+fi
+
+echo "Windows builds require Windows, or macOS with a running Parallels Windows VM." >&2
+exit 1
