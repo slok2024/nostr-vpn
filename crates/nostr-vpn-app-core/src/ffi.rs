@@ -240,11 +240,19 @@ impl NativeAppRuntime {
         let own_pubkey_hex = self.config.own_nostr_pubkey_hex().unwrap_or_default();
         let active_network = self.config.active_network();
         let daemon_state = self.daemon_state.as_ref();
+        let session_runtime_active = self
+            .daemon_state
+            .as_ref()
+            .map_or(self.session_active, |state| state.session_active);
         let expected_peer_count = daemon_state.map_or_else(
             || remote_network_participant_count(active_network, &own_pubkey_hex),
             |state| state.expected_peer_count,
         );
-        let connected_peer_count = daemon_state.map_or(0, |state| state.connected_peer_count);
+        let connected_peer_count = if session_runtime_active {
+            daemon_state.map_or(0, |state| state.connected_peer_count)
+        } else {
+            0
+        };
         let endpoint = daemon_state
             .and_then(|state| non_empty(&state.advertised_endpoint))
             .unwrap_or_else(|| self.config.node.endpoint.clone());
@@ -323,11 +331,12 @@ impl NativeAppRuntime {
             close_to_tray_on_close: self.config.close_to_tray_on_close,
             connected_peer_count: connected_peer_count as u64,
             expected_peer_count: expected_peer_count as u64,
-            mesh_ready: daemon_state.map_or_else(|| self.session_active, |state| state.mesh_ready),
+            mesh_ready: session_runtime_active
+                && daemon_state.is_some_and(|state| state.mesh_ready),
             health,
             network,
             port_mapping,
-            networks: self.network_states(&own_pubkey_hex),
+            networks: self.network_states(&own_pubkey_hex, session_runtime_active),
             relays: self.relay_states(),
             relay_summary: self.relay_summary(),
             lan_peers: self.lan_peer_states(),
@@ -764,6 +773,12 @@ impl NativeAppRuntime {
             self.session_status = "Mobile tunnel pending".to_string();
             return self.refresh_mobile_status();
         }
+        let _ = self.refresh_status();
+        if self.daemon_running {
+            let output = self.run_nvpn(["resume", "--config", self.config_path_str()?])?;
+            ensure_success("nvpn resume", &output)?;
+            return self.refresh_status();
+        }
         let output = self.run_nvpn_elevated([
             "start",
             "--daemon",
@@ -902,15 +917,24 @@ impl NativeAppRuntime {
         Ok(())
     }
 
-    fn network_states(&self, own_pubkey_hex: &str) -> Vec<NativeNetworkState> {
+    fn network_states(
+        &self,
+        own_pubkey_hex: &str,
+        session_runtime_active: bool,
+    ) -> Vec<NativeNetworkState> {
         self.config
             .networks
             .iter()
-            .map(|network| self.network_state(network, own_pubkey_hex))
+            .map(|network| self.network_state(network, own_pubkey_hex, session_runtime_active))
             .collect()
     }
 
-    fn network_state(&self, network: &NetworkConfig, own_pubkey_hex: &str) -> NativeNetworkState {
+    fn network_state(
+        &self,
+        network: &NetworkConfig,
+        own_pubkey_hex: &str,
+        session_runtime_active: bool,
+    ) -> NativeNetworkState {
         let mut admins = network
             .admins
             .iter()
@@ -929,7 +953,9 @@ impl NativeAppRuntime {
         }
         let participants = participant_keys
             .iter()
-            .map(|participant| self.participant_state(participant, network, own_pubkey_hex))
+            .map(|participant| {
+                self.participant_state(participant, network, own_pubkey_hex, session_runtime_active)
+            })
             .collect::<Vec<_>>();
         let online_count = participants
             .iter()
@@ -974,15 +1000,19 @@ impl NativeAppRuntime {
         participant: &str,
         network: &NetworkConfig,
         own_pubkey_hex: &str,
+        session_runtime_active: bool,
     ) -> NativeParticipantState {
-        let daemon_peer = self.daemon_state.as_ref().and_then(|state| {
-            state
-                .peers
-                .iter()
-                .find(|peer| peer.participant_pubkey == participant)
+        let daemon_peer = session_runtime_active.then(|| ()).and_then(|()| {
+            self.daemon_state.as_ref().and_then(|state| {
+                state
+                    .peers
+                    .iter()
+                    .find(|peer| peer.participant_pubkey == participant)
+            })
         });
         let is_local = participant == own_pubkey_hex;
-        let reachable = is_local || daemon_peer.is_some_and(|peer| peer.reachable);
+        let reachable =
+            session_runtime_active && (is_local || daemon_peer.is_some_and(|peer| peer.reachable));
         let magic_dns_alias = if is_local {
             self.config.self_magic_dns_label().unwrap_or_default()
         } else {
@@ -1015,8 +1045,10 @@ impl NativeAppRuntime {
         } else {
             peer_offers_exit_node(&advertised_routes)
         };
-        let peer_state = self.peer_state_label(participant, daemon_peer, is_local);
-        let presence_state = Self::peer_presence_label(daemon_peer, is_local);
+        let peer_state =
+            self.peer_state_label(participant, daemon_peer, is_local, session_runtime_active);
+        let presence_state =
+            Self::peer_presence_label(daemon_peer, is_local, session_runtime_active);
 
         NativeParticipantState {
             npub: to_npub(participant),
@@ -1170,7 +1202,11 @@ impl NativeAppRuntime {
         participant: &str,
         peer: Option<&DaemonPeerState>,
         is_local: bool,
+        session_runtime_active: bool,
     ) -> String {
+        if !session_runtime_active {
+            return "off".to_string();
+        }
         if is_local {
             return "local".to_string();
         }
@@ -1197,7 +1233,14 @@ impl NativeAppRuntime {
         "unknown".to_string()
     }
 
-    fn peer_presence_label(peer: Option<&DaemonPeerState>, is_local: bool) -> String {
+    fn peer_presence_label(
+        peer: Option<&DaemonPeerState>,
+        is_local: bool,
+        session_runtime_active: bool,
+    ) -> String {
+        if !session_runtime_active {
+            return "off".to_string();
+        }
         if is_local {
             return "local".to_string();
         }
@@ -1711,11 +1754,117 @@ mod tests {
         assert_eq!(network.expected_count, 1);
         assert_eq!(network.online_count, 0);
         assert_eq!(network.participants.len(), 2);
+        assert!(network.participants.iter().any(|participant| {
+            participant.pubkey_hex == own_pubkey
+                && !participant.reachable
+                && participant.state == "off"
+        }));
+    }
+
+    #[test]
+    fn native_state_hides_reachable_peers_when_session_is_paused() {
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        let own_pubkey = runtime
+            .config
+            .own_nostr_pubkey_hex()
+            .expect("generated config should have own pubkey");
+        let peer_pubkey = "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc";
+        runtime.config.networks[0].admins = vec![own_pubkey.clone()];
+        runtime.config.networks[0].participants = vec![peer_pubkey.to_string()];
+        runtime.daemon_running = true;
+        runtime.session_active = false;
+        runtime.daemon_state = Some(DaemonRuntimeState {
+            session_active: false,
+            expected_peer_count: 1,
+            connected_peer_count: 1,
+            peers: vec![DaemonPeerState {
+                participant_pubkey: peer_pubkey.to_string(),
+                tunnel_ip: "10.44.10.23".to_string(),
+                reachable: true,
+                ..DaemonPeerState::default()
+            }],
+            ..DaemonRuntimeState::default()
+        });
+
+        let state = runtime.state();
+        let network = &state.networks[0];
+
+        assert!(!state.session_active);
+        assert_eq!(state.connected_peer_count, 0);
+        assert_eq!(network.online_count, 0);
         assert!(
-            network.participants.iter().any(|participant| {
-                participant.pubkey_hex == own_pubkey && participant.reachable
-            })
+            network
+                .participants
+                .iter()
+                .all(|participant| { !participant.reachable && participant.state == "off" })
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_session_resumes_running_daemon_without_elevated_start() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-resume-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let calls_path = dir.join("calls.txt");
+        let script_path = dir.join("nvpn");
+        let calls_literal = calls_path
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let script = format!(
+            r#"#!/bin/sh
+CALLS="{calls_literal}"
+printf '%s\n' "$*" >> "$CALLS"
+if [ "$1" = "service" ] && [ "$2" = "status" ]; then
+  cat <<'JSON'
+{{"supported":true,"installed":true,"disabled":false,"loaded":true,"running":true,"pid":123,"label":"to.iris.nvpn.test","binary_version":"test"}}
+JSON
+  exit 0
+fi
+if [ "$1" = "status" ]; then
+  cat <<'JSON'
+{{"daemon":{{"running":true,"state":{{"updated_at":1,"binary_version":"test","local_endpoint":"","advertised_endpoint":"","listen_port":0,"session_active":false,"relay_connected":false,"session_status":"Paused","expected_peer_count":0,"connected_peer_count":0,"mesh_ready":false,"peers":[]}}}}}}
+JSON
+  exit 0
+fi
+if [ "$1" = "resume" ]; then
+  exit 0
+fi
+if [ "$1" = "start" ]; then
+  echo "unexpected elevated start" >&2
+  exit 42
+fi
+exit 0
+"#
+        );
+        fs::write(&script_path, script).expect("write fake nvpn");
+        let mut permissions = fs::metadata(&script_path)
+            .expect("fake nvpn metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("make fake nvpn executable");
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.last_error.clear();
+        runtime.config_path = dir.join("config.toml");
+        runtime.nvpn_bin = Some(script_path);
+
+        runtime.dispatch(NativeAppAction::ConnectSession);
+
+        let calls = fs::read_to_string(&calls_path).expect("read fake nvpn calls");
+        assert!(calls.contains("resume --config"));
+        assert!(!calls.contains("start --daemon --connect"));
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[cfg(target_os = "macos")]

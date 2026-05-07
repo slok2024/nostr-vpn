@@ -25,6 +25,7 @@ struct NostrVpnMacApp: App {
                     }
                 }
         }
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1100, height: 760)
         .windowResizability(.automatic)
 

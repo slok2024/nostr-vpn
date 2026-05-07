@@ -82,7 +82,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func observeWindows() {
         for window in NSApp.windows where window.title == "Nostr VPN" {
             window.delegate = self
+            configureMainWindow(window)
         }
+    }
+
+    private func configureMainWindow(_ window: NSWindow) {
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
+        window.toolbar?.isVisible = false
     }
 
     private func installApplicationIcon() {

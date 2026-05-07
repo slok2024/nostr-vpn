@@ -10,7 +10,6 @@ struct RootView: View {
     @State private var tunnelIp = ""
     @State private var listenPort = ""
     @State private var magicDnsSuffix = ""
-    @State private var advertisedRoutes = ""
     @State private var relayInput = ""
     @State private var participantInput = ""
     @State private var participantAliasInput = ""
@@ -21,7 +20,6 @@ struct RootView: View {
     @State private var networkNameDrafts: [String: String] = [:]
     @State private var participantAliasDrafts: [String: String] = [:]
     @State private var manageDevicesExpanded = false
-    @State private var advancedRoutesExpanded = false
     @State private var savedNetworksExpanded = false
     @State private var advancedSettingsExpanded = false
     @State private var diagnosticsExpanded = false
@@ -38,24 +36,17 @@ struct RootView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
-            sidebar
-        } detail: {
-            detailPane
-        }
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                headerSessionControl
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    manager.refresh()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .disabled(manager.actionInFlight)
+        VStack(spacing: 0) {
+            headerBar
+            Divider()
+            HStack(spacing: 0) {
+                sidebar
+                    .frame(width: 250)
+                Divider()
+                detailPane
             }
         }
+        .ignoresSafeArea(.container, edges: .top)
         .onAppear(perform: syncDrafts)
         .onChange(of: state.rev) { _, _ in
             syncDrafts()
@@ -68,63 +59,110 @@ struct RootView: View {
         }
     }
 
+    private var headerBar: some View {
+        HStack(spacing: 18) {
+            headerIdentity
+            Spacer(minLength: 0)
+            HStack(spacing: 16) {
+                headerIconButton(.sharing, "qrcode", "Share")
+                headerIconButton(.settings, "slider.horizontal.3", "Settings")
+            }
+            headerSessionControl
+        }
+        .padding(.leading, 104)
+        .padding(.trailing, 18)
+        .frame(height: 44)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var headerIdentity: some View {
+        Text(activeNetwork.map(displayName) ?? "Nostr VPN")
+            .font(.caption.weight(.semibold))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(width: 180, alignment: .leading)
+    }
+
     private var headerSessionControl: some View {
         HStack(spacing: 10) {
-            Toggle("", isOn: Binding(
-                get: { state.sessionActive },
-                set: { enabled in
-                    if enabled != state.sessionActive {
-                        manager.toggleSession()
-                    }
-                }
-            ))
-            .toggleStyle(.switch)
-            .labelsHidden()
-            .controlSize(.small)
-            .disabled(manager.actionInFlight || !state.vpnSessionControlSupported)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(activeNetwork.map(displayName) ?? "Nostr VPN")
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                Text(headerSessionStatusText)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            Text(headerSessionStatusText)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: 96, alignment: .trailing)
+            headerSessionSwitch
         }
         .help(state.sessionActive ? "Disconnect VPN" : "Connect VPN")
     }
 
-    private var sidebar: some View {
-        List(selection: $selectedSidebarItem) {
-            Section {
-                sidebarItem(.devices, "Devices", "circle.grid.2x2.fill")
-                sidebarItem(.sharing, "Share", "qrcode")
-                sidebarItem(.routing, "Routing", "arrow.triangle.branch")
-                sidebarItem(.settings, "Settings", "gearshape")
+    private var headerSessionSwitch: some View {
+        let disabled = manager.actionInFlight || !state.vpnSessionControlSupported
+        return Button {
+            manager.toggleSession()
+        } label: {
+            ZStack(alignment: state.sessionActive ? .trailing : .leading) {
+                Capsule()
+                    .fill(state.sessionActive ? Color.accentColor : Color(nsColor: .tertiaryLabelColor).opacity(0.45))
+                    .frame(width: 52, height: 26)
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 22, height: 22)
+                    .shadow(color: .black.opacity(0.22), radius: 1, y: 1)
+                    .padding(2)
             }
-
-            if let activeNetwork {
-                Section("Network") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(displayName(activeNetwork))
-                            .font(.subheadline.weight(.semibold))
-                            .lineLimit(1)
-                        Text(peerAvailabilityText)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 2)
-                }
-            }
+            .frame(width: 52, height: 26)
+            .contentShape(Capsule())
         }
-        .navigationSplitViewColumnWidth(min: 170, ideal: 185)
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .accessibilityLabel(state.sessionActive ? "Disconnect VPN" : "Connect VPN")
+        .accessibilityValue(state.sessionActive ? "On" : "Off")
     }
 
-    private func sidebarItem(_ item: SidebarItem, _ title: String, _ systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
-            .tag(item)
+    private func headerIconButton(_ item: SidebarItem, _ systemImage: String, _ help: String) -> some View {
+        let selected = (selectedSidebarItem ?? .devices) == item
+        return Button {
+            selectedSidebarItem = item
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+        .help(help)
+    }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            sidebarButton(.devices, "Devices", "circle.grid.2x2.fill")
+            sidebarButton(.routing, "Exit Nodes", "arrow.triangle.branch")
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private func sidebarButton(_ item: SidebarItem, _ title: String, _ systemImage: String) -> some View {
+        let selected = (selectedSidebarItem ?? .devices) == item
+        return Button {
+            selectedSidebarItem = item
+        } label: {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline.weight(.semibold))
+                .labelStyle(.titleAndIcon)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .frame(height: 32)
+                .background(selected ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                .foregroundStyle(selected ? Color.white : Color.primary)
+                .contentShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -146,7 +184,7 @@ struct RootView: View {
             }
         case .routing:
             pageScroll {
-                pageTitle("Routing", "arrow.triangle.branch")
+                pageTitle("Exit Nodes", "arrow.triangle.branch")
                 if let activeNetwork {
                     routingSection(activeNetwork)
                 }
@@ -353,7 +391,7 @@ struct RootView: View {
                 .font(.headline)
             detailValueRow("MagicDNS", deviceMagicDnsName(participant))
             detailValueRow("VPN IP", cleanIp(participant.tunnelIp))
-            detailValueRow("npub", participant.npub)
+            detailValueRow("Device ID", participant.npub)
         }
     }
 
@@ -436,7 +474,7 @@ struct RootView: View {
         ) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    TextField("npub", text: $participantInput)
+                    TextField("Device ID", text: $participantInput)
                         .onSubmit(addParticipantToActiveNetwork)
                     TextField("Name", text: $participantAliasInput)
                         .frame(maxWidth: 160)
@@ -614,7 +652,7 @@ struct RootView: View {
     private func routingSection(_ network: NativeNetworkState) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             surface {
-                sectionHeader("Exit Node", systemImage: "arrow.triangle.branch")
+                sectionHeader("Exit Nodes", systemImage: "arrow.triangle.branch")
                 TextField("Search devices", text: $exitNodeSearch)
                     .textFieldStyle(.roundedBorder)
 
@@ -639,31 +677,14 @@ struct RootView: View {
                         }
                     }
                 }
-            }
 
-            disclosureSection(
-                title: "Subnet Routes",
-                systemImage: "point.3.connected.trianglepath.dotted",
-                isExpanded: $advancedRoutesExpanded
-            ) {
-                surface {
-                    Toggle("Offer this device as an exit node", isOn: Binding(
-                        get: { state.advertiseExitNode },
-                        set: { manager.setAdvertiseExitNode($0) }
-                    ))
-                    .disabled(manager.actionInFlight)
+                Divider()
 
-                    HStack {
-                        TextField("Advertised routes", text: $advertisedRoutes)
-                        Button {
-                            manager.setAdvertisedRoutes(advertisedRoutes)
-                        } label: {
-                            Image(systemName: "checkmark")
-                        }
-                        .disabled(manager.actionInFlight)
-                    }
-                }
-                .padding(.top, 8)
+                Toggle("Offer this device as an exit node", isOn: Binding(
+                    get: { state.advertiseExitNode },
+                    set: { manager.setAdvertiseExitNode($0) }
+                ))
+                .disabled(manager.actionInFlight)
             }
         }
     }
@@ -1134,7 +1155,6 @@ struct RootView: View {
         tunnelIp = state.tunnelIp
         listenPort = String(state.listenPort)
         magicDnsSuffix = state.magicDnsSuffix
-        advertisedRoutes = state.advertisedRoutes.joined(separator: ", ")
 
         for network in state.networks {
             networkNameDrafts[network.id] = network.name
@@ -1281,6 +1301,9 @@ struct RootView: View {
     }
 
     private func deviceStatusText(_ participant: NativeParticipantState) -> String {
+        if participant.state == "off" {
+            return "Off"
+        }
         if isSelf(participant) {
             return "Self"
         }

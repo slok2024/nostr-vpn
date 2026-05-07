@@ -241,6 +241,54 @@ fn fips_runtime_state_is_ready_without_waiting_for_every_peer() {
     assert_eq!(state.session_status, "VPN on");
 }
 
+#[test]
+fn daemon_runtime_state_marks_peers_unreachable_when_session_is_off() {
+    let mut config = AppConfig::generated();
+    config.private_data_plane = nostr_vpn_core::data_plane::PrivateDataPlane::Fips;
+    let peer_pubkey = "11".repeat(32);
+    config.networks[0].participants = vec![peer_pubkey.clone()];
+    let presence = PeerPresenceBook::default();
+    let tunnel_runtime = crate::CliTunnelRuntime::new("utun100");
+    let peer_status = MeshPeerStatus {
+        pubkey: peer_pubkey,
+        connected: true,
+        data_plane: nostr_vpn_core::data_plane::PrivateDataPlane::Fips,
+        endpoint_npub: "npub1endpoint".to_string(),
+        transport_addr: Some("127.0.0.1:9000".to_string()),
+        transport_type: Some("loopback".to_string()),
+        srtt_ms: Some(3),
+        link_packets_sent: 10,
+        link_packets_recv: 11,
+        link_bytes_sent: 120,
+        link_bytes_recv: 130,
+        last_seen_at: Some(100),
+        tx_bytes: 200,
+        rx_bytes: 300,
+        error: None,
+    };
+
+    let state = crate::build_daemon_runtime_state(
+        &config,
+        false,
+        1,
+        &presence,
+        &tunnel_runtime,
+        &[peer_status],
+        None,
+        "Paused",
+        false,
+        &nostr_vpn_core::diagnostics::NetworkSummary::default(),
+        &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
+    );
+
+    assert!(!state.session_active);
+    assert_eq!(state.connected_peer_count, 0);
+    assert!(!state.mesh_ready);
+    assert_eq!(state.peers.len(), 1);
+    assert!(!state.peers[0].reachable);
+    assert!(state.peers[0].runtime_endpoint.is_none());
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn persist_daemon_network_cleanup_state_writes_and_clears_macos_state() {

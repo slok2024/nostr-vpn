@@ -2416,9 +2416,13 @@ pub(crate) fn build_daemon_runtime_state(
             if Some(participant.as_str()) == own_pubkey.as_deref() {
                 continue;
             }
-            let status = fips_status_by_pubkey.get(participant.as_str()).copied();
+            let status = if session_active {
+                fips_status_by_pubkey.get(participant.as_str()).copied()
+            } else {
+                None
+            };
             let last_seen_at = status.and_then(|status| status.last_seen_at);
-            let reachable = status.is_some_and(|status| status.connected);
+            let reachable = session_active && status.is_some_and(|status| status.connected);
             let fips_transport_addr = status.and_then(|status| status.transport_addr.clone());
             let tunnel_ip = derive_mesh_tunnel_ip(&network_id, participant).unwrap_or_default();
             peers.push(DaemonPeerState {
@@ -2464,7 +2468,10 @@ pub(crate) fn build_daemon_runtime_state(
                 continue;
             }
 
-            let Some(announcement) = presence.announcement_for(participant) else {
+            let announcement = session_active
+                .then(|| presence.announcement_for(participant))
+                .flatten();
+            let Some(announcement) = announcement else {
                 let transport = daemon_peer_transport_state(None, false, None, now);
                 peers.push(DaemonPeerState {
                     participant_pubkey: participant.clone(),
@@ -2493,8 +2500,12 @@ pub(crate) fn build_daemon_runtime_state(
                 continue;
             };
 
-            let signal_active = presence.active().contains_key(participant);
-            let runtime_peer = peer_runtime_lookup(announcement, runtime_peers.as_ref());
+            let signal_active = session_active && presence.active().contains_key(participant);
+            let runtime_peer = if session_active {
+                peer_runtime_lookup(announcement, runtime_peers.as_ref())
+            } else {
+                None
+            };
             let transport =
                 daemon_peer_transport_state(Some(announcement), signal_active, runtime_peer, now);
 
@@ -2525,7 +2536,9 @@ pub(crate) fn build_daemon_runtime_state(
         }
     }
 
-    let connected_peer_count = if app.private_mesh_uses_fips() {
+    let connected_peer_count = if !session_active {
+        0
+    } else if app.private_mesh_uses_fips() {
         let participant_pubkeys = app
             .participant_pubkeys_hex()
             .into_iter()
