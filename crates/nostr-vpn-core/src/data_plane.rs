@@ -6,16 +6,14 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrivateDataPlane {
-    #[serde(rename = "wireguard")]
-    WireGuard,
     #[default]
+    #[serde(alias = "wireguard")]
     Fips,
 }
 
 impl PrivateDataPlane {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::WireGuard => "wireguard",
             Self::Fips => "fips",
         }
     }
@@ -72,11 +70,7 @@ impl FipsDataPlaneCapability {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "data_plane", rename_all = "snake_case")]
 pub enum DataPlaneCapability {
-    #[serde(rename = "wireguard")]
-    WireGuard,
-    Fips {
-        fips: FipsDataPlaneCapability,
-    },
+    Fips { fips: FipsDataPlaneCapability },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,7 +122,7 @@ pub trait PrivateMeshBackend: Send {
 }
 
 pub fn private_data_plane_routes_to_fips(private_data_plane: PrivateDataPlane) -> bool {
-    private_data_plane == PrivateDataPlane::Fips
+    matches!(private_data_plane, PrivateDataPlane::Fips)
 }
 
 pub fn exit_data_plane_routes_to_wireguard(exit_data_plane: ExitDataPlane) -> bool {
@@ -150,6 +144,18 @@ mod tests {
             PrivateDataPlane::default()
         ));
         assert!(exit_data_plane_routes_to_wireguard(ExitDataPlane::default()));
+    }
+
+    #[test]
+    fn legacy_wireguard_private_data_plane_deserializes_as_fips() {
+        let data_plane: PrivateDataPlane =
+            serde_json::from_str("\"wireguard\"").expect("legacy value should load");
+
+        assert_eq!(data_plane, PrivateDataPlane::Fips);
+        assert_eq!(
+            serde_json::to_string(&data_plane).expect("serialize data plane"),
+            "\"fips\""
+        );
     }
 
     #[test]

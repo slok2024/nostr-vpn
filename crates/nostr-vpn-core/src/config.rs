@@ -43,17 +43,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::crypto::generate_keypair;
 
-/// Same defaults as hashtree's `DEFAULT_RELAYS`.
-pub const DEFAULT_RELAYS: &[&str] = &[
-    "wss://temp.iris.to",
-    "wss://relay.damus.io",
-    "wss://relay.snort.social",
-    "wss://relay.primal.net",
-];
+pub const DEFAULT_RELAYS: &[&str] = &[];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NostrConfig {
-    #[serde(default = "default_relays")]
+    #[serde(default, skip_serializing)]
     pub relays: Vec<String>,
     /// Nostr private identity key in `nsec` or hex format.
     #[serde(default)]
@@ -89,7 +83,7 @@ pub struct AppConfig {
     pub launch_on_startup: bool,
     #[serde(default = "default_autoconnect")]
     pub autoconnect: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub private_data_plane: PrivateDataPlane,
     #[serde(default)]
     pub exit_data_plane: ExitDataPlane,
@@ -288,10 +282,6 @@ impl AppConfig {
         Self::default()
     }
 
-    pub fn private_mesh_uses_fips(&self) -> bool {
-        self.private_data_plane == PrivateDataPlane::Fips
-    }
-
     pub fn wireguard_exit_enabled(&self) -> bool {
         self.exit_data_plane == ExitDataPlane::WireGuard
     }
@@ -341,10 +331,6 @@ impl AppConfig {
         }
 
         self.magic_dns_suffix = normalize_magic_dns_suffix(&self.magic_dns_suffix);
-
-        if self.nostr.relays.is_empty() {
-            self.nostr.relays = default_relays();
-        }
 
         if self.node.id.trim().is_empty() {
             self.node.id = default_node_id();
@@ -464,11 +450,9 @@ impl AppConfig {
     }
 
     fn apply_load_migrations(&mut self) {
-        // Release migration: private meshes moved from WireGuard to FIPS;
-        // WireGuard remains the default data plane for exit traffic.
-        if self.private_data_plane == PrivateDataPlane::WireGuard {
-            self.private_data_plane = PrivateDataPlane::Fips;
-        }
+        // Release migration: older configs may still contain
+        // private_data_plane = "wireguard"; PrivateDataPlane accepts that as
+        // FIPS on deserialize and serializes back to "fips".
     }
 
     fn canonicalize_user_facing_pubkeys(&mut self) {

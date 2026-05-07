@@ -39,7 +39,7 @@ pub(crate) fn active_network_invite_code(config: &AppConfig) -> Result<String> {
         inviter_node_name: String::new(),
         admins: roster.admins.iter().map(|admin| to_npub(admin)).collect(),
         participants: Vec::new(),
-        relays: normalized_invite_relays(&config.nostr.relays)?,
+        relays: Vec::new(),
     };
     let encoded = URL_SAFE_NO_PAD
         .encode(serde_json::to_vec(&invite).context("failed to encode invite JSON")?);
@@ -107,7 +107,7 @@ pub(crate) fn parse_network_invite(value: &str) -> Result<NetworkInvite> {
     if invite.participants.is_empty() && invite.v < NETWORK_INVITE_VERSION {
         invite.participants.push(invite.inviter_npub.clone());
     }
-    invite.relays = normalized_invite_relays(&invite.relays)?;
+    invite.relays.clear();
     Ok(invite)
 }
 
@@ -235,12 +235,6 @@ pub(crate) fn apply_network_invite_to_active_network(
         network.name = invite.network_name.trim().to_string();
     }
 
-    for relay in &invite.relays {
-        if !config.nostr.relays.iter().any(|existing| existing == relay) {
-            config.nostr.relays.push(relay.clone());
-        }
-    }
-
     Ok(())
 }
 
@@ -256,10 +250,6 @@ pub(crate) fn preferred_join_request_recipient(network: &NetworkConfig) -> Optio
     network.admins.first().cloned()
 }
 
-pub(crate) fn is_valid_relay_url(value: &str) -> bool {
-    value.starts_with("ws://") || value.starts_with("wss://")
-}
-
 fn network_should_adopt_invite(network: &NetworkConfig) -> bool {
     let trimmed = network.name.trim();
     network.participants.is_empty() && (trimmed.is_empty() || trimmed.starts_with("Network "))
@@ -272,22 +262,5 @@ fn normalized_invite_pubkeys(pubkeys: &[String]) -> Result<Vec<String>> {
         .collect::<Result<Vec<_>>>()?;
     normalized.sort();
     normalized.dedup();
-    Ok(normalized)
-}
-
-fn normalized_invite_relays(relays: &[String]) -> Result<Vec<String>> {
-    let mut normalized = Vec::new();
-    for relay in relays {
-        let relay = relay.trim();
-        if relay.is_empty() {
-            continue;
-        }
-        if !is_valid_relay_url(relay) {
-            return Err(anyhow!("invalid invite relay '{relay}'"));
-        }
-        if !normalized.iter().any(|existing| existing == relay) {
-            normalized.push(relay.to_string());
-        }
-    }
     Ok(normalized)
 }

@@ -584,8 +584,7 @@ impl FipsPrivateMeshRuntime {
                 status.link_bytes_sent = peer_link.bytes_sent;
                 status.link_bytes_recv = peer_link.bytes_recv;
             }
-            let link_connected = status.transport_addr.is_some() || status.srtt_ms.is_some();
-            status.connected = presence_connected || link_connected;
+            status.connected = presence_connected;
             status.error = if status.connected {
                 None
             } else {
@@ -799,31 +798,21 @@ struct FipsEndpointPeerTransportConfig {
 
 fn fips_endpoint_config(
     _scope: &str,
-    relays: &[String],
+    _relays: &[String],
     peers: &[FipsEndpointPeerTransportConfig],
     transport: Option<&FipsEndpointTransportConfig>,
 ) -> Config {
     let mut config = Config::new();
     config.node.control.enabled = false;
     config.dns.enabled = false;
-    config.node.discovery.nostr.enabled = !relays.is_empty();
-    config.node.discovery.nostr.advertise =
-        !relays.is_empty() && transport.is_some_and(|transport| transport.advertise_endpoint);
-    config.node.discovery.nostr.policy = if relays.is_empty() {
-        NostrDiscoveryPolicy::ConfiguredOnly
-    } else {
-        NostrDiscoveryPolicy::Open
-    };
-    config.node.discovery.nostr.share_local_candidates = true;
+    config.node.discovery.nostr.enabled = false;
+    config.node.discovery.nostr.advertise = false;
+    config.node.discovery.nostr.policy = NostrDiscoveryPolicy::ConfiguredOnly;
+    config.node.discovery.nostr.share_local_candidates = false;
     config.node.discovery.nostr.app = FIPS_NOSTR_DISCOVERY_APP.to_string();
-    if !relays.is_empty() {
-        config.node.discovery.nostr.advert_relays = relays.to_vec();
-        config.node.discovery.nostr.dm_relays = relays.to_vec();
-    }
     let bind_addr = transport.map(fips_udp_bind_addr);
     let external_addr = transport.and_then(fips_udp_external_addr);
-    let advertise_udp =
-        !relays.is_empty() && transport.is_some_and(|transport| transport.advertise_endpoint);
+    let advertise_udp = false;
     if let Some(transport) = transport {
         config.node.discovery.nostr.stun_servers = transport.stun_servers.clone();
     }
@@ -856,7 +845,7 @@ fn fips_endpoint_config(
 }
 
 fn fips_endpoint_peers_from_mesh(
-    relays: &[String],
+    _relays: &[String],
     mesh_peers: &[FipsMeshPeerConfig],
     static_peer_endpoints: Vec<(String, Vec<String>)>,
 ) -> Vec<FipsEndpointPeerTransportConfig> {
@@ -868,9 +857,9 @@ fn fips_endpoint_peers_from_mesh(
             .or_insert_with(|| FipsEndpointPeerTransportConfig {
                 npub,
                 addresses: Vec::new(),
-                via_nostr: !relays.is_empty(),
+                via_nostr: false,
             })
-            .via_nostr |= !relays.is_empty();
+            .via_nostr = false;
     }
 
     for (npub, addresses) in static_peer_endpoints {
@@ -969,7 +958,7 @@ impl FipsPrivateTunnelConfig {
         app: &AppConfig,
         network_id: &str,
         iface: impl Into<String>,
-        relays: &[String],
+        _relays: &[String],
         own_pubkey: Option<&str>,
         cached_peer_endpoints: Vec<(String, Vec<String>)>,
     ) -> Result<Self> {
@@ -1019,14 +1008,14 @@ impl FipsPrivateTunnelConfig {
         peers.dedup_by(|left, right| left.participant_pubkey == right.participant_pubkey);
         let mut static_peer_endpoints = app.fips_static_peer_endpoints();
         static_peer_endpoints.extend(cached_peer_endpoints);
-        let endpoint_peers = fips_endpoint_peers_from_mesh(relays, &peers, static_peer_endpoints);
+        let endpoint_peers = fips_endpoint_peers_from_mesh(&[], &peers, static_peer_endpoints);
         route_targets.sort();
         route_targets.dedup();
 
         Ok(Self {
             identity_nsec: app.nostr.secret_key.clone(),
             network_id: network_id.to_string(),
-            relays: relays.to_vec(),
+            relays: Vec::new(),
             iface: iface.into(),
             local_address: own_pubkey
                 .and_then(|pubkey| derive_mesh_tunnel_ip(network_id, pubkey))
@@ -2637,7 +2626,7 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_config_uses_client_posture_and_open_fips_discovery() {
+    fn endpoint_config_disables_nostr_discovery_without_direct_peers() {
         let keys = Keys::generate();
         let participant_pubkey = keys.public_key().to_hex();
         let peer = FipsMeshPeerConfig::from_participant_pubkey(
@@ -2652,13 +2641,13 @@ mod tests {
 
         assert!(!config.node.control.enabled);
         assert!(!config.dns.enabled);
-        assert!(config.node.discovery.nostr.enabled);
+        assert!(!config.node.discovery.nostr.enabled);
         assert!(!config.node.discovery.nostr.advertise);
         assert_eq!(
             config.node.discovery.nostr.policy,
-            fips_endpoint::NostrDiscoveryPolicy::Open
+            fips_endpoint::NostrDiscoveryPolicy::ConfiguredOnly
         );
-        assert!(config.node.discovery.nostr.share_local_candidates);
+        assert!(!config.node.discovery.nostr.share_local_candidates);
         assert_eq!(config.node.discovery.nostr.app, FIPS_NOSTR_DISCOVERY_APP);
         let udp = match config.transports.udp {
             fips_endpoint::TransportInstances::Single(udp) => udp,
@@ -2667,12 +2656,11 @@ mod tests {
         assert!(udp.outbound_only());
         assert!(!udp.advertise_on_nostr());
         assert!(!udp.accept_connections());
-        assert_eq!(config.peers.len(), 1);
-        assert!(config.peers[0].via_nostr);
+        assert!(config.peers.is_empty());
     }
 
     #[test]
-    fn endpoint_config_advertises_app_owned_direct_endpoint_for_tunnel_runtime() {
+    fn endpoint_config_listens_on_app_owned_direct_endpoint_without_relay_advertise() {
         let keys = Keys::generate();
         let participant_pubkey = keys.public_key().to_hex();
         let peer = FipsMeshPeerConfig::from_participant_pubkey(
@@ -2692,13 +2680,13 @@ mod tests {
         let config =
             fips_endpoint_config("nostr-vpn:test", &relays, &endpoint_peers, Some(&transport));
 
-        assert!(config.node.discovery.nostr.enabled);
-        assert!(config.node.discovery.nostr.advertise);
+        assert!(!config.node.discovery.nostr.enabled);
+        assert!(!config.node.discovery.nostr.advertise);
         assert_eq!(
             config.node.discovery.nostr.policy,
-            fips_endpoint::NostrDiscoveryPolicy::Open
+            fips_endpoint::NostrDiscoveryPolicy::ConfiguredOnly
         );
-        assert!(config.node.discovery.nostr.share_local_candidates);
+        assert!(!config.node.discovery.nostr.share_local_candidates);
         assert_eq!(config.node.discovery.nostr.app, FIPS_NOSTR_DISCOVERY_APP);
         assert_eq!(
             config.node.discovery.nostr.stun_servers,
@@ -2710,11 +2698,10 @@ mod tests {
         };
         assert_eq!(udp.bind_addr.as_deref(), Some("0.0.0.0:51820"));
         assert!(!udp.outbound_only());
-        assert!(udp.advertise_on_nostr());
+        assert!(!udp.advertise_on_nostr());
         assert!(udp.accept_connections());
         assert_eq!(udp.external_addr.as_deref(), Some("192.168.50.20:51820"));
-        assert_eq!(config.peers.len(), 1);
-        assert!(config.peers[0].via_nostr);
+        assert!(config.peers.is_empty());
     }
 
     #[test]

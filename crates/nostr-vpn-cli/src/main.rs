@@ -114,10 +114,9 @@ use crate::diagnostics::{
 #[cfg(test)]
 use crate::network_signaling::NETWORK_INVITE_PREFIX;
 use crate::network_signaling::{
-    AnnounceRequest, RosterEditAction, active_network_invite_code,
-    apply_network_invite_to_active_network, discover_peers, maybe_reload_running_daemon,
-    parse_network_invite, publish_active_network_roster, publish_announcement,
-    update_active_network_roster,
+    RosterEditAction, active_network_invite_code, apply_network_invite_to_active_network,
+    maybe_reload_running_daemon, parse_network_invite, publish_active_network_roster,
+    queue_active_network_join_request, update_active_network_roster,
 };
 #[cfg(any(test, not(target_os = "windows")))]
 pub(crate) use crate::platform_routing::*;
@@ -219,7 +218,7 @@ enum DaemonControlRequest {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RelayConnectionAction {
+enum LegacySignalConnectionAction {
     KeepConnected,
     ReconnectWhenDue,
 }
@@ -248,7 +247,7 @@ impl DaemonControlRequest {
 
 #[derive(Debug, Parser)]
 #[command(name = "nvpn")]
-#[command(about = "Nostr-signaled WireGuard control plane built on boringtun")]
+#[command(about = "FIPS private mesh VPN")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -279,8 +278,6 @@ enum Command {
     UninstallCli(UninstallCliArgs),
     /// Manage the persistent system daemon service.
     Service(ServiceArgs),
-    /// Bring the node up (publish presence and optionally discover peers).
-    Up(UpArgs),
     /// Start a session (foreground by default, or daemonized with --daemon).
     Start(StartArgs),
     /// Stop a background daemon started by `nvpn start --daemon`.
@@ -293,10 +290,8 @@ enum Command {
     Pause(ControlArgs),
     /// Resume VPN networking on a running daemon.
     Resume(ControlArgs),
-    /// Run a full data-plane session from config (presence + boringtun tunnel).
+    /// Run a FIPS private mesh session from config.
     Connect(ConnectArgs),
-    /// Bring the node down (publish disconnect signal).
-    Down(DownArgs),
     /// Show local and discovered peer status.
     Status(StatusArgs),
     /// Update persisted node/network settings.
@@ -313,12 +308,8 @@ enum Command {
     AddAdmin(UpdateRosterArgs),
     /// Remove one or more admins from the active network roster.
     RemoveAdmin(UpdateRosterArgs),
-    /// Publish the active admin-signed roster over Nostr immediately.
-    PublishRoster(PublishRosterArgs),
     /// Ping a peer by node ID or tunnel IP.
     Ping(PingArgs),
-    /// Check relay reachability and latency.
-    Netcheck(NetcheckArgs),
     /// Diagnose runtime/network issues and optionally write a support bundle.
     Doctor(DoctorArgs),
     /// Show local or peer tunnel IPs.
@@ -331,39 +322,8 @@ enum Command {
     /// Internal daemon-backed config import helper for GUI writes.
     #[command(hide = true)]
     ApplyConfigDaemon(ApplyConfigArgs),
-    /// Broadcast this node's presence signal over Nostr.
-    Announce {
-        #[arg(long)]
-        config: Option<PathBuf>,
-        #[arg(long)]
-        network_id: Option<String>,
-        #[arg(long = "participant")]
-        participants: Vec<String>,
-        #[arg(long)]
-        node_id: Option<String>,
-        #[arg(long)]
-        endpoint: Option<String>,
-        #[arg(long)]
-        tunnel_ip: Option<String>,
-        #[arg(long)]
-        public_key: Option<String>,
-        #[arg(long)]
-        relay: Vec<String>,
-    },
-    /// Listen for peer presence signals.
-    Listen {
-        #[arg(long)]
-        config: Option<PathBuf>,
-        #[arg(long)]
-        network_id: Option<String>,
-        #[arg(long = "participant")]
-        participants: Vec<String>,
-        #[arg(long)]
-        relay: Vec<String>,
-        #[arg(long)]
-        limit: Option<usize>,
-    },
-    /// Render a WireGuard config from local values and peer tuples.
+    /// Legacy WireGuard helper.
+    #[command(hide = true)]
     RenderWg {
         #[arg(long)]
         config: Option<PathBuf>,
@@ -485,30 +445,6 @@ struct TunnelUpArgs {
 }
 
 #[derive(Debug, Args)]
-struct UpArgs {
-    #[arg(long)]
-    config: Option<PathBuf>,
-    #[arg(long)]
-    network_id: Option<String>,
-    #[arg(long = "participant")]
-    participants: Vec<String>,
-    #[arg(long)]
-    node_id: Option<String>,
-    #[arg(long)]
-    endpoint: Option<String>,
-    #[arg(long)]
-    tunnel_ip: Option<String>,
-    #[arg(long)]
-    public_key: Option<String>,
-    #[arg(long)]
-    relay: Vec<String>,
-    #[arg(long, default_value_t = 2)]
-    discover_secs: u64,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Args)]
 struct ConnectArgs {
     #[arg(long)]
     config: Option<PathBuf>,
@@ -516,7 +452,7 @@ struct ConnectArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long)]
+    #[arg(long, hide = true)]
     relay: Vec<String>,
     #[arg(long, default_value_t = default_tunnel_iface())]
     iface: String,
@@ -532,7 +468,7 @@ struct DaemonArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long)]
+    #[arg(long, hide = true)]
     relay: Vec<String>,
     #[arg(long, default_value_t = default_tunnel_iface())]
     iface: String,
@@ -550,7 +486,7 @@ struct StartArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long)]
+    #[arg(long, hide = true)]
     relay: Vec<String>,
     #[arg(long, default_value_t = default_tunnel_iface())]
     iface: String,
@@ -593,22 +529,6 @@ struct ControlArgs {
 }
 
 #[derive(Debug, Args)]
-struct DownArgs {
-    #[arg(long)]
-    config: Option<PathBuf>,
-    #[arg(long)]
-    network_id: Option<String>,
-    #[arg(long = "participant")]
-    participants: Vec<String>,
-    #[arg(long)]
-    node_id: Option<String>,
-    #[arg(long)]
-    relay: Vec<String>,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Args)]
 struct StatusArgs {
     #[arg(long)]
     config: Option<PathBuf>,
@@ -616,9 +536,9 @@ struct StatusArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long)]
+    #[arg(long, hide = true)]
     relay: Vec<String>,
-    #[arg(long, default_value_t = 2)]
+    #[arg(long, hide = true, default_value_t = 2)]
     discover_secs: u64,
     #[arg(long)]
     json: bool,
@@ -642,7 +562,7 @@ struct SetArgs {
     tunnel_ip: Option<String>,
     #[arg(long)]
     listen_port: Option<u16>,
-    #[arg(long = "relay")]
+    #[arg(long = "relay", hide = true)]
     relays: Vec<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
@@ -680,16 +600,6 @@ struct ImportInviteArgs {
 }
 
 #[derive(Debug, Args)]
-struct PublishRosterArgs {
-    #[arg(long)]
-    config: Option<PathBuf>,
-    #[arg(long)]
-    relay: Vec<String>,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Args)]
 struct UpdateRosterArgs {
     #[arg(long)]
     config: Option<PathBuf>,
@@ -699,7 +609,7 @@ struct UpdateRosterArgs {
     participants: Vec<String>,
     #[arg(long)]
     publish: bool,
-    #[arg(long = "relay")]
+    #[arg(long = "relay", hide = true)]
     relays: Vec<String>,
     #[arg(long)]
     json: bool,
@@ -714,30 +624,14 @@ struct PingArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long)]
+    #[arg(long, hide = true)]
     relay: Vec<String>,
-    #[arg(long, default_value_t = 2)]
+    #[arg(long, hide = true, default_value_t = 2)]
     discover_secs: u64,
     #[arg(long, default_value_t = 3)]
     count: u32,
     #[arg(long, default_value_t = 2)]
     timeout_secs: u64,
-}
-
-#[derive(Debug, Args)]
-struct NetcheckArgs {
-    #[arg(long)]
-    config: Option<PathBuf>,
-    #[arg(long)]
-    network_id: Option<String>,
-    #[arg(long = "participant")]
-    participants: Vec<String>,
-    #[arg(long)]
-    relay: Vec<String>,
-    #[arg(long, default_value_t = 4)]
-    timeout_secs: u64,
-    #[arg(long)]
-    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -748,7 +642,7 @@ struct DoctorArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long)]
+    #[arg(long, hide = true)]
     relay: Vec<String>,
     #[arg(long, default_value_t = 4)]
     timeout_secs: u64,
@@ -766,9 +660,9 @@ struct IpArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long)]
+    #[arg(long, hide = true)]
     relay: Vec<String>,
-    #[arg(long, default_value_t = 2)]
+    #[arg(long, hide = true, default_value_t = 2)]
     discover_secs: u64,
     #[arg(long)]
     peer: bool,
@@ -785,9 +679,9 @@ struct WhoisArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long)]
+    #[arg(long, hide = true)]
     relay: Vec<String>,
-    #[arg(long, default_value_t = 2)]
+    #[arg(long, hide = true, default_value_t = 2)]
     discover_secs: u64,
     #[arg(long)]
     json: bool,
@@ -914,53 +808,6 @@ async fn run_command(command: Command) -> Result<()> {
         Command::Service(args) => {
             service_management::run_service_command(args)?;
         }
-        Command::Up(args) => {
-            let announce = publish_announcement(AnnounceRequest {
-                config: args.config,
-                network_id: args.network_id,
-                participants: args.participants,
-                node_id: args.node_id,
-                endpoint: args.endpoint,
-                tunnel_ip: args.tunnel_ip,
-                public_key: args.public_key,
-                relay: args.relay,
-            })
-            .await?;
-
-            let peers = if args.discover_secs > 0 {
-                discover_peers(
-                    &announce.app,
-                    &announce.network_id,
-                    &announce.relays,
-                    args.discover_secs,
-                )
-                .await?
-            } else {
-                Vec::new()
-            };
-
-            if args.json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "status": "up",
-                        "network_id": announce.network_id,
-                        "relays": announce.relays,
-                        "announcement": announce.announcement,
-                        "peers": peers,
-                    }))?
-                );
-            } else {
-                println!(
-                    "up: published presence on {} relays for network {}",
-                    announce.relays.len(),
-                    announce.network_id
-                );
-                if !peers.is_empty() {
-                    println!("discovered_peers={}", peers.len());
-                }
-            }
-        }
         Command::Start(args) => {
             start_session(args).await?;
         }
@@ -982,49 +829,10 @@ async fn run_command(command: Command) -> Result<()> {
         Command::Connect(args) => {
             connect_vpn(args).await?;
         }
-        Command::Down(args) => {
-            let config_path = args.config.unwrap_or_else(default_config_path);
-            let (app, network_id) =
-                load_config_with_overrides(&config_path, args.network_id, args.participants)?;
-            let node_id = args.node_id.unwrap_or_else(|| app.node.id.clone());
-            let relays = resolve_relays(&args.relay, &app);
-
-            let client = NostrSignalingClient::from_secret_key_with_networks(
-                &app.nostr.secret_key,
-                signaling_networks_for_app(&app),
-            )?;
-            client.connect(&relays).await?;
-            client
-                .publish(SignalPayload::Disconnect {
-                    node_id: node_id.clone(),
-                })
-                .await
-                .context("failed to publish disconnect signal")?;
-            client.disconnect().await;
-
-            if args.json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "status": "down",
-                        "network_id": network_id,
-                        "node_id": node_id,
-                        "relays": relays,
-                    }))?
-                );
-            } else {
-                println!(
-                    "down: published disconnect for {} on {} relays",
-                    node_id,
-                    relays.len()
-                );
-            }
-        }
         Command::Status(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
             let (app, network_id) =
                 load_config_with_overrides(&config_path, args.network_id, args.participants)?;
-            let relays = resolve_relays(&args.relay, &app);
             let daemon = daemon_status(&config_path)?;
 
             let (peers, expected_peers, peer_count, mesh_ready, status_source) = if daemon.running {
@@ -1060,17 +868,14 @@ async fn run_command(command: Command) -> Result<()> {
                         "daemon",
                     )
                 } else {
-                    let peers =
-                        discover_peers(&app, &network_id, &relays, args.discover_secs).await?;
+                    let peers = configured_fips_peer_announcements(&app, &network_id);
                     let expected = expected_peer_count(&app);
-                    let mesh = expected > 0 && peers.len() >= expected;
-                    (peers.clone(), expected, peers.len(), mesh, "probe")
+                    (peers, expected, 0, false, "config")
                 }
             } else {
-                let peers = discover_peers(&app, &network_id, &relays, args.discover_secs).await?;
+                let peers = configured_fips_peer_announcements(&app, &network_id);
                 let expected = expected_peer_count(&app);
-                let mesh = expected > 0 && peers.len() >= expected;
-                (peers.clone(), expected, peers.len(), mesh, "probe")
+                (peers, expected, 0, false, "config")
             };
 
             if args.json {
@@ -1099,7 +904,7 @@ async fn run_command(command: Command) -> Result<()> {
                         "advertise_exit_node": app.node.advertise_exit_node,
                         "advertised_routes": app.node.advertised_routes,
                         "effective_advertised_routes": runtime_effective_advertised_routes(&app),
-                        "relays": relays,
+                        "relays": Vec::<String>::new(),
                         "daemon": daemon_status_json_value(&daemon),
                         "expected_peer_count": expected_peers,
                         "peer_count": peer_count,
@@ -1137,7 +942,6 @@ async fn run_command(command: Command) -> Result<()> {
                 } else {
                     println!("advertised_routes: {}", effective_routes.join(", "));
                 }
-                println!("relays: {}", relays.len());
                 if daemon.running {
                     println!("daemon: running (pid {})", daemon.pid.unwrap_or_default());
                     if let Some(state) = daemon.state.as_ref() {
@@ -1211,7 +1015,9 @@ async fn run_command(command: Command) -> Result<()> {
                 app.fips_peer_endpoints = parse_fips_peer_endpoint_args(&args.fips_peer_endpoints)?;
             }
             if !args.relays.is_empty() {
-                app.nostr.relays = args.relays;
+                return Err(anyhow!(
+                    "relay configuration is no longer supported for the private mesh"
+                ));
             }
             apply_participants_override(&mut app, args.participants)?;
             app.ensure_defaults();
@@ -1249,6 +1055,7 @@ async fn run_command(command: Command) -> Result<()> {
             let mut app = load_or_default_config(&config_path)?;
             let invite = parse_network_invite(&args.invite)?;
             apply_network_invite_to_active_network(&mut app, &invite)?;
+            let join_request_queued = queue_active_network_join_request(&mut app)?;
             app.ensure_defaults();
             maybe_autoconfigure_node(&mut app);
             app.save(&config_path)?;
@@ -1260,6 +1067,7 @@ async fn run_command(command: Command) -> Result<()> {
                 println!("saved {}", config_path.display());
                 println!("network_id={}", app.effective_network_id());
                 println!("invite_imported={}", app.active_network().name);
+                println!("join_request_queued={join_request_queued}");
             }
         }
         Command::AddParticipant(args) => {
@@ -1274,96 +1082,17 @@ async fn run_command(command: Command) -> Result<()> {
         Command::RemoveAdmin(args) => {
             update_active_network_roster(args, RosterEditAction::RemoveAdmin).await?;
         }
-        Command::PublishRoster(args) => {
-            let config_path = args.config.unwrap_or_else(default_config_path);
-            let app = load_or_default_config(&config_path)?;
-            let relays = resolve_relays(&args.relay, &app);
-            let client = NostrSignalingClient::from_secret_key_with_networks(
-                &app.nostr.secret_key,
-                signaling_networks_for_app(&app),
-            )?;
-            client
-                .connect(&relays)
-                .await
-                .context("failed to connect signaling client")?;
-            let published = publish_active_network_roster(&client, &app, None).await?;
-            client.disconnect().await;
-
-            if args.json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "published_recipients": published,
-                        "network_id": app.effective_network_id(),
-                        "relays": relays,
-                    }))?
-                );
-            } else {
-                println!(
-                    "published roster for {} to {} recipient(s)",
-                    app.effective_network_id(),
-                    published
-                );
-            }
-        }
         Command::Ping(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
             let (app, network_id) =
                 load_config_with_overrides(&config_path, args.network_id, args.participants)?;
-            let relays = resolve_relays(&args.relay, &app);
-            let peers = discover_peers(&app, &network_id, &relays, args.discover_secs).await?;
+            let peers = configured_fips_peer_announcements(&app, &network_id);
 
             let target = resolve_ping_target(&args.target, &peers).ok_or_else(|| {
                 anyhow!("target '{}' did not match an IP or known peer", args.target)
             })?;
 
             run_ping(&target, args.count, args.timeout_secs)?;
-        }
-        Command::Netcheck(args) => {
-            let config_path = args.config.unwrap_or_else(default_config_path);
-            let (app, network_id) =
-                load_config_with_overrides(&config_path, args.network_id, args.participants)?;
-            let relays = resolve_relays(&args.relay, &app);
-            let report = run_netcheck_report(&app, &network_id, &relays, args.timeout_secs).await;
-
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&report)?);
-            } else {
-                println!(
-                    "udp={} ipv4={} ipv6={} captive_portal={}",
-                    report.udp,
-                    report.ipv4,
-                    report.ipv6,
-                    report
-                        .captive_portal
-                        .map_or("unknown".to_string(), |value| value.to_string())
-                );
-                if let Some(public_ipv4) = report.public_ipv4.as_deref() {
-                    println!("public_ipv4: {public_ipv4}");
-                }
-                if let Some(preferred_relay) = report.preferred_relay.as_deref() {
-                    println!("preferred_relay: {preferred_relay}");
-                }
-                for check in &report.relay_checks {
-                    if let Some(error) = &check.error {
-                        println!("relay {}: down ({error})", check.relay);
-                    } else {
-                        println!("relay {}: up ({} ms)", check.relay, check.latency_ms);
-                    }
-                }
-                let ok = report
-                    .relay_checks
-                    .iter()
-                    .filter(|item| item.error.is_none())
-                    .count();
-                println!(
-                    "summary: {ok}/{} relays reachable, upnp={}, nat_pmp={}, pcp={}",
-                    report.relay_checks.len(),
-                    format_probe_state(report.port_mapping.upnp.state),
-                    format_probe_state(report.port_mapping.nat_pmp.state),
-                    format_probe_state(report.port_mapping.pcp.state),
-                );
-            }
         }
         Command::Doctor(args) => {
             run_doctor(args).await?;
@@ -1387,7 +1116,7 @@ async fn run_command(command: Command) -> Result<()> {
                 } else {
                     println!("{}", strip_cidr(&tunnel_ip));
                 }
-            } else if app.private_mesh_uses_fips() {
+            } else {
                 let peer_ips = runtime_peer_tunnel_ips(&app, &network_id);
                 if args.json {
                     println!("{}", serde_json::to_string_pretty(&peer_ips)?);
@@ -1396,28 +1125,13 @@ async fn run_command(command: Command) -> Result<()> {
                         println!("{}", strip_cidr(&ip));
                     }
                 }
-            } else {
-                let relays = resolve_relays(&args.relay, &app);
-                let peers = discover_peers(&app, &network_id, &relays, args.discover_secs).await?;
-                let peer_ips: Vec<String> = peers
-                    .iter()
-                    .map(|peer| strip_cidr(&peer.tunnel_ip).to_string())
-                    .collect();
-                if args.json {
-                    println!("{}", serde_json::to_string_pretty(&peer_ips)?);
-                } else {
-                    for ip in peer_ips {
-                        println!("{ip}");
-                    }
-                }
             }
         }
         Command::Whois(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
             let (app, network_id) =
                 load_config_with_overrides(&config_path, args.network_id, args.participants)?;
-            let relays = resolve_relays(&args.relay, &app);
-            let peers = discover_peers(&app, &network_id, &relays, args.discover_secs).await?;
+            let peers = configured_fips_peer_announcements(&app, &network_id);
 
             let found = peers
                 .iter()
@@ -1450,74 +1164,6 @@ async fn run_command(command: Command) -> Result<()> {
         Command::ApplyConfigDaemon(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
             apply_config_via_running_daemon(&args.source, &config_path)?;
-        }
-        Command::Announce {
-            config,
-            network_id,
-            participants,
-            node_id,
-            endpoint,
-            tunnel_ip,
-            public_key,
-            relay,
-        } => {
-            let announce = publish_announcement(AnnounceRequest {
-                config,
-                network_id,
-                participants,
-                node_id,
-                endpoint,
-                tunnel_ip,
-                public_key,
-                relay,
-            })
-            .await?;
-            println!(
-                "published presence on {} relays for network {network_id}",
-                announce.relays.len(),
-                network_id = announce.network_id
-            );
-        }
-        Command::Listen {
-            config,
-            network_id,
-            participants,
-            relay,
-            limit,
-        } => {
-            let config_path = config.unwrap_or_else(default_config_path);
-            let mut app = load_or_default_config(&config_path)?;
-
-            apply_participants_override(&mut app, participants)?;
-            if let Some(network_id) = network_id {
-                app.set_active_network_id(&network_id)?;
-            }
-
-            let relays = resolve_relays(&relay, &app);
-
-            let client = NostrSignalingClient::from_secret_key_with_networks(
-                &app.nostr.secret_key,
-                signaling_networks_for_app(&app),
-            )?;
-            client.connect(&relays).await?;
-
-            let mut seen = 0_usize;
-            loop {
-                let Some(message) = client.recv().await else {
-                    break;
-                };
-
-                println!("{}", serde_json::to_string_pretty(&message)?);
-
-                seen += 1;
-                if let Some(limit) = limit
-                    && seen >= limit
-                {
-                    break;
-                }
-            }
-
-            client.disconnect().await;
         }
         Command::NatDiscover(args) => {
             let reflector: SocketAddr = args
@@ -1636,8 +1282,7 @@ fn runtime_effective_advertised_routes(app: &AppConfig) -> Vec<String> {
 }
 
 fn runtime_local_tunnel_ip(app: &AppConfig, network_id: &str) -> String {
-    if app.private_mesh_uses_fips()
-        && let Ok(own_pubkey) = app.own_nostr_pubkey_hex()
+    if let Ok(own_pubkey) = app.own_nostr_pubkey_hex()
         && let Some(tunnel_ip) = derive_mesh_tunnel_ip(network_id, &own_pubkey)
     {
         return tunnel_ip;
@@ -1656,6 +1301,34 @@ fn runtime_peer_tunnel_ips(app: &AppConfig, network_id: &str) -> Vec<String> {
     ips.sort();
     ips.dedup();
     ips
+}
+
+fn configured_fips_peer_announcements(app: &AppConfig, network_id: &str) -> Vec<PeerAnnouncement> {
+    let own_pubkey = app.own_nostr_pubkey_hex().ok();
+    let mut peers = app
+        .participant_pubkeys_hex()
+        .into_iter()
+        .filter(|participant| Some(participant) != own_pubkey.as_ref())
+        .filter_map(|participant| {
+            let tunnel_ip = derive_mesh_tunnel_ip(network_id, &participant)?;
+            let node_id = app
+                .magic_dns_name_for_participant(&participant)
+                .or_else(|| app.peer_alias(&participant))
+                .unwrap_or_else(|| participant.clone());
+            Some(PeerAnnouncement {
+                node_id,
+                public_key: participant,
+                endpoint: "fips".to_string(),
+                local_endpoint: None,
+                public_endpoint: None,
+                tunnel_ip,
+                advertised_routes: Vec::new(),
+                timestamp: 0,
+            })
+        })
+        .collect::<Vec<_>>();
+    peers.sort_by(|left, right| left.node_id.cmp(&right.node_id));
+    peers
 }
 
 fn fips_peer_advertised_routes(app: &AppConfig, participant: &str) -> Vec<String> {
@@ -1742,7 +1415,6 @@ struct DaemonRuntimeState {
     listen_port: u16,
     vpn_enabled: bool,
     vpn_active: bool,
-    relay_connected: bool,
     vpn_status: String,
     expected_peer_count: usize,
     connected_peer_count: usize,
@@ -4246,20 +3918,20 @@ fn connected_peer_count_for_runtime(
 
 fn direct_peer_announcements(
     presence: &PeerPresenceBook,
-    relay_connected: bool,
+    legacy_signal_connected: bool,
 ) -> &HashMap<String, PeerAnnouncement> {
-    if relay_connected {
+    if legacy_signal_connected {
         presence.active()
     } else {
         presence.known()
     }
 }
 
-fn relay_connection_action(relay_connected: bool) -> RelayConnectionAction {
-    if relay_connected {
-        RelayConnectionAction::KeepConnected
+fn legacy_signal_connection_action(legacy_signal_connected: bool) -> LegacySignalConnectionAction {
+    if legacy_signal_connected {
+        LegacySignalConnectionAction::KeepConnected
     } else {
-        RelayConnectionAction::ReconnectWhenDue
+        LegacySignalConnectionAction::ReconnectWhenDue
     }
 }
 
@@ -4267,20 +3939,23 @@ fn daemon_vpn_active(vpn_enabled: bool, expected_peers: usize) -> bool {
     vpn_enabled && expected_peers > 0
 }
 
-fn relay_vpn_active(vpn_enabled: bool, expected_peers: usize, join_requests_active: bool) -> bool {
+fn legacy_signal_active(
+    vpn_enabled: bool,
+    expected_peers: usize,
+    join_requests_active: bool,
+) -> bool {
     daemon_vpn_active(vpn_enabled, expected_peers) || join_requests_active
 }
 
 fn fips_private_runtime_active(app: &AppConfig, vpn_enabled: bool, expected_peers: usize) -> bool {
-    app.private_mesh_uses_fips()
-        && (daemon_vpn_active(vpn_enabled, expected_peers)
-            || app.join_requests_enabled()
-            || app
-                .active_network()
-                .outbound_join_request
-                .as_ref()
-                .is_some()
-            || app.has_fips_static_peer_endpoints())
+    daemon_vpn_active(vpn_enabled, expected_peers)
+        || app.join_requests_enabled()
+        || app
+            .active_network()
+            .outbound_join_request
+            .as_ref()
+            .is_some()
+        || app.has_fips_static_peer_endpoints()
 }
 
 fn daemon_vpn_idle_status(
@@ -4615,13 +4290,14 @@ async fn send_pending_fips_join_requests(
     let Some(pending) = network.outbound_join_request.as_ref() else {
         return Ok(0);
     };
+    let recipients = pending_fips_join_request_recipients(app);
+    if recipients.is_empty() {
+        return Ok(0);
+    }
     let request = nostr_vpn_core::join_requests::MeshJoinRequest {
         network_id: normalize_runtime_network_id(&network.network_id),
         requester_node_name: app.node_name.trim().to_string(),
     };
-    let mut recipients = network.admins.clone();
-    recipients.sort();
-    recipients.dedup();
 
     let mut sent = 0usize;
     for recipient in recipients {
@@ -4642,6 +4318,27 @@ async fn send_pending_fips_join_requests(
         sent += 1;
     }
     Ok(sent)
+}
+
+fn pending_fips_join_request_recipients(app: &AppConfig) -> Vec<String> {
+    let network = app.active_network();
+    let Some(pending) = network.outbound_join_request.as_ref() else {
+        return Vec::new();
+    };
+    let own_pubkey = app.own_nostr_pubkey_hex().ok();
+    let mut recipients = if network
+        .admins
+        .iter()
+        .any(|admin| admin == &pending.recipient)
+    {
+        vec![pending.recipient.clone()]
+    } else {
+        network.admins.clone()
+    };
+    recipients.retain(|recipient| own_pubkey.as_deref() != Some(recipient.as_str()));
+    recipients.sort();
+    recipients.dedup();
+    recipients
 }
 
 #[cfg(feature = "embedded-fips")]
@@ -4828,72 +4525,16 @@ fn write_daemon_peer_cache_if_changed(
 
 #[allow(clippy::too_many_arguments)]
 async fn publish_private_announce_to_participants(
-    client: &NostrSignalingClient,
-    app: &AppConfig,
-    tunnel_runtime: &CliTunnelRuntime,
-    public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
-    outbound_announces: &mut OutboundAnnounceBook,
-    participants: &[String],
-    peer_announcements: Option<&HashMap<String, PeerAnnouncement>>,
-    retry_after_secs: Option<u64>,
+    _client: &NostrSignalingClient,
+    _app: &AppConfig,
+    _tunnel_runtime: &CliTunnelRuntime,
+    _public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
+    _outbound_announces: &mut OutboundAnnounceBook,
+    _participants: &[String],
+    _peer_announcements: Option<&HashMap<String, PeerAnnouncement>>,
+    _retry_after_secs: Option<u64>,
 ) -> Result<usize> {
-    if app.private_mesh_uses_fips() {
-        return Ok(0);
-    }
-    if participants.is_empty() {
-        return Ok(0);
-    }
-
-    let actual_listen_port = tunnel_runtime.listen_port(app.node.listen_port);
-    let public_endpoint =
-        public_endpoint_for_listen_port(public_signal_endpoint, actual_listen_port);
-    let own_local_endpoints = runtime_local_signal_endpoints(app, actual_listen_port);
-    let fallback_local_endpoint = own_local_endpoints
-        .first()
-        .cloned()
-        .unwrap_or_else(|| local_signal_endpoint(app, actual_listen_port));
-
-    let mut recipients = participants.to_vec();
-    recipients.sort();
-    recipients.dedup();
-
-    let mut sent = 0usize;
-    let now = unix_timestamp();
-    for participant in recipients {
-        let local_endpoint = peer_announcements
-            .and_then(|announcements| announcements.get(&participant))
-            .and_then(|announcement| {
-                select_local_signal_endpoint_for_peer(announcement, &own_local_endpoints)
-            })
-            .unwrap_or_else(|| fallback_local_endpoint.clone());
-        let endpoint = public_endpoint
-            .clone()
-            .unwrap_or_else(|| local_endpoint.clone());
-        let announcement = build_explicit_peer_announcement(
-            app.node.id.clone(),
-            app.node.public_key.clone(),
-            endpoint,
-            local_endpoint,
-            app.node.tunnel_ip.clone(),
-            runtime_effective_advertised_routes(app),
-        );
-        let fingerprint = announcement_fingerprint(&announcement);
-        if !outbound_announces.needs_send(&participant, &fingerprint, now, retry_after_secs) {
-            continue;
-        }
-
-        client
-            .publish_to(
-                SignalPayload::Announce(announcement.clone()),
-                std::slice::from_ref(&participant),
-            )
-            .await
-            .with_context(|| format!("failed to publish private announce to {participant}"))?;
-        outbound_announces.mark_sent(&participant, &fingerprint, now);
-        sent += 1;
-    }
-
-    Ok(sent)
+    Ok(0)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5380,82 +5021,16 @@ fn hole_punch_with_retry(listen_port: u16, target: SocketAddr) -> Result<()> {
 }
 
 fn maybe_run_nat_punch(
-    app: &AppConfig,
-    own_pubkey: Option<&str>,
-    peer_announcements: &HashMap<String, PeerAnnouncement>,
-    path_book: &mut PeerPathBook,
-    tunnel_runtime: &mut CliTunnelRuntime,
+    _app: &AppConfig,
+    _own_pubkey: Option<&str>,
+    _peer_announcements: &HashMap<String, PeerAnnouncement>,
+    _path_book: &mut PeerPathBook,
+    _tunnel_runtime: &mut CliTunnelRuntime,
     public_signal_endpoint: &mut Option<DiscoveredPublicSignalEndpoint>,
     last_attempt: &mut Option<(String, Instant)>,
 ) -> Result<()> {
-    if app.private_mesh_uses_fips() {
-        *last_attempt = None;
-        return Ok(());
-    }
-    if !app.nat.enabled {
-        *public_signal_endpoint = None;
-        return Ok(());
-    }
-
-    let listen_port = tunnel_runtime.listen_port(app.node.listen_port);
-    if public_endpoint_for_listen_port(public_signal_endpoint.as_ref(), listen_port).is_none() {
-        refresh_public_signal_endpoint(app, listen_port, public_signal_endpoint);
-    }
-    let runtime_peers = tunnel_runtime.peer_status().ok();
-    let targets = pending_nat_punch_targets(
-        app,
-        own_pubkey,
-        peer_announcements,
-        path_book,
-        runtime_peers.as_ref(),
-        listen_port,
-    );
-    let Some(fingerprint) = nat_punch_fingerprint(&targets, listen_port) else {
-        *last_attempt = None;
-        return Ok(());
-    };
-
-    let should_retry = match last_attempt {
-        Some((last_fingerprint, last_at)) => {
-            last_fingerprint != &fingerprint || last_at.elapsed() >= Duration::from_secs(10)
-        }
-        None => true,
-    };
-    if !should_retry {
-        return Ok(());
-    }
-
-    tunnel_runtime.stop();
-    thread::sleep(Duration::from_millis(150));
-    refresh_public_signal_endpoint(app, listen_port, public_signal_endpoint);
-
-    let mut punch_error = None;
-    for target in &targets {
-        if let Err(error) = hole_punch_with_retry(listen_port, *target) {
-            punch_error = Some(error);
-            break;
-        }
-    }
-
-    // macOS can briefly hold the UDP port after STUN/hole-punch sockets close.
-    thread::sleep(Duration::from_millis(POST_PUNCH_REAPPLY_DELAY_MS));
-
-    tunnel_runtime.active_listen_port = Some(listen_port);
-    tunnel_runtime
-        .apply(
-            app,
-            own_pubkey,
-            peer_announcements,
-            path_book,
-            unix_timestamp(),
-        )
-        .context("failed to re-apply tunnel runtime after nat punch")?;
-
-    if let Some(error) = punch_error {
-        return Err(error);
-    }
-
-    *last_attempt = Some((fingerprint, Instant::now()));
+    *public_signal_endpoint = None;
+    *last_attempt = None;
     Ok(())
 }
 
@@ -5498,21 +5073,12 @@ fn send_tunnel_heartbeat(peer_ip: Ipv4Addr) -> Result<()> {
 }
 
 fn heartbeat_pending_tunnel_peers(
-    app: &AppConfig,
-    own_pubkey: Option<&str>,
-    peer_announcements: &HashMap<String, PeerAnnouncement>,
-    tunnel_runtime: &CliTunnelRuntime,
+    _app: &AppConfig,
+    _own_pubkey: Option<&str>,
+    _peer_announcements: &HashMap<String, PeerAnnouncement>,
+    _tunnel_runtime: &CliTunnelRuntime,
 ) -> Result<usize> {
-    if app.private_mesh_uses_fips() {
-        return Ok(0);
-    }
-    let runtime_peers = tunnel_runtime.peer_status().ok();
-    let targets =
-        pending_tunnel_heartbeat_ips(app, own_pubkey, peer_announcements, runtime_peers.as_ref());
-    for target in &targets {
-        send_tunnel_heartbeat(*target)?;
-    }
-    Ok(targets.len())
+    Ok(0)
 }
 
 fn build_runtime_magic_dns_records(
@@ -5713,17 +5279,14 @@ fn persisted_path_cache_timeout_secs(announce_interval_secs: u64) -> u64 {
 #[allow(clippy::too_many_arguments)]
 fn apply_presence_runtime_update(
     app: &AppConfig,
-    own_pubkey: Option<&str>,
+    _own_pubkey: Option<&str>,
     presence: &PeerPresenceBook,
-    path_book: &mut PeerPathBook,
-    now: u64,
-    tunnel_runtime: &mut CliTunnelRuntime,
+    _path_book: &mut PeerPathBook,
+    _now: u64,
+    _tunnel_runtime: &mut CliTunnelRuntime,
     magic_dns_runtime: Option<&ConnectMagicDnsRuntime>,
 ) -> Result<()> {
     let effective_announcements = presence.known();
-    if !app.private_mesh_uses_fips() {
-        tunnel_runtime.apply(app, own_pubkey, effective_announcements, path_book, now)?;
-    }
     if let Some(runtime) = magic_dns_runtime {
         runtime.refresh_records(app, effective_announcements);
     }
@@ -6264,9 +5827,8 @@ async fn run_doctor(args: DoctorArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
     let (app, network_id) =
         load_config_with_overrides(&config_path, args.network_id, args.participants)?;
-    let relays = resolve_relays(&args.relay, &app);
     let daemon = daemon_status(&config_path)?;
-    let netcheck = run_netcheck_report(&app, &network_id, &relays, args.timeout_secs).await;
+    let netcheck = run_netcheck_report(&app, args.timeout_secs).await;
 
     let mut network = daemon
         .state
@@ -6289,7 +5851,6 @@ async fn run_doctor(args: DoctorArgs) -> Result<()> {
                 build_health_issues(
                     &app,
                     state.vpn_active,
-                    state.relay_connected,
                     state.mesh_ready,
                     &network,
                     &port_mapping,
@@ -6372,9 +5933,6 @@ async fn run_doctor(args: DoctorArgs) -> Result<()> {
     if let Some(public_ipv4) = netcheck.public_ipv4.as_deref() {
         println!("public_ipv4: {public_ipv4}");
     }
-    if let Some(preferred_relay) = netcheck.preferred_relay.as_deref() {
-        println!("preferred_relay: {preferred_relay}");
-    }
     println!(
         "port_mapping: active={} upnp={} nat_pmp={} pcp={}",
         port_mapping.active_protocol.as_deref().unwrap_or("none"),
@@ -6382,22 +5940,6 @@ async fn run_doctor(args: DoctorArgs) -> Result<()> {
         format_probe_state(port_mapping.nat_pmp.state),
         format_probe_state(port_mapping.pcp.state),
     );
-    let reachable_relays = netcheck
-        .relay_checks
-        .iter()
-        .filter(|item| item.error.is_none())
-        .count();
-    println!(
-        "relays: {reachable_relays}/{} reachable",
-        netcheck.relay_checks.len()
-    );
-    for check in &netcheck.relay_checks {
-        if let Some(error) = check.error.as_deref() {
-            println!("  relay {}: down ({error})", check.relay);
-        } else {
-            println!("  relay {}: up ({} ms)", check.relay, check.latency_ms);
-        }
-    }
     if issues.is_empty() {
         println!("health: ok");
     } else {

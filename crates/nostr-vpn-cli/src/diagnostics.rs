@@ -4,13 +4,13 @@ mod probes;
 use std::fs;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use netdev::get_default_interface;
 use nostr_vpn_core::config::AppConfig;
 use nostr_vpn_core::diagnostics::{
-    HealthIssue, HealthSeverity, NetcheckReport, NetworkSummary, PortMappingStatus, RelayCheck,
+    HealthIssue, HealthSeverity, NetcheckReport, NetworkSummary, PortMappingStatus,
 };
 
 pub(crate) use self::port_mapping::PortMappingRuntime;
@@ -172,14 +172,8 @@ fn capture_macos_network_snapshot() -> NetworkSnapshot {
     snapshot
 }
 
-pub(crate) async fn run_netcheck_report(
-    app: &AppConfig,
-    network_id: &str,
-    relays: &[String],
-    timeout_secs: u64,
-) -> NetcheckReport {
+pub(crate) async fn run_netcheck_report(app: &AppConfig, timeout_secs: u64) -> NetcheckReport {
     let timeout = Duration::from_secs(timeout_secs.max(1));
-    let relay_checks = check_relays(app, network_id, relays, timeout_secs).await;
 
     let mut public_v4_endpoints = Vec::new();
     for server in &app.nat.stun_servers {
@@ -199,12 +193,6 @@ pub(crate) async fn run_netcheck_report(
     let port_mapping = probe_port_mapping_services(&snapshot, timeout).await;
     let captive_portal = detect_captive_portal(timeout).await;
 
-    let preferred_relay = relay_checks
-        .iter()
-        .filter(|check| check.error.is_none())
-        .min_by_key(|check| check.latency_ms)
-        .map(|check| check.relay.clone());
-
     NetcheckReport {
         checked_at: unix_timestamp(),
         udp: !public_v4_endpoints.is_empty(),
@@ -214,8 +202,6 @@ pub(crate) async fn run_netcheck_report(
         public_ipv6: None,
         mapping_varies_by_dest_ip: mapping_varies_by_dest_ip(&public_v4_endpoints),
         captive_portal,
-        preferred_relay,
-        relay_checks,
         port_mapping,
     }
 }
@@ -223,22 +209,12 @@ pub(crate) async fn run_netcheck_report(
 pub(crate) fn build_health_issues(
     app: &AppConfig,
     vpn_active: bool,
-    relay_connected: bool,
     _mesh_ready: bool,
     network: &NetworkSummary,
     port_mapping: &PortMappingStatus,
     peers: &[DaemonPeerState],
 ) -> Vec<HealthIssue> {
     let mut issues = Vec::new();
-
-    if vpn_active && !relay_connected {
-        issues.push(HealthIssue::new(
-            "relay.disconnected",
-            HealthSeverity::Warning,
-            "Relay bootstrap is disconnected",
-            "Direct mesh may still work, but Nostr relay signaling is currently unavailable.",
-        ));
-    }
 
     if vpn_active && network.captive_portal == Some(true) {
         issues.push(HealthIssue::new(
@@ -399,53 +375,6 @@ fn sanitized_config_json(app: &AppConfig) -> serde_json::Value {
         },
         "networks": app.networks,
     })
-}
-
-async fn check_relays(
-    app: &AppConfig,
-    network_id: &str,
-    relays: &[String],
-    timeout_secs: u64,
-) -> Vec<RelayCheck> {
-    let mut checks = Vec::with_capacity(relays.len());
-
-    for relay in relays {
-        let started = Instant::now();
-        let result = tokio::time::timeout(Duration::from_secs(timeout_secs.max(1)), async {
-            let client = crate::NostrSignalingClient::from_secret_key(
-                network_id.to_string(),
-                &app.nostr.secret_key,
-                app.participant_pubkeys_hex(),
-            )?;
-            client.connect(std::slice::from_ref(relay)).await?;
-            client.disconnect().await;
-            Result::<(), anyhow::Error>::Ok(())
-        })
-        .await;
-
-        match result {
-            Ok(Ok(())) => checks.push(RelayCheck {
-                relay: relay.clone(),
-                latency_ms: started.elapsed().as_millis(),
-                error: None,
-                transport: Some("websocket".to_string()),
-            }),
-            Ok(Err(error)) => checks.push(RelayCheck {
-                relay: relay.clone(),
-                latency_ms: started.elapsed().as_millis(),
-                error: Some(error.to_string()),
-                transport: Some("websocket".to_string()),
-            }),
-            Err(_) => checks.push(RelayCheck {
-                relay: relay.clone(),
-                latency_ms: started.elapsed().as_millis(),
-                error: Some("timeout".to_string()),
-                transport: Some("websocket".to_string()),
-            }),
-        }
-    }
-
-    checks
 }
 
 pub(crate) async fn detect_captive_portal(timeout: Duration) -> Option<bool> {
@@ -642,7 +571,6 @@ mod tests {
         let issues = build_health_issues(
             &app,
             true,
-            true,
             false,
             &network,
             &Default::default(),
@@ -688,34 +616,7 @@ mod tests {
         }
         .summary(Some(10), Some(false));
 
-        let issues = build_health_issues(
-            &app,
-            false,
-            false,
-            false,
-            &network,
-            &Default::default(),
-            &[],
-        );
+        let issues = build_health_issues(&app, false, false, &network, &Default::default(), &[]);
         assert!(issues.iter().all(|issue| issue.code != "exit_node.unknown"));
-    }
-
-    #[test]
-    fn health_issues_warn_when_relays_are_disconnected_even_if_mesh_is_ready() {
-        let app = AppConfig::default();
-        let network = NetworkSnapshot {
-            default_interface: Some("en0".to_string()),
-            primary_ipv4: Some(Ipv4Addr::new(192, 168, 1, 4)),
-            ..NetworkSnapshot::default()
-        }
-        .summary(Some(10), Some(false));
-
-        let issues =
-            build_health_issues(&app, true, false, true, &network, &Default::default(), &[]);
-        assert!(
-            issues
-                .iter()
-                .any(|issue| issue.code == "relay.disconnected")
-        );
     }
 }

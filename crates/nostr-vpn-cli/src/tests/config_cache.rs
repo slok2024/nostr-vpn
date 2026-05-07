@@ -1,8 +1,8 @@
 use std::fs;
 
 use crate::*;
-use nostr_sdk::prelude::Keys;
-use nostr_vpn_core::config::NetworkConfig;
+use nostr_sdk::prelude::{Keys, ToBech32};
+use nostr_vpn_core::config::{NetworkConfig, PendingOutboundJoinRequest};
 use nostr_vpn_core::crypto::generate_keypair;
 use nostr_vpn_core::paths::PeerPathBook;
 use nostr_vpn_core::presence::PeerPresenceBook;
@@ -76,6 +76,48 @@ fn participants_override_preserves_selected_exit_node_when_it_remains_a_member()
 
     assert_eq!(config.participant_pubkeys_hex(), vec![exit_peer.clone()]);
     assert_eq!(config.exit_node, exit_peer);
+}
+
+#[test]
+fn pending_join_request_recipients_use_selected_admin_and_skip_self() {
+    let mut config = AppConfig::generated();
+    let own_pubkey = Keys::parse(&config.nostr.secret_key)
+        .expect("own keys")
+        .public_key()
+        .to_hex();
+    let admin = Keys::generate().public_key().to_hex();
+    let backup_admin = Keys::generate().public_key().to_hex();
+
+    config.networks[0].enabled = true;
+    config.networks[0].participants.clear();
+    config.networks[0].admins = vec![own_pubkey, admin.clone(), backup_admin];
+    config.networks[0].outbound_join_request = Some(PendingOutboundJoinRequest {
+        recipient: admin.clone(),
+        requested_at: 123,
+    });
+
+    assert_eq!(pending_fips_join_request_recipients(&config), vec![admin]);
+}
+
+#[test]
+fn pending_join_request_recipients_fall_back_to_admins_without_self() {
+    let mut config = AppConfig::generated();
+    let own_pubkey = Keys::parse(&config.nostr.secret_key)
+        .expect("own keys")
+        .public_key()
+        .to_hex();
+    let admin = Keys::generate().public_key().to_hex();
+    let stale_recipient = Keys::generate().public_key().to_hex();
+
+    config.networks[0].enabled = true;
+    config.networks[0].participants.clear();
+    config.networks[0].admins = vec![own_pubkey, admin.clone()];
+    config.networks[0].outbound_join_request = Some(PendingOutboundJoinRequest {
+        recipient: stale_recipient,
+        requested_at: 123,
+    });
+
+    assert_eq!(pending_fips_join_request_recipients(&config), vec![admin]);
 }
 
 #[test]
@@ -154,7 +196,40 @@ fn active_network_invite_code_roundtrips_current_roster() {
     assert_eq!(parsed.network_id, "8d4f34f5425bc50e");
     assert_eq!(parsed.admins.len(), 2);
     assert!(parsed.participants.is_empty());
-    assert_eq!(parsed.relays, vec!["wss://temp.iris.to".to_string()]);
+    assert!(parsed.relays.is_empty());
+}
+
+#[test]
+fn importing_current_invite_queues_join_request_to_admin() {
+    let admin_npub = Keys::generate()
+        .public_key()
+        .to_bech32()
+        .expect("admin npub");
+    let admin_hex = normalize_nostr_pubkey(&admin_npub).expect("normalize admin");
+    let invite = serde_json::json!({
+        "v": 3,
+        "network_id": "8d4f34f5425bc50e",
+        "admins": [admin_npub],
+        "relays": ["wss://temp.iris.to"]
+    })
+    .to_string();
+
+    let mut config = AppConfig::generated();
+    let parsed = parse_network_invite(&invite).expect("invite should parse");
+    apply_network_invite_to_active_network(&mut config, &parsed).expect("invite should apply");
+    let queued = queue_active_network_join_request(&mut config).expect("join request should queue");
+
+    let network = config.active_network();
+    assert!(queued);
+    assert_eq!(
+        network
+            .outbound_join_request
+            .as_ref()
+            .expect("pending join request")
+            .recipient,
+        admin_hex
+    );
+    assert!(network.participants.is_empty());
 }
 
 #[test]

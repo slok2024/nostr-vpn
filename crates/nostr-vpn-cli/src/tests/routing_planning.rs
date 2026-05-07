@@ -232,14 +232,14 @@ fn tunnel_heartbeat_targets_include_peers_with_stale_handshakes() {
 }
 
 #[test]
-fn relay_connection_action_reconnects_only_when_disconnected() {
+fn legacy_signal_connection_action_reconnects_only_when_disconnected() {
     assert_eq!(
-        relay_connection_action(true),
-        crate::RelayConnectionAction::KeepConnected
+        legacy_signal_connection_action(true),
+        crate::LegacySignalConnectionAction::KeepConnected
     );
     assert_eq!(
-        relay_connection_action(false),
-        crate::RelayConnectionAction::ReconnectWhenDue
+        legacy_signal_connection_action(false),
+        crate::LegacySignalConnectionAction::ReconnectWhenDue
     );
 }
 

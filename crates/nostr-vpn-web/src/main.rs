@@ -24,8 +24,7 @@ pub(crate) use crate::ui_models::{
 pub(crate) use crate::ui_types::CliStatusResponse;
 
 use crate::invite::{
-    apply_network_invite_to_active_network, is_valid_relay_url, parse_network_invite,
-    preferred_join_request_recipient,
+    apply_network_invite_to_active_network, parse_network_invite, preferred_join_request_recipient,
 };
 use crate::nvpn_cli::{
     connect_vpn_inner, default_config_path, disconnect_vpn_inner, discover_static_dir,
@@ -39,7 +38,7 @@ use crate::ui_models::{
 use crate::ui_types::{
     AliasRequest, InviteRequest, JoinRequestAction, NameRequest, NetworkEnabledRequest,
     NetworkIdRequest, NetworkMeshRequest, NetworkNameRequest, NetworkPeerRequest,
-    ParticipantRequest, RelayRequest, SettingsPatch, UiState,
+    ParticipantRequest, SettingsPatch, UiState,
 };
 use nostr_vpn_core::config::{AppConfig, PendingOutboundJoinRequest, normalize_nostr_pubkey};
 
@@ -164,8 +163,6 @@ async fn main() -> Result<()> {
         .route("/api/remove_admin", post(remove_admin))
         .route("/api/accept_join_request", post(accept_join_request))
         .route("/api/set_participant_alias", post(set_participant_alias))
-        .route("/api/add_relay", post(add_relay))
-        .route("/api/remove_relay", post(remove_relay))
         .route("/api/update_settings", post(update_settings))
         .with_state(state.clone());
 
@@ -473,38 +470,6 @@ async fn set_participant_alias(
     update_config_and_reload(&state, |config| {
         config.set_peer_alias(&request.npub, &request.alias)?;
         Ok("Alias saved.".to_string())
-    })
-}
-
-async fn add_relay(
-    State(state): State<ServerState>,
-    Json(request): Json<RelayRequest>,
-) -> ApiResult<Json<UiState>> {
-    update_config_and_reload(&state, |config| {
-        let relay = request.relay.trim();
-        if relay.is_empty() {
-            return Err(anyhow!("relay URL is empty"));
-        }
-        if !is_valid_relay_url(relay) {
-            return Err(anyhow!("relay URL must start with ws:// or wss://"));
-        }
-        if !config.nostr.relays.iter().any(|existing| existing == relay) {
-            config.nostr.relays.push(relay.to_string());
-        }
-        Ok("Relay saved.".to_string())
-    })
-}
-
-async fn remove_relay(
-    State(state): State<ServerState>,
-    Json(request): Json<RelayRequest>,
-) -> ApiResult<Json<UiState>> {
-    update_config_and_reload(&state, |config| {
-        if config.nostr.relays.len() <= 1 {
-            return Err(anyhow!("at least one relay is required"));
-        }
-        config.nostr.relays.retain(|relay| relay != &request.relay);
-        Ok("Relay removed.".to_string())
     })
 }
 

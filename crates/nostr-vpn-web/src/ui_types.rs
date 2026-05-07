@@ -22,7 +22,6 @@ pub(crate) struct DaemonRuntimeState {
     pub binary_version: String,
     pub vpn_enabled: bool,
     pub vpn_active: bool,
-    pub relay_connected: bool,
     pub vpn_status: String,
     pub expected_peer_count: usize,
     pub connected_peer_count: usize,
@@ -172,7 +171,6 @@ pub(crate) struct UiState {
     pub daemon_running: bool,
     pub vpn_enabled: bool,
     pub vpn_active: bool,
-    pub relay_connected: bool,
     pub cli_installed: bool,
     pub service_supported: bool,
     pub service_enablement_supported: bool,
@@ -299,10 +297,4 @@ pub(crate) struct JoinRequestAction {
 pub(crate) struct AliasRequest {
     pub npub: String,
     pub alias: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RelayRequest {
-    pub relay: String,
 }

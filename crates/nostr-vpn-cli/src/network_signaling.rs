@@ -1,6 +1,5 @@
 use std::collections::HashSet;
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
@@ -8,20 +7,17 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use nostr_sdk::prelude::ToBech32;
 use nostr_vpn_core::config::{
-    AppConfig, maybe_autoconfigure_node, normalize_nostr_pubkey, normalize_runtime_network_id,
+    AppConfig, NetworkConfig, PendingOutboundJoinRequest, maybe_autoconfigure_node,
+    normalize_nostr_pubkey, normalize_runtime_network_id,
 };
-use nostr_vpn_core::control::PeerAnnouncement;
 use nostr_vpn_core::signaling::{NetworkRoster, NostrSignalingClient, SignalPayload};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::{
-    DaemonControlRequest, UpdateRosterArgs, build_explicit_peer_announcement,
-    clear_daemon_control_result, daemon_status, default_config_path, endpoint_is_local_only,
-    load_config_with_overrides, load_or_default_config, local_signal_endpoint,
-    request_daemon_reload, resolve_relays, runtime_effective_advertised_routes,
-    signaling_networks_for_app, unix_timestamp, wait_for_daemon_control_ack,
-    wait_for_daemon_control_result,
+    DaemonControlRequest, UpdateRosterArgs, clear_daemon_control_result, daemon_status,
+    default_config_path, load_or_default_config, request_daemon_reload, unix_timestamp,
+    wait_for_daemon_control_ack, wait_for_daemon_control_result,
 };
 
 pub(crate) const NETWORK_INVITE_PREFIX: &str = "nvpn://invite/";
@@ -89,7 +85,7 @@ pub(crate) fn parse_network_invite(value: &str) -> Result<NetworkInvite> {
     if invite.participants.is_empty() && invite.v < NETWORK_INVITE_VERSION {
         invite.participants.push(invite.inviter_npub.clone());
     }
-    invite.relays = normalized_invite_relays(&invite.relays)?;
+    invite.relays.clear();
 
     Ok(invite)
 }
@@ -216,13 +212,55 @@ pub(crate) fn apply_network_invite_to_active_network(
         network.name = invite.network_name.trim().to_string();
     }
 
-    for relay in &invite.relays {
-        if !config.nostr.relays.iter().any(|existing| existing == relay) {
-            config.nostr.relays.push(relay.clone());
-        }
+    Ok(())
+}
+
+pub(crate) fn queue_active_network_join_request(config: &mut AppConfig) -> Result<bool> {
+    let network = config.active_network().clone();
+    if network_contains_own_identity(config, &network) {
+        return Ok(false);
+    }
+    let recipient = preferred_join_request_recipient(&network)
+        .ok_or_else(|| anyhow!("this network was not imported from an invite"))?;
+    if network
+        .outbound_join_request
+        .as_ref()
+        .is_some_and(|existing| existing.recipient == recipient)
+    {
+        return Ok(false);
     }
 
-    Ok(())
+    let network = config
+        .network_by_id_mut(&network.id)
+        .ok_or_else(|| anyhow!("network not found"))?;
+    network.outbound_join_request = Some(PendingOutboundJoinRequest {
+        recipient,
+        requested_at: unix_timestamp(),
+    });
+    Ok(true)
+}
+
+fn network_contains_own_identity(config: &AppConfig, network: &NetworkConfig) -> bool {
+    let Some(own_pubkey) = config.own_nostr_pubkey_hex().ok() else {
+        return false;
+    };
+    network
+        .participants
+        .iter()
+        .chain(network.admins.iter())
+        .any(|member| member == &own_pubkey)
+}
+
+fn preferred_join_request_recipient(network: &NetworkConfig) -> Option<String> {
+    if !network.invite_inviter.is_empty()
+        && network
+            .admins
+            .iter()
+            .any(|admin| admin == &network.invite_inviter)
+    {
+        return Some(network.invite_inviter.clone());
+    }
+    network.admins.first().cloned()
 }
 
 fn normalized_invite_pubkeys(pubkeys: &[String]) -> Result<Vec<String>> {
@@ -233,28 +271,6 @@ fn normalized_invite_pubkeys(pubkeys: &[String]) -> Result<Vec<String>> {
     normalized.sort();
     normalized.dedup();
     Ok(normalized)
-}
-
-fn normalized_invite_relays(relays: &[String]) -> Result<Vec<String>> {
-    let mut normalized = Vec::new();
-    for relay in relays {
-        let relay = relay.trim();
-        if relay.is_empty() {
-            continue;
-        }
-        if !is_valid_relay_url(relay) {
-            return Err(anyhow!("invalid invite relay '{relay}'"));
-        }
-        if !normalized.iter().any(|existing| existing == relay) {
-            normalized.push(relay.to_string());
-        }
-    }
-    Ok(normalized)
-}
-
-fn is_valid_relay_url(value: &str) -> bool {
-    let trimmed = value.trim();
-    trimmed.starts_with("wss://") || trimmed.starts_with("ws://")
 }
 
 pub(crate) fn maybe_reload_running_daemon(config_path: &Path) {
@@ -315,7 +331,7 @@ pub(crate) fn active_network_invite_code(config: &AppConfig) -> Result<String> {
         inviter_node_name: String::new(),
         admins: roster.admins.iter().map(|admin| to_npub(admin)).collect(),
         participants: Vec::new(),
-        relays: normalized_invite_relays(&config.nostr.relays)?,
+        relays: Vec::new(),
     };
     let encoded = URL_SAFE_NO_PAD
         .encode(serde_json::to_vec(&invite).context("failed to encode network invite JSON")?);
@@ -361,20 +377,7 @@ pub(crate) async fn update_active_network_roster(
     app.save(&config_path)?;
     maybe_reload_running_daemon(&config_path);
 
-    let mut published = 0usize;
-    let relays = resolve_relays(&args.relays, &app);
-    if args.publish {
-        let client = NostrSignalingClient::from_secret_key_with_networks(
-            &app.nostr.secret_key,
-            signaling_networks_for_app(&app),
-        )?;
-        client
-            .connect(&relays)
-            .await
-            .context("failed to connect signaling client")?;
-        published = publish_active_network_roster(&client, &app, None).await?;
-        client.disconnect().await;
-    }
+    let published = 0usize;
 
     if args.json {
         println!(
@@ -386,7 +389,7 @@ pub(crate) async fn update_active_network_roster(
                 "changed": changed,
                 "published_recipients": published,
                 "published": args.publish,
-                "relays": if args.publish { relays } else { Vec::<String>::new() },
+                "relays": Vec::<String>::new(),
             }))?
         );
     } else {
@@ -399,26 +402,6 @@ pub(crate) async fn update_active_network_roster(
     }
 
     Ok(())
-}
-
-#[derive(Debug)]
-pub(crate) struct AnnounceRequest {
-    pub(crate) config: Option<PathBuf>,
-    pub(crate) network_id: Option<String>,
-    pub(crate) participants: Vec<String>,
-    pub(crate) node_id: Option<String>,
-    pub(crate) endpoint: Option<String>,
-    pub(crate) tunnel_ip: Option<String>,
-    pub(crate) public_key: Option<String>,
-    pub(crate) relay: Vec<String>,
-}
-
-#[derive(Debug)]
-pub(crate) struct PublishedAnnouncement {
-    pub(crate) app: AppConfig,
-    pub(crate) network_id: String,
-    pub(crate) relays: Vec<String>,
-    pub(crate) announcement: PeerAnnouncement,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -489,121 +472,4 @@ pub(crate) async fn publish_active_network_roster(
 fn network_should_adopt_invite(network: &nostr_vpn_core::config::NetworkConfig) -> bool {
     let trimmed = network.name.trim();
     network.participants.is_empty() && (trimmed.is_empty() || trimmed.starts_with("Network "))
-}
-
-pub(crate) async fn publish_announcement(
-    request: AnnounceRequest,
-) -> Result<PublishedAnnouncement> {
-    let config_path = request.config.unwrap_or_else(default_config_path);
-    let (app, network_id) =
-        load_config_with_overrides(&config_path, request.network_id, request.participants)?;
-    let node_id = request.node_id.unwrap_or_else(|| app.node.id.clone());
-    let endpoint = request
-        .endpoint
-        .unwrap_or_else(|| app.node.endpoint.clone());
-    let tunnel_ip = request
-        .tunnel_ip
-        .unwrap_or_else(|| app.node.tunnel_ip.clone());
-    let public_key = request
-        .public_key
-        .unwrap_or_else(|| app.node.public_key.clone());
-    let relays = resolve_relays(&request.relay, &app);
-
-    let client = NostrSignalingClient::from_secret_key_with_networks(
-        &app.nostr.secret_key,
-        signaling_networks_for_app(&app),
-    )?;
-    client.connect(&relays).await?;
-
-    let listen_port = endpoint
-        .parse::<SocketAddr>()
-        .map(|addr| addr.port())
-        .unwrap_or(app.node.listen_port);
-    let local_endpoint = if endpoint_is_local_only(&endpoint) {
-        endpoint.clone()
-    } else {
-        local_signal_endpoint(&app, listen_port)
-    };
-    let announcement = build_explicit_peer_announcement(
-        node_id,
-        public_key,
-        endpoint,
-        local_endpoint,
-        tunnel_ip,
-        runtime_effective_advertised_routes(&app),
-    );
-
-    client
-        .publish(SignalPayload::Announce(announcement.clone()))
-        .await
-        .context("failed to publish presence signal")?;
-
-    client.disconnect().await;
-
-    Ok(PublishedAnnouncement {
-        app,
-        network_id,
-        relays,
-        announcement,
-    })
-}
-
-pub(crate) async fn discover_peers(
-    app: &AppConfig,
-    _network_id: &str,
-    relays: &[String],
-    discover_secs: u64,
-) -> Result<Vec<PeerAnnouncement>> {
-    if discover_secs == 0 {
-        return Ok(Vec::new());
-    }
-
-    let client = NostrSignalingClient::from_secret_key_with_networks(
-        &app.nostr.secret_key,
-        signaling_networks_for_app(app),
-    )?;
-    client.connect(relays).await?;
-    let _ = client.publish(SignalPayload::Hello).await;
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(discover_secs);
-    let mut peers = std::collections::HashMap::<String, PeerAnnouncement>::new();
-
-    loop {
-        let now = tokio::time::Instant::now();
-        if now >= deadline {
-            break;
-        }
-
-        let wait_for = std::cmp::min(
-            deadline.saturating_duration_since(now),
-            Duration::from_millis(250),
-        );
-
-        match tokio::time::timeout(wait_for, client.recv()).await {
-            Ok(Some(message)) => match message.payload {
-                SignalPayload::Hello => {}
-                SignalPayload::Announce(announcement) => {
-                    let should_insert = peers
-                        .get(&announcement.node_id)
-                        .is_none_or(|existing| existing.timestamp <= announcement.timestamp);
-                    if should_insert {
-                        peers.insert(announcement.node_id.clone(), announcement);
-                    }
-                }
-                SignalPayload::Disconnect { node_id } => {
-                    peers.remove(&node_id);
-                }
-                SignalPayload::Roster(_) => {}
-                SignalPayload::JoinRequest { .. } => {}
-            },
-            Ok(None) => break,
-            Err(_) => continue,
-        }
-    }
-
-    client.disconnect().await;
-
-    let mut values = peers.into_values().collect::<Vec<_>>();
-    values.sort_by(|left, right| left.node_id.cmp(&right.node_id));
-    Ok(values)
 }

@@ -74,12 +74,6 @@ pub enum NativeAppAction {
         npub: String,
         alias: String,
     },
-    AddRelay {
-        relay: String,
-    },
-    RemoveRelay {
-        relay: String,
-    },
     UpdateSettings {
         patch: SettingsPatch,
     },

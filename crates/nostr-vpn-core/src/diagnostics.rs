@@ -81,17 +81,6 @@ pub struct PortMappingStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct RelayCheck {
-    pub relay: String,
-    pub latency_ms: u128,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transport: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct NetcheckReport {
     pub checked_at: u64,
     pub udp: bool,
@@ -105,10 +94,6 @@ pub struct NetcheckReport {
     pub mapping_varies_by_dest_ip: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub captive_portal: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub preferred_relay: Option<String>,
-    #[serde(default)]
-    pub relay_checks: Vec<RelayCheck>,
     #[serde(default)]
     pub port_mapping: PortMappingStatus,
 }

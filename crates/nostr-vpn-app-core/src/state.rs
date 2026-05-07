@@ -29,8 +29,6 @@ pub struct DaemonRuntimeState {
     pub vpn_enabled: bool,
     #[serde(alias = "vpn_active")]
     pub vpn_active: bool,
-    #[serde(alias = "relay_connected")]
-    pub relay_connected: bool,
     #[serde(alias = "vpn_status")]
     pub vpn_status: String,
     #[serde(alias = "expected_peer_count")]
@@ -191,7 +189,6 @@ pub struct UiState {
     pub daemon_running: bool,
     pub vpn_enabled: bool,
     pub vpn_active: bool,
-    pub relay_connected: bool,
     pub cli_installed: bool,
     pub service_supported: bool,
     pub service_enablement_supported: bool,
@@ -368,7 +365,6 @@ mod tests {
             "listen_port": 51820,
             "vpn_enabled": true,
             "vpn_active": true,
-            "relay_connected": true,
             "vpn_status": "Running",
             "expected_peer_count": 1,
             "connected_peer_count": 1,

@@ -159,7 +159,6 @@ pub struct NativeAppState {
     pub daemon_running: bool,
     pub vpn_enabled: bool,
     pub vpn_active: bool,
-    pub relay_connected: bool,
     pub vpn_status: String,
     pub daemon_binary_version: String,
     pub service_binary_version: String,

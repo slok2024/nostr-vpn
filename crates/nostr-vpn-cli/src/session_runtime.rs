@@ -102,7 +102,7 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
         ));
     }
     #[cfg(not(feature = "embedded-fips"))]
-    if app.private_mesh_uses_fips() {
+    {
         return Err(anyhow!(
             "private_data_plane=fips requires building nvpn with the embedded-fips feature"
         ));
@@ -113,7 +113,6 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
     let expected_peers = expected_peer_count(&app);
     let mut presence = PeerPresenceBook::default();
     let mut path_book = PeerPathBook::default();
-    let mut outbound_announces = OutboundAnnounceBook::default();
     let iface = args.iface.clone();
     let mut tunnel_runtime = CliTunnelRuntime::new(iface.clone());
     let mut network_snapshot = capture_network_snapshot();
@@ -147,7 +146,7 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
             }
         };
     #[cfg(feature = "embedded-fips")]
-    let mut fips_tunnel_runtime = if app.private_mesh_uses_fips() {
+    let mut fips_tunnel_runtime = {
         let config = fips_tunnel_config_from_app(
             &app,
             &network_id,
@@ -164,20 +163,8 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
             app.exit_data_plane
         );
         Some(runtime)
-    } else {
-        None
     };
     let magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);
-
-    let mut client = NostrSignalingClient::from_secret_key_with_networks(
-        &app.nostr.secret_key,
-        signaling_networks_for_app(&app),
-    )?;
-    client.connect(&relays).await?;
-    if let Err(error) = publish_active_network_roster(&client, &app, None).await {
-        eprintln!("signal: initial roster publish failed: {error}");
-    }
-    let mut relay_connected = true;
 
     apply_presence_runtime_update(
         &app,
@@ -189,7 +176,6 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
         magic_dns_runtime.as_ref(),
     )
     .context("failed to initialize tunnel runtime")?;
-    let _ = client.publish(SignalPayload::Hello).await;
 
     println!(
         "connect: network {} on {} relays; waiting for {expected_peers} configured peer(s)",
@@ -200,85 +186,14 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
     let mut announce_interval =
         tokio::time::interval(Duration::from_secs(args.announce_interval_secs.max(5)));
     announce_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut reconnect_interval = tokio::time::interval(Duration::from_secs(1));
-    reconnect_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut tunnel_heartbeat_interval = tokio::time::interval(Duration::from_secs(2));
     tunnel_heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut network_interval = tokio::time::interval(Duration::from_secs(5));
-    network_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     let mut last_mesh_count = 0_usize;
-    let mut last_nat_punch_attempt: Option<(String, Instant)> = None;
-    let mut reconnect_attempt = 0u32;
-    let mut reconnect_due = Instant::now();
-    let mut last_network_check_at = WallTimeJumpObserver::new(unix_timestamp());
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 break;
-            }
-            _ = reconnect_interval.tick() => {
-                if relay_connected || Instant::now() < reconnect_due {
-                    continue;
-                }
-
-                if matches!(
-                    relay_connection_action(relay_connected),
-                    RelayConnectionAction::KeepConnected
-                ) {
-                    continue;
-                }
-
-                client.disconnect().await;
-                client = NostrSignalingClient::from_secret_key_with_networks(
-                    &app.nostr.secret_key,
-                    signaling_networks_for_app(&app),
-                )?;
-                match client.connect(&relays).await {
-                    Ok(()) => {
-                        relay_connected = true;
-                        reconnect_attempt = 0;
-                        outbound_announces.clear();
-                        if let Err(error) = publish_active_network_roster(&client, &app, None).await
-                        {
-                            eprintln!("signal: roster publish failed after reconnect: {error}");
-                        }
-                        if let Err(error) = publish_private_announce_to_known_peers(
-                            &client,
-                            &app,
-                            own_pubkey.as_deref(),
-                            &presence,
-                            &tunnel_runtime,
-                            public_signal_endpoint.as_ref(),
-                            &mut outbound_announces,
-                        )
-                        .await
-                        {
-                            eprintln!("signal: known peer announce refresh failed after reconnect: {error}");
-                        }
-                        if let Err(error) = client.publish(SignalPayload::Hello).await {
-                            let error_text = error.to_string();
-                            reconnect_attempt = reconnect_attempt.saturating_add(1);
-                            let delay = daemon_reconnect_backoff_delay(reconnect_attempt);
-                            reconnect_due = Instant::now() + delay;
-                            relay_connected = false;
-                            eprintln!(
-                                "signal: hello publish failed after reconnect (retry in {}s): {error_text}",
-                                delay.as_secs()
-                            );
-                        }
-                    }
-                    Err(error) => {
-                        let error_text = error.to_string();
-                        reconnect_attempt = reconnect_attempt.saturating_add(1);
-                        let delay = daemon_reconnect_backoff_delay(reconnect_attempt);
-                        reconnect_due = Instant::now() + delay;
-                        eprintln!(
-                            "signal: relay reconnect failed (retry in {}s): {error_text}",
-                            delay.as_secs()
-                        );
-                    }
-                }
             }
             _ = tunnel_heartbeat_interval.tick() => {
                 #[cfg(feature = "embedded-fips")]
@@ -302,20 +217,6 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
                         &mut last_mesh_count,
                     );
                 }
-                let peer_announcements = direct_peer_announcements(&presence, relay_connected);
-                if !relay_connected
-                    && let Err(error) = maybe_run_nat_punch(
-                        &app,
-                        own_pubkey.as_deref(),
-                        peer_announcements,
-                        &mut path_book,
-                        &mut tunnel_runtime,
-                        &mut public_signal_endpoint,
-                        &mut last_nat_punch_attempt,
-                    )
-                {
-                    eprintln!("nat: cached peer hole-punch failed: {error}");
-                }
                 if let Err(error) = apply_presence_runtime_update(
                     &app,
                     own_pubkey.as_deref(),
@@ -327,418 +228,18 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
                 ) {
                     eprintln!("connect: tunnel heartbeat refresh failed: {error}");
                 }
-                if let Err(error) = heartbeat_pending_tunnel_peers(
-                    &app,
-                    own_pubkey.as_deref(),
-                    presence.known(),
-                    &tunnel_runtime,
-                ) {
-                    eprintln!("tunnel: peer heartbeat failed: {error}");
-                }
-                if relay_connected
-                    && let Err(error) = publish_private_announce_repair_to_known_peers(
-                        &client,
-                        &app,
-                        own_pubkey.as_deref(),
-                        &presence,
-                        &tunnel_runtime,
-                        public_signal_endpoint.as_ref(),
-                        &mut outbound_announces,
-                    )
-                    .await
-                {
-                    eprintln!("signal: known peer announce repair failed: {error}");
-                }
-            }
-            _ = network_interval.tick() => {
-                let now = unix_timestamp();
-                let resumed_after_sleep = observe_wall_time_jump(
-                    &mut last_network_check_at,
-                    now,
-                    Instant::now(),
-                    MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
-                );
-                if resumed_after_sleep {
-                    println!("connect: sleep/wake detected; resetting peer paths");
-                    path_book.clear();
-                    last_nat_punch_attempt = None;
-                }
-                #[cfg(target_os = "macos")]
-                let underlay_repaired =
-                    match crate::macos_network::ensure_macos_underlay_default_route() {
-                        Ok(true) => {
-                            eprintln!("connect: restored missing macOS underlay default route");
-                            true
-                        }
-                        Ok(false) => false,
-                        Err(error) => {
-                            eprintln!(
-                                "connect: failed to ensure macOS underlay default route: {error}"
-                            );
-                            false
-                        }
-                    };
-                #[cfg(not(target_os = "macos"))]
-                let underlay_repaired = false;
-                let latest_snapshot = prefer_nonself_tunnel_snapshot(
-                    &tunnel_runtime,
-                    &network_snapshot,
-                    capture_network_snapshot(),
-                );
-                let runtime_listen_port =
-                    tunnel_runtime.active_listen_port.unwrap_or(app.node.listen_port);
-                let network_changed = latest_snapshot.changed_since(&network_snapshot);
-                let endpoint_changed = if network_changed {
-                    network_snapshot = latest_snapshot.clone();
-                    println!("connect: network change detected; refreshing paths");
-                    path_book.clear();
-                    // A moved network invalidates the previous public endpoint; keep
-                    // probing for a fresh one instead of reusing the stale address.
-                    public_signal_endpoint = None;
-                    refresh_public_signal_endpoint_with_port_mapping(
-                        &app,
-                        &network_snapshot,
-                        runtime_listen_port,
-                        &mut port_mapping_runtime,
-                        &mut public_signal_endpoint,
-                    )
-                    .await;
-                    public_signal_endpoint
-                        .as_ref()
-                        .is_some_and(|endpoint| endpoint.listen_port == runtime_listen_port)
-                } else if resumed_after_sleep {
-                    public_signal_endpoint = None;
-                    refresh_public_signal_endpoint_with_port_mapping(
-                        &app,
-                        &network_snapshot,
-                        runtime_listen_port,
-                        &mut port_mapping_runtime,
-                        &mut public_signal_endpoint,
-                    )
-                    .await;
-                    public_signal_endpoint
-                        .as_ref()
-                        .is_some_and(|endpoint| endpoint.listen_port == runtime_listen_port)
-                } else {
-                    match port_mapping_runtime
-                        .renew_if_due(&network_snapshot, runtime_listen_port, timeout)
-                        .await
-                    {
-                        Ok(changed) => {
-                            if changed {
-                                sync_public_signal_endpoint_from_mapping_or_stun(
-                                    &app,
-                                    runtime_listen_port,
-                                    &port_mapping_runtime,
-                                    &mut public_signal_endpoint,
-                                );
-                            }
-                            changed
-                        }
-                        Err(error) => {
-                            eprintln!("nat: port mapping renew failed: {error}");
-                            false
-                        }
-                    }
-                };
-
-                if !network_changed && !endpoint_changed && !underlay_repaired && !resumed_after_sleep {
-                    continue;
-                }
-
-                if network_changed || underlay_repaired || resumed_after_sleep {
-                    network_snapshot = latest_snapshot;
-                    if network_changed {
-                        println!("connect: network change detected; refreshing paths");
-                    }
-                    if resumed_after_sleep {
-                        println!("connect: sleep/wake detected; refreshing paths");
-                    }
-                    if underlay_repaired {
-                        reset_tunnel_runtime_after_macos_underlay_repair(&mut tunnel_runtime);
-                    }
-                    last_nat_punch_attempt = None;
-                    if let Err(error) = apply_presence_runtime_update(
-                        &app,
-                        own_pubkey.as_deref(),
-                        &presence,
-                        &mut path_book,
-                        unix_timestamp(),
-                        &mut tunnel_runtime,
-                        magic_dns_runtime.as_ref(),
-                    ) {
-                        eprintln!("connect: tunnel refresh after network change failed: {error}");
-                    }
-                }
-                if network_changed || resumed_after_sleep {
-                    if relay_connected {
-                        if network_changed {
-                            println!("connect: reconnecting relays after network change");
-                        } else {
-                            println!("connect: reconnecting relays after wake");
-                        }
-                    }
-                    client.disconnect().await;
-                    relay_connected = false;
-                    reconnect_attempt = 0;
-                    reconnect_due = Instant::now();
-                    outbound_announces.clear();
-                }
-
-                let peer_announcements = direct_peer_announcements(&presence, relay_connected);
-                if let Err(error) = maybe_run_nat_punch(
-                    &app,
-                    own_pubkey.as_deref(),
-                    peer_announcements,
-                    &mut path_book,
-                    &mut tunnel_runtime,
-                    &mut public_signal_endpoint,
-                    &mut last_nat_punch_attempt,
-                ) {
-                    eprintln!("nat: hole-punch after network refresh failed: {error}");
-                }
-                if let Err(error) = heartbeat_pending_tunnel_peers(
-                    &app,
-                    own_pubkey.as_deref(),
-                    presence.known(),
-                    &tunnel_runtime,
-                ) {
-                    eprintln!("tunnel: peer heartbeat failed after network refresh: {error}");
-                }
-                if relay_connected
-                    && let Err(error) = publish_private_announce_to_known_peers(
-                        &client,
-                        &app,
-                        own_pubkey.as_deref(),
-                        &presence,
-                        &tunnel_runtime,
-                        public_signal_endpoint.as_ref(),
-                        &mut outbound_announces,
-                    )
-                    .await
-                {
-                    eprintln!("signal: known peer announce refresh failed after network change: {error}");
-                }
-                if relay_connected
-                    && let Err(error) = client.publish(SignalPayload::Hello).await
-                {
-                    eprintln!("signal: hello publish failed after network change: {error}");
-                }
             }
             _ = announce_interval.tick() => {
-                let now = unix_timestamp();
-                let removed =
-                    presence.prune_stale(now, peer_signal_timeout_secs(args.announce_interval_secs));
-                for participant in &removed {
-                    outbound_announces.forget(participant);
-                }
-                let paths_pruned =
-                    path_book.prune_stale(now, peer_path_cache_timeout_secs(args.announce_interval_secs));
-                let recent = recently_seen_participants(
-                    &presence,
-                    now,
-                    peer_signal_timeout_secs(args.announce_interval_secs),
-                );
-                outbound_announces.retain_participants(&recent);
-                if !removed.is_empty() || paths_pruned {
-                    last_nat_punch_attempt = None;
-                    apply_presence_runtime_update(
-                        &app,
-                        own_pubkey.as_deref(),
-                        &presence,
-                        &mut path_book,
-                        now,
-                        &mut tunnel_runtime,
-                        magic_dns_runtime.as_ref(),
-                    )
-                    .context("failed to apply tunnel update after stale peer expiry")?;
-                    if !app.private_mesh_uses_fips() {
-                        maybe_log_presence_mesh_count(
-                            &app,
-                            own_pubkey.as_deref(),
-                            presence.active(),
-                            expected_peers,
-                            &mut last_mesh_count,
-                        );
-                    }
-                }
-                if !relay_connected {
-                    continue;
-                }
-
-                if let Err(error) = maybe_run_nat_punch(
-                    &app,
-                    own_pubkey.as_deref(),
-                    presence.active(),
-                    &mut path_book,
-                    &mut tunnel_runtime,
-                    &mut public_signal_endpoint,
-                    &mut last_nat_punch_attempt,
-                ) {
-                    eprintln!("nat: periodic hole-punch failed: {error}");
-                }
-                if let Err(error) = publish_private_announce_to_active_peers(
-                    &client,
-                    &app,
-                    own_pubkey.as_deref(),
-                    &presence,
-                    &tunnel_runtime,
-                    public_signal_endpoint.as_ref(),
-                    &mut outbound_announces,
-                )
-                .await
+                #[cfg(feature = "embedded-fips")]
+                if let Some(runtime) = fips_tunnel_runtime.as_ref()
+                    && let Err(error) = publish_fips_active_network_roster(runtime, &app).await
                 {
-                    eprintln!("signal: active peer announce refresh failed: {error}");
-                }
-                if let Err(error) = client.publish(SignalPayload::Hello).await {
-                    let error_text = error.to_string();
-                    if publish_error_requires_reconnect(&error_text) {
-                        relay_connected = false;
-                        reconnect_attempt = reconnect_attempt.saturating_add(1);
-                        let delay = daemon_reconnect_backoff_delay(reconnect_attempt);
-                        reconnect_due = Instant::now() + delay;
-                        eprintln!(
-                            "signal: hello publish indicates disconnected relays (retry in {}s): {error_text}",
-                            delay.as_secs()
-                        );
-                    } else {
-                        eprintln!("signal: hello publish failed: {error_text}");
-                    }
-                }
-            }
-            message = async {
-                if relay_connected {
-                    client.recv().await
-                } else {
-                    std::future::pending::<Option<SignalEnvelope>>().await
-                }
-            } => {
-                let Some(message) = message else {
-                    relay_connected = false;
-                    reconnect_attempt = reconnect_attempt.saturating_add(1);
-                    let delay = daemon_reconnect_backoff_delay(reconnect_attempt);
-                    reconnect_due = Instant::now() + delay;
-                    eprintln!("signal: relay stream closed (retry in {}s)", delay.as_secs());
-                    continue;
-                };
-
-                let sender_pubkey = message.sender_pubkey;
-                let payload = message.payload.clone();
-                let changed =
-                    presence.apply_signal(sender_pubkey.clone(), message.payload, unix_timestamp());
-                if matches!(&payload, SignalPayload::Disconnect { .. }) {
-                    outbound_announces.forget(&sender_pubkey);
-                }
-                if !changed {
-                    if matches!(&payload, SignalPayload::Hello | SignalPayload::Announce(_))
-                        && let Err(error) = publish_active_network_roster(
-                            &client,
-                            &app,
-                            Some(std::slice::from_ref(&sender_pubkey)),
-                        )
-                        .await
-                    {
-                        eprintln!("signal: targeted roster publish failed: {error}");
-                    }
-                    maybe_reset_targeted_announce_cache_for_hello(
-                        &mut outbound_announces,
-                        &sender_pubkey,
-                        &payload,
-                    );
-                    if matches!(&payload, SignalPayload::Hello | SignalPayload::Announce(_))
-                        && let Err(error) = publish_private_announce_to_participants(
-                            &client,
-                            &app,
-                            &tunnel_runtime,
-                            public_signal_endpoint.as_ref(),
-                            &mut outbound_announces,
-                            std::slice::from_ref(&sender_pubkey),
-                            Some(presence.known()),
-                            None,
-                        )
-                        .await
-                    {
-                        eprintln!("signal: targeted private announce failed: {error}");
-                    }
-                    continue;
-                }
-
-                apply_presence_runtime_update(
-                    &app,
-                    own_pubkey.as_deref(),
-                    &presence,
-                    &mut path_book,
-                    unix_timestamp(),
-                    &mut tunnel_runtime,
-                    magic_dns_runtime.as_ref(),
-                )
-                .context("failed to apply tunnel update")?;
-                if let Err(error) = maybe_run_nat_punch(
-                    &app,
-                    own_pubkey.as_deref(),
-                    presence.active(),
-                    &mut path_book,
-                    &mut tunnel_runtime,
-                    &mut public_signal_endpoint,
-                    &mut last_nat_punch_attempt,
-                ) {
-                    eprintln!("nat: hole-punch after peer signal failed: {error}");
-                }
-                if let Err(error) = heartbeat_pending_tunnel_peers(
-                    &app,
-                    own_pubkey.as_deref(),
-                    presence.known(),
-                    &tunnel_runtime,
-                ) {
-                    eprintln!("tunnel: peer heartbeat failed after peer signal: {error}");
-                }
-                if matches!(&payload, SignalPayload::Hello | SignalPayload::Announce(_))
-                    && let Err(error) = publish_active_network_roster(
-                        &client,
-                        &app,
-                        Some(std::slice::from_ref(&sender_pubkey)),
-                    )
-                    .await
-                {
-                    eprintln!("signal: targeted roster publish failed: {error}");
-                }
-                if matches!(&payload, SignalPayload::Hello | SignalPayload::Announce(_))
-                    && let Err(error) = publish_private_announce_to_participants(
-                        &client,
-                        &app,
-                        &tunnel_runtime,
-                        public_signal_endpoint.as_ref(),
-                        &mut outbound_announces,
-                        std::slice::from_ref(&sender_pubkey),
-                        Some(presence.known()),
-                        None,
-                    )
-                    .await
-                {
-                    eprintln!("signal: targeted private announce failed: {error}");
-                }
-
-                if !app.private_mesh_uses_fips() {
-                    maybe_log_presence_mesh_count(
-                        &app,
-                        own_pubkey.as_deref(),
-                        presence.active(),
-                        expected_peers,
-                        &mut last_mesh_count,
-                    );
+                    eprintln!("fips: roster publish failed: {error}");
                 }
             }
         }
     }
 
-    if relay_connected {
-        let _ = client
-            .publish(SignalPayload::Disconnect {
-                node_id: app.node.id.clone(),
-            })
-            .await;
-    }
-    client.disconnect().await;
     port_mapping_runtime.stop().await;
     #[cfg(feature = "embedded-fips")]
     if let Some(runtime) = fips_tunnel_runtime
@@ -789,20 +290,18 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let mut own_pubkey = app.own_nostr_pubkey_hex().ok();
     let mut expected_peers = expected_peer_count(&app);
     #[cfg(not(feature = "embedded-fips"))]
-    if app.private_mesh_uses_fips() {
+    {
         return Err(anyhow!(
             "private_data_plane=fips requires building nvpn with the embedded-fips feature"
         ));
     }
     let state_file = daemon_state_file_path(&config_path);
-    let peer_cache_file = daemon_peer_cache_file_path(&config_path);
     #[cfg(feature = "embedded-fips")]
     let fips_endpoint_cache_file =
         crate::fips_private_mesh::fips_endpoint_cache_file_path(&config_path);
     let _ = fs::remove_file(daemon_control_file_path(&config_path));
     let mut presence = PeerPresenceBook::default();
     let mut path_book = PeerPathBook::default();
-    let mut outbound_announces = OutboundAnnounceBook::default();
     #[cfg(feature = "embedded-fips")]
     let mut fips_join_request_sends: HashMap<String, u64> = HashMap::new();
     let iface = args.iface.clone();
@@ -857,39 +356,10 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         None
     };
     let magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);
-    let mut last_written_peer_cache = None;
     #[cfg(feature = "embedded-fips")]
     let mut last_written_fips_endpoint_cache = fips_endpoint_cache
         .as_ref()
         .and_then(|cache| serde_json::to_string(cache).ok());
-
-    let mut client = NostrSignalingClient::from_secret_key_with_networks(
-        &app.nostr.secret_key,
-        signaling_networks_for_app(&app),
-    )?;
-
-    let restored_peer_cache = if daemon_vpn_active(true, expected_peers) {
-        match restore_daemon_peer_cache(
-            DaemonPeerCacheRestore {
-                path: &peer_cache_file,
-                app: &app,
-                network_id: &network_id,
-                own_pubkey: own_pubkey.as_deref(),
-                now: unix_timestamp(),
-                announce_interval_secs: args.announce_interval_secs,
-            },
-            &mut presence,
-            &mut path_book,
-        ) {
-            Ok(restored) => restored,
-            Err(error) => {
-                eprintln!("daemon: failed to restore peer cache: {error}");
-                false
-            }
-        }
-    } else {
-        false
-    };
 
     apply_presence_runtime_update(
         &app,
@@ -901,35 +371,11 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         magic_dns_runtime.as_ref(),
     )
     .context("failed to initialize tunnel runtime")?;
-    if restored_peer_cache && daemon_vpn_active(true, expected_peers) {
-        let mut bootstrap_nat_attempt = None;
-        if let Err(error) = maybe_run_nat_punch(
-            &app,
-            own_pubkey.as_deref(),
-            direct_peer_announcements(&presence, false),
-            &mut path_book,
-            &mut tunnel_runtime,
-            &mut public_signal_endpoint,
-            &mut bootstrap_nat_attempt,
-        ) {
-            eprintln!("daemon: cached peer nat bootstrap failed: {error}");
-        }
-        if let Err(error) = heartbeat_pending_tunnel_peers(
-            &app,
-            own_pubkey.as_deref(),
-            direct_peer_announcements(&presence, false),
-            &tunnel_runtime,
-        ) {
-            eprintln!("daemon: cached peer heartbeat bootstrap failed: {error}");
-        }
-    }
     let mut announce_interval =
         tokio::time::interval(Duration::from_secs(args.announce_interval_secs.max(5)));
     announce_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut state_interval = tokio::time::interval(Duration::from_secs(1));
     state_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut reconnect_interval = tokio::time::interval(Duration::from_secs(1));
-    reconnect_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut tunnel_heartbeat_interval = tokio::time::interval(Duration::from_secs(2));
     tunnel_heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut network_interval = tokio::time::interval(Duration::from_secs(5));
@@ -951,17 +397,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let mut vpn_status = if !daemon_vpn_active(vpn_enabled, expected_peers) {
         daemon_vpn_idle_status(vpn_enabled, expected_peers, app.join_requests_enabled()).to_string()
     } else {
-        if app.private_mesh_uses_fips() {
-            "VPN on".to_string()
-        } else {
-            "Connecting to relays".to_string()
-        }
+        "VPN on".to_string()
     };
-    let mut relay_connected = false;
-    let mut reconnect_attempt = 0u32;
-    let mut reconnect_due = Instant::now();
-    let mut last_mesh_count = 0_usize;
-    let mut last_nat_punch_attempt: Option<(String, Instant)> = None;
     let mut last_network_check_at = WallTimeJumpObserver::new(unix_timestamp());
     let mut last_log_compact_check = Instant::now();
     #[cfg(feature = "embedded-fips")]
@@ -983,7 +420,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             &fips_peer_statuses,
             public_signal_endpoint.as_ref(),
             &vpn_status,
-            relay_connected,
             &network_snapshot.summary(network_changed_at, captive_portal),
             &port_mapping_runtime.status(),
         ),
@@ -1006,142 +442,12 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             _ = &mut terminate_wait => {
                 break;
             }
-            _ = reconnect_interval.tick() => {
-                if app.private_mesh_uses_fips() {
-                    continue;
-                }
-                let join_requests_active = app.join_requests_enabled();
-                let vpn_active = daemon_vpn_active(vpn_enabled, expected_peers);
-                if !relay_vpn_active(vpn_enabled, expected_peers, join_requests_active)
-                    || relay_connected
-                    || Instant::now() < reconnect_due
-                {
-                    continue;
-                }
-
-                if matches!(
-                    relay_connection_action(relay_connected),
-                    RelayConnectionAction::KeepConnected
-                ) {
-                    continue;
-                }
-
-                client.disconnect().await;
-                client = NostrSignalingClient::from_secret_key_with_networks(
-                    &app.nostr.secret_key,
-                    signaling_networks_for_app(&app),
-                )?;
-
-                match client.connect(&relays).await {
-                    Ok(()) => {
-                        relay_connected = true;
-                        reconnect_attempt = 0;
-                        if let Err(error) = publish_active_network_roster(&client, &app, None).await
-                        {
-                            eprintln!("daemon: roster publish failed after reconnect: {error}");
-                        }
-                        vpn_status = if vpn_active {
-                            "Connected".to_string()
-                        } else {
-                            daemon_vpn_idle_status(
-                                vpn_enabled,
-                                expected_peers,
-                                join_requests_active,
-                            )
-                            .to_string()
-                        };
-                        if vpn_active {
-                            outbound_announces.clear();
-                            if let Err(error) = publish_private_announce_to_known_peers(
-                                &client,
-                                &app,
-                                own_pubkey.as_deref(),
-                                &presence,
-                                &tunnel_runtime,
-                                public_signal_endpoint.as_ref(),
-                                &mut outbound_announces,
-                            )
-                            .await
-                            {
-                                let error_text = error.to_string();
-                                vpn_status =
-                                    format!("Connected; private announce failed ({error_text})");
-                                eprintln!("daemon: private announce failed after reconnect: {error_text}");
-                            }
-                            if let Err(error) = client.publish(SignalPayload::Hello).await {
-                                let error_text = error.to_string();
-                                vpn_status =
-                                    format!("Connected; hello publish failed ({error_text})");
-                                eprintln!("daemon: initial hello publish failed after reconnect: {error_text}");
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        let error_text = error.to_string();
-                        reconnect_attempt = reconnect_attempt.saturating_add(1);
-                        let delay = daemon_reconnect_backoff_delay(reconnect_attempt);
-                        reconnect_due = Instant::now() + delay;
-                        vpn_status = format!(
-                            "Relay connect failed; retry in {}s ({error_text})",
-                            delay.as_secs(),
-                        );
-                        eprintln!("daemon: relay connect failed (retry in {}s): {error_text}", delay.as_secs());
-                    }
-                }
-            }
             _ = announce_interval.tick() => {
-                if app.private_mesh_uses_fips() {
-                    #[cfg(feature = "embedded-fips")]
-                    if let Some(runtime) = fips_tunnel_runtime.as_ref()
-                        && let Err(error) = publish_fips_active_network_roster(runtime, &app).await
-                    {
-                        eprintln!("fips: roster publish failed: {error}");
-                    }
-                    continue;
-                }
-                if !daemon_vpn_active(vpn_enabled, expected_peers) || !relay_connected {
-                    continue;
-                }
-                if let Err(error) = maybe_run_nat_punch(
-                    &app,
-                    own_pubkey.as_deref(),
-                    presence.active(),
-                    &mut path_book,
-                    &mut tunnel_runtime,
-                    &mut public_signal_endpoint,
-                    &mut last_nat_punch_attempt,
-                ) {
-                    eprintln!("nat: periodic hole-punch failed: {error}");
-                }
-                if let Err(error) = publish_private_announce_to_active_peers(
-                    &client,
-                    &app,
-                    own_pubkey.as_deref(),
-                    &presence,
-                    &tunnel_runtime,
-                    public_signal_endpoint.as_ref(),
-                    &mut outbound_announces,
-                )
-                .await
+                #[cfg(feature = "embedded-fips")]
+                if let Some(runtime) = fips_tunnel_runtime.as_ref()
+                    && let Err(error) = publish_fips_active_network_roster(runtime, &app).await
                 {
-                    let error_text = error.to_string();
-                    vpn_status = format!("Private announce failed ({error_text})");
-                }
-                if let Err(error) = client.publish(SignalPayload::Hello).await {
-                    let error_text = error.to_string();
-                    if publish_error_requires_reconnect(&error_text) {
-                        relay_connected = false;
-                        reconnect_attempt = reconnect_attempt.saturating_add(1);
-                        let delay = daemon_reconnect_backoff_delay(reconnect_attempt);
-                        reconnect_due = Instant::now() + delay;
-                        vpn_status = format!(
-                            "Relay disconnected; retry in {}s ({error_text})",
-                            delay.as_secs(),
-                        );
-                        eprintln!("daemon: hello publish indicates disconnected relays (retry in {}s): {error_text}", delay.as_secs());
-                    } else {
-                        vpn_status = format!("Hello publish failed ({error_text})");
-                    }
+                    eprintln!("fips: roster publish failed: {error}");
                 }
             }
             _ = tunnel_heartbeat_interval.tick() => {
@@ -1171,43 +477,25 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     continue;
                 }
 
-                if app.private_mesh_uses_fips() {
-                    #[cfg(feature = "embedded-fips")]
-                    if let Some(runtime) = fips_tunnel_runtime.as_ref() {
-                        let now = unix_timestamp();
-                        if let Err(error) = runtime.ping_peers(&network_id, now).await {
-                            eprintln!("fips: peer ping failed: {error}");
-                        }
-                        if let Err(error) = runtime.refresh_link_statuses().await {
-                            eprintln!("fips: peer link snapshot failed: {error}");
-                        }
-                        if let Err(error) = send_pending_fips_join_requests(
-                            runtime,
-                            &app,
-                            &mut fips_join_request_sends,
-                            now,
-                        )
-                        .await
-                        {
-                            eprintln!("fips: join request send failed: {error}");
-                        }
+                #[cfg(feature = "embedded-fips")]
+                if let Some(runtime) = fips_tunnel_runtime.as_ref() {
+                    let now = unix_timestamp();
+                    if let Err(error) = runtime.ping_peers(&network_id, now).await {
+                        eprintln!("fips: peer ping failed: {error}");
                     }
-                    continue;
-                }
-
-                let peer_announcements = direct_peer_announcements(&presence, relay_connected);
-                if !relay_connected
-                    && let Err(error) = maybe_run_nat_punch(
+                    if let Err(error) = runtime.refresh_link_statuses().await {
+                        eprintln!("fips: peer link snapshot failed: {error}");
+                    }
+                    if let Err(error) = send_pending_fips_join_requests(
+                        runtime,
                         &app,
-                        own_pubkey.as_deref(),
-                        peer_announcements,
-                        &mut path_book,
-                        &mut tunnel_runtime,
-                        &mut public_signal_endpoint,
-                        &mut last_nat_punch_attempt,
+                        &mut fips_join_request_sends,
+                        now,
                     )
-                {
-                    eprintln!("nat: cached peer hole-punch failed: {error}");
+                    .await
+                    {
+                        eprintln!("fips: join request send failed: {error}");
+                    }
                 }
                 if let Err(error) = apply_presence_runtime_update(
                     &app,
@@ -1219,28 +507,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     magic_dns_runtime.as_ref(),
                 ) {
                     vpn_status = format!("Tunnel heartbeat refresh failed ({error})");
-                }
-                if let Err(error) = heartbeat_pending_tunnel_peers(
-                    &app,
-                    own_pubkey.as_deref(),
-                    presence.known(),
-                    &tunnel_runtime,
-                ) {
-                    eprintln!("tunnel: peer heartbeat failed: {error}");
-                }
-                if relay_connected
-                    && let Err(error) = publish_private_announce_repair_to_known_peers(
-                        &client,
-                        &app,
-                        own_pubkey.as_deref(),
-                        &presence,
-                        &tunnel_runtime,
-                        public_signal_endpoint.as_ref(),
-                        &mut outbound_announces,
-                    )
-                    .await
-                {
-                    eprintln!("signal: known peer announce repair failed: {error}");
                 }
             }
             _ = network_interval.tick() => {
@@ -1254,7 +520,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 if resumed_after_sleep {
                     eprintln!("daemon: sleep/wake detected; resetting peer paths");
                     path_book.clear();
-                    last_nat_punch_attempt = None;
                 }
                 #[cfg(target_os = "macos")]
                 let underlay_repaired =
@@ -1370,7 +635,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     if underlay_repaired {
                         reset_tunnel_runtime_after_macos_underlay_repair(&mut tunnel_runtime);
                     }
-                    last_nat_punch_attempt = None;
                     match apply_presence_runtime_update(
                         &app,
                         own_pubkey.as_deref(),
@@ -1398,75 +662,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                 format!("Network change refresh failed ({error})");
                         }
                     }
-                }
-                if (network_changed || resumed_after_sleep)
-                    && relay_vpn_active(
-                        vpn_enabled,
-                        expected_peers,
-                        app.join_requests_enabled(),
-                    )
-                {
-                    if relay_connected {
-                        if network_changed {
-                            eprintln!("daemon: reconnecting relays after network change");
-                        } else {
-                            eprintln!("daemon: reconnecting relays after wake");
-                        }
-                    }
-                    client.disconnect().await;
-                    relay_connected = false;
-                    reconnect_attempt = 0;
-                    reconnect_due = Instant::now();
-                    outbound_announces.clear();
-                    vpn_status = if network_changed {
-                        "Reconnecting relays after network change".to_string()
-                    } else {
-                        "Reconnecting relays after wake".to_string()
-                    };
-                }
-
-                if !daemon_vpn_active(vpn_enabled, expected_peers) {
-                    continue;
-                }
-
-                let peer_announcements = direct_peer_announcements(&presence, relay_connected);
-                if let Err(error) = maybe_run_nat_punch(
-                    &app,
-                    own_pubkey.as_deref(),
-                    peer_announcements,
-                    &mut path_book,
-                    &mut tunnel_runtime,
-                    &mut public_signal_endpoint,
-                    &mut last_nat_punch_attempt,
-                ) {
-                    eprintln!("nat: hole-punch after network refresh failed: {error}");
-                }
-                if let Err(error) = heartbeat_pending_tunnel_peers(
-                    &app,
-                    own_pubkey.as_deref(),
-                    presence.known(),
-                    &tunnel_runtime,
-                ) {
-                    eprintln!("tunnel: peer heartbeat failed after network refresh: {error}");
-                }
-                if relay_connected
-                    && let Err(error) = publish_private_announce_to_known_peers(
-                        &client,
-                        &app,
-                        own_pubkey.as_deref(),
-                        &presence,
-                        &tunnel_runtime,
-                        public_signal_endpoint.as_ref(),
-                        &mut outbound_announces,
-                    )
-                    .await
-                {
-                    eprintln!("signal: known peer announce refresh failed after network change: {error}");
-                }
-                if relay_connected
-                    && let Err(error) = client.publish(SignalPayload::Hello).await
-                {
-                    eprintln!("signal: hello publish failed after network change: {error}");
                 }
             }
             _ = state_interval.tick() => {
@@ -1502,10 +697,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
 
                             presence.retain_participants(&configured_set);
                             path_book.retain_participants(&configured_set);
-                            outbound_announces.retain_participants(&configured_set);
-                            outbound_announces.clear();
                             fips_join_request_sends.clear();
-                            last_nat_punch_attempt = None;
                             if let Err(error) = refresh_fips_tunnel_config(
                                 runtime,
                                 &app,
@@ -1537,29 +729,12 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     let control_result = match request {
                         DaemonControlRequest::Stop => break,
                         DaemonControlRequest::Pause => {
-                            let was_vpn_active =
-                                daemon_vpn_active(vpn_enabled, expected_peers);
-                            if relay_connected && was_vpn_active {
-                                let _ = client
-                                    .publish(SignalPayload::Disconnect {
-                                        node_id: app.node.id.clone(),
-                                    })
-                                    .await;
-                            }
                             vpn_enabled = false;
                             let join_requests_active = app.join_requests_enabled();
-                            if !join_requests_active {
-                                client.disconnect().await;
-                                relay_connected = false;
-                            }
-                            reconnect_attempt = 0;
-                            reconnect_due = Instant::now();
                             port_mapping_runtime.stop().await;
                             public_signal_endpoint = None;
                             presence = PeerPresenceBook::default();
                             path_book.clear();
-                            outbound_announces.clear();
-                            last_nat_punch_attempt = None;
                             if let Err(error) = apply_presence_runtime_update(
                                 &app,
                                 own_pubkey.as_deref(),
@@ -1583,34 +758,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         DaemonControlRequest::Resume => {
                             if !vpn_enabled {
                                 vpn_enabled = true;
-                                relay_connected = false;
-                                reconnect_attempt = 0;
-                                reconnect_due = Instant::now();
-                                let _restored_peer_cache = if daemon_vpn_active(
-                                    vpn_enabled,
-                                    expected_peers,
-                                ) {
-                                    match restore_daemon_peer_cache(
-                                        DaemonPeerCacheRestore {
-                                            path: &peer_cache_file,
-                                            app: &app,
-                                            network_id: &network_id,
-                                            own_pubkey: own_pubkey.as_deref(),
-                                            now: unix_timestamp(),
-                                            announce_interval_secs: args.announce_interval_secs,
-                                        },
-                                        &mut presence,
-                                        &mut path_book,
-                                    ) {
-                                        Ok(restored) => restored,
-                                        Err(error) => {
-                                            eprintln!("daemon: failed to restore peer cache on resume: {error}");
-                                            false
-                                        }
-                                    }
-                                } else {
-                                    false
-                                };
                                 if let Err(error) = apply_presence_runtime_update(
                                     &app,
                                     own_pubkey.as_deref(),
@@ -1674,111 +821,21 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
 
                                     presence.retain_participants(&configured_set);
                                     path_book.retain_participants(&configured_set);
-                                    outbound_announces.retain_participants(&configured_set);
-                                    outbound_announces.clear();
-                                    last_nat_punch_attempt = None;
-                                    client.disconnect().await;
-                                    match NostrSignalingClient::from_secret_key_with_networks(
-                                        &app.nostr.secret_key,
-                                        signaling_networks_for_app(&app),
-                                    ) {
-                                        Ok(new_client) => {
-                                            client = new_client;
-                                            let join_requests_active = app.join_requests_enabled();
-                                            let vpn_active =
-                                                daemon_vpn_active(vpn_enabled, expected_peers);
-                                            if relay_vpn_active(
-                                                vpn_enabled,
-                                                expected_peers,
-                                                join_requests_active,
-                                            ) {
-                                                match client.connect(&relays).await {
-                                                    Ok(()) => {
-                                                        relay_connected = true;
-                                                        reconnect_attempt = 0;
-                                                        reconnect_due = Instant::now();
-                                                        if let Err(error) =
-                                                            publish_active_network_roster(
-                                                                &client,
-                                                                &app,
-                                                                None,
-                                                            )
-                                                            .await
-                                                        {
-                                                            eprintln!(
-                                                                "daemon: roster publish failed after config reload: {error}"
-                                                            );
-                                                        }
-                                                        vpn_status = if vpn_active {
-                                                            "Config reloaded".to_string()
-                                                        } else {
-                                                            daemon_vpn_idle_status(
-                                                                vpn_enabled,
-                                                                expected_peers,
-                                                                join_requests_active,
-                                                            )
-                                                            .to_string()
-                                                        };
-                                                        if vpn_active {
-                                                            if let Err(error) = publish_private_announce_to_known_peers(
-                                                                &client,
-                                                                &app,
-                                                                own_pubkey.as_deref(),
-                                                                &presence,
-                                                                &tunnel_runtime,
-                                                                public_signal_endpoint.as_ref(),
-                                                                &mut outbound_announces,
-                                                            ).await {
-                                                                vpn_status = format!(
-                                                                    "Config reloaded; private announce failed ({})",
-                                                                    error
-                                                                );
-                                                            }
-                                                            if let Err(error) = client.publish(SignalPayload::Hello).await {
-                                                                vpn_status = format!(
-                                                                    "Config reloaded; hello publish failed ({})",
-                                                                    error
-                                                                );
-                                                            }
-                                                        }
-                                                    }
-                                                    Err(error) => {
-                                                        relay_connected = false;
-                                                        reconnect_attempt = reconnect_attempt.saturating_add(1);
-                                                        let delay = daemon_reconnect_backoff_delay(reconnect_attempt);
-                                                        reconnect_due = Instant::now() + delay;
-                                                        vpn_status = format!(
-                                                            "Config reloaded; relay reconnect failed (retry in {}s: {})",
-                                                            delay.as_secs(),
-                                                            error
-                                                        );
-                                                    }
-                                                }
-                                            } else {
-                                                relay_connected = false;
-                                                reconnect_attempt = 0;
-                                                reconnect_due = Instant::now();
-                                                port_mapping_runtime.stop().await;
-                                                public_signal_endpoint = None;
-                                                vpn_status = if vpn_enabled {
-                                                    daemon_vpn_idle_status(
-                                                        vpn_enabled,
-                                                        expected_peers,
-                                                        join_requests_active,
-                                                    )
-                                                    .to_string()
-                                                } else {
-                                                    "Config reloaded (paused)".to_string()
-                                                };
-                                            }
-                                        }
-                                        Err(error) => {
-                                            vpn_status = format!(
-                                                "Config reload failed (signal client init): {}",
-                                                error
-                                            );
-                                        }
-                                    }
+                                    let join_requests_active = app.join_requests_enabled();
+                                    let vpn_active =
+                                        daemon_vpn_active(vpn_enabled, expected_peers);
+                                    vpn_status = if vpn_active {
+                                        "Config reloaded".to_string()
+                                    } else if vpn_enabled {
+                                        daemon_vpn_idle_status(
+                                            vpn_enabled,
+                                            expected_peers,
+                                            join_requests_active,
+                                        )
+                                        .to_string()
+                                    } else {
+                                        "Config reloaded (paused)".to_string()
+                                    };
 
                                     if let Err(error) = apply_presence_runtime_update(
                                         &app,
@@ -1883,7 +940,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         &current_fips_peer_statuses!(fips_tunnel_runtime),
                         public_signal_endpoint.as_ref(),
                         &vpn_status,
-                        relay_connected,
                         &network_snapshot.summary(network_changed_at, captive_portal),
                         &port_mapping_runtime.status(),
                     );
@@ -1910,60 +966,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             );
                         }
                     }
-                }
-                if daemon_vpn_active(vpn_enabled, expected_peers) {
-                    let now = unix_timestamp();
-                    let removed = presence.prune_stale(
-                        now,
-                        peer_signal_timeout_secs(args.announce_interval_secs),
-                    );
-                    for participant in &removed {
-                        outbound_announces.forget(participant);
-                    }
-                    let paths_pruned =
-                        path_book.prune_stale(now, peer_path_cache_timeout_secs(args.announce_interval_secs));
-                    let recent = recently_seen_participants(
-                        &presence,
-                        now,
-                        peer_signal_timeout_secs(args.announce_interval_secs),
-                    );
-                    outbound_announces.retain_participants(&recent);
-                    if !removed.is_empty() || paths_pruned {
-                        last_nat_punch_attempt = None;
-                        if let Err(error) = apply_presence_runtime_update(
-                            &app,
-                            own_pubkey.as_deref(),
-                            &presence,
-                            &mut path_book,
-                            now,
-                            &mut tunnel_runtime,
-                            magic_dns_runtime.as_ref(),
-                        ) {
-                            vpn_status = format!("Stale peer expiry update failed ({error})");
-                        } else {
-                            maybe_log_presence_mesh_count(
-                                &app,
-                                own_pubkey.as_deref(),
-                                presence.active(),
-                                expected_peers,
-                                &mut last_mesh_count,
-                            );
-                        }
-                    }
-                }
-                if let Err(error) = write_daemon_peer_cache_if_changed(
-                    DaemonPeerCacheWrite {
-                        path: &peer_cache_file,
-                        network_id: &network_id,
-                        own_pubkey: own_pubkey.as_deref(),
-                        presence: &presence,
-                        path_book: &path_book,
-                        tunnel_runtime: &tunnel_runtime,
-                        now: unix_timestamp(),
-                    },
-                    &mut last_written_peer_cache,
-                ) {
-                    eprintln!("daemon: failed to persist peer cache: {error}");
                 }
                 let fips_peer_statuses = current_fips_peer_statuses!(fips_tunnel_runtime);
                 #[cfg(feature = "embedded-fips")]
@@ -2000,7 +1002,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     &fips_peer_statuses,
                     public_signal_endpoint.as_ref(),
                     &vpn_status,
-                    relay_connected,
                     &network_snapshot.summary(network_changed_at, captive_portal),
                     &port_mapping_runtime.status(),
                 );
@@ -2010,286 +1011,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     eprintln!("daemon: failed to persist network cleanup state: {error}");
                 }
             }
-            message = async {
-                if relay_vpn_active(
-                    vpn_enabled,
-                    expected_peers,
-                    app.join_requests_enabled(),
-                ) && relay_connected
-                {
-                    client.recv().await
-                } else {
-                    std::future::pending::<Option<SignalEnvelope>>().await
-                }
-            } => {
-                let Some(message) = message else {
-                    relay_connected = false;
-                    reconnect_attempt = reconnect_attempt.saturating_add(1);
-                    let delay = daemon_reconnect_backoff_delay(reconnect_attempt);
-                    reconnect_due = Instant::now() + delay;
-                    vpn_status = format!("Signal stream closed; retry in {}s", delay.as_secs());
-                    eprintln!("daemon: signal stream closed (retry in {}s)", delay.as_secs());
-                    continue;
-                };
-
-                let sender_pubkey = message.sender_pubkey;
-                let payload = message.payload.clone();
-                let vpn_active = daemon_vpn_active(vpn_enabled, expected_peers);
-                if let SignalPayload::JoinRequest {
-                    requested_at,
-                    request,
-                } = &payload
-                {
-                    persist_inbound_join_request(
-                        &mut app,
-                        &config_path,
-                        &sender_pubkey,
-                        *requested_at,
-                        &request.network_id,
-                        &request.requester_node_name,
-                        &mut vpn_status,
-                    );
-                    continue;
-                }
-
-                if let SignalPayload::Roster(roster) = &payload {
-                    match persist_shared_network_roster(
-                        &mut app,
-                        &config_path,
-                        &sender_pubkey,
-                        &message.network_id,
-                        roster,
-                        &mut vpn_status,
-                    ) {
-                        Ok(Some(_)) => {
-                            let reload = build_daemon_reload_config(
-                                app.clone(),
-                                app.effective_network_id(),
-                                &args.relay,
-                            );
-                            let configured_set = reload
-                                .configured_participants
-                                .iter()
-                                .cloned()
-                                .collect::<HashSet<_>>();
-                            app = reload.app;
-                            network_id = reload.network_id;
-                            expected_peers = reload.expected_peers;
-                            own_pubkey = reload.own_pubkey;
-                            relays = reload.relays;
-
-                            presence.retain_participants(&configured_set);
-                            path_book.retain_participants(&configured_set);
-                            outbound_announces.retain_participants(&configured_set);
-                            outbound_announces.clear();
-                            last_nat_punch_attempt = None;
-                            client.disconnect().await;
-                            match NostrSignalingClient::from_secret_key_with_networks(
-                                &app.nostr.secret_key,
-                                signaling_networks_for_app(&app),
-                            ) {
-                                Ok(new_client) => {
-                                    client = new_client;
-                                    let join_requests_active = app.join_requests_enabled();
-                                    if relay_vpn_active(
-                                        vpn_enabled,
-                                        expected_peers,
-                                        join_requests_active,
-                                    ) {
-                                        match client.connect(&relays).await {
-                                            Ok(()) => {
-                                                relay_connected = true;
-                                                reconnect_attempt = 0;
-                                                reconnect_due = Instant::now();
-                                                if let Err(error) = apply_presence_runtime_update(
-                                                    &app,
-                                                    own_pubkey.as_deref(),
-                                                    &presence,
-                                                    &mut path_book,
-                                                    unix_timestamp(),
-                                                    &mut tunnel_runtime,
-                                                    magic_dns_runtime.as_ref(),
-                                                ) {
-                                                    vpn_status = format!(
-                                                        "Roster applied, but tunnel reload failed ({error})"
-                                                    );
-                                                }
-                                                if let Err(error) =
-                                                    publish_active_network_roster(
-                                                        &client,
-                                                        &app,
-                                                        None,
-                                                    )
-                                                    .await
-                                                {
-                                                    eprintln!(
-                                                        "daemon: roster publish failed after roster apply: {error}"
-                                                    );
-                                                }
-                                                if daemon_vpn_active(vpn_enabled, expected_peers)
-                                                    && let Err(error) = client.publish(SignalPayload::Hello).await
-                                                {
-                                                    eprintln!(
-                                                        "daemon: hello publish failed after roster apply: {error}"
-                                                    );
-                                                }
-                                            }
-                                            Err(error) => {
-                                                relay_connected = false;
-                                                reconnect_attempt =
-                                                    reconnect_attempt.saturating_add(1);
-                                                let delay =
-                                                    daemon_reconnect_backoff_delay(reconnect_attempt);
-                                                reconnect_due = Instant::now() + delay;
-                                                vpn_status = format!(
-                                                    "Roster applied; relay reconnect failed (retry in {}s: {error})",
-                                                    delay.as_secs(),
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                                Err(error) => {
-                                    relay_connected = false;
-                                    vpn_status =
-                                        format!("Roster applied, but signaling reload failed ({error})");
-                                }
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            eprintln!(
-                                "daemon: ignoring invalid shared roster from {sender_pubkey}: {error}"
-                            );
-                        }
-                    }
-                    continue;
-                }
-
-                if matches!(&payload, SignalPayload::Hello | SignalPayload::Announce(_))
-                    && let Err(error) = publish_active_network_roster(
-                        &client,
-                        &app,
-                        Some(std::slice::from_ref(&sender_pubkey)),
-                    )
-                    .await
-                {
-                    eprintln!("daemon: targeted roster publish failed: {error}");
-                }
-
-                if !vpn_active {
-                    continue;
-                }
-
-                let changed =
-                    presence.apply_signal(sender_pubkey.clone(), message.payload, unix_timestamp());
-                if matches!(&payload, SignalPayload::Disconnect { .. }) {
-                    outbound_announces.forget(&sender_pubkey);
-                }
-                if !changed {
-                    if matches!(&payload, SignalPayload::Hello | SignalPayload::Announce(_))
-                        && let Err(error) = publish_private_announce_to_participants(
-                            &client,
-                            &app,
-                            &tunnel_runtime,
-                            public_signal_endpoint.as_ref(),
-                            &mut outbound_announces,
-                            std::slice::from_ref(&sender_pubkey),
-                            Some(presence.known()),
-                            None,
-                        )
-                        .await
-                    {
-                        eprintln!("signal: targeted private announce failed: {error}");
-                    }
-                    continue;
-                }
-
-                if let Err(error) = apply_presence_runtime_update(
-                    &app,
-                    own_pubkey.as_deref(),
-                    &presence,
-                    &mut path_book,
-                    unix_timestamp(),
-                    &mut tunnel_runtime,
-                    magic_dns_runtime.as_ref(),
-                ) {
-                    let error_text = error.to_string();
-                    vpn_status = format!("Tunnel update failed ({error_text})");
-                } else {
-                    if let Err(error) = maybe_run_nat_punch(
-                        &app,
-                        own_pubkey.as_deref(),
-                        presence.active(),
-                        &mut path_book,
-                        &mut tunnel_runtime,
-                        &mut public_signal_endpoint,
-                        &mut last_nat_punch_attempt,
-                    ) {
-                        eprintln!("nat: hole-punch after peer signal failed: {error}");
-                    }
-                    if let Err(error) = heartbeat_pending_tunnel_peers(
-                        &app,
-                        own_pubkey.as_deref(),
-                        presence.known(),
-                        &tunnel_runtime,
-                    ) {
-                        eprintln!("tunnel: peer heartbeat failed after peer signal: {error}");
-                    }
-                    if matches!(&payload, SignalPayload::Hello | SignalPayload::Announce(_))
-                        && {
-                            maybe_reset_targeted_announce_cache_for_hello(
-                                &mut outbound_announces,
-                                &sender_pubkey,
-                                &payload,
-                            );
-                            true
-                        }
-                        && let Err(error) = publish_private_announce_to_participants(
-                            &client,
-                            &app,
-                            &tunnel_runtime,
-                            public_signal_endpoint.as_ref(),
-                            &mut outbound_announces,
-                            std::slice::from_ref(&sender_pubkey),
-                            Some(presence.known()),
-                            None,
-                        )
-                        .await
-                    {
-                        eprintln!("signal: targeted private announce failed: {error}");
-                    }
-                    vpn_status = if daemon_vpn_active(vpn_enabled, expected_peers) {
-                        "Connected".to_string()
-                    } else {
-                        daemon_vpn_idle_status(
-                            vpn_enabled,
-                            expected_peers,
-                            app.join_requests_enabled(),
-                        )
-                        .to_string()
-                    };
-                }
-
-                maybe_log_presence_mesh_count(
-                    &app,
-                    own_pubkey.as_deref(),
-                    presence.active(),
-                    expected_peers,
-                    &mut last_mesh_count,
-                );
-            }
         }
     }
 
-    if relay_connected && daemon_vpn_active(vpn_enabled, expected_peers) {
-        let _ = client
-            .publish(SignalPayload::Disconnect {
-                node_id: app.node.id.clone(),
-            })
-            .await;
-    }
-    client.disconnect().await;
     port_mapping_runtime.stop().await;
     #[cfg(feature = "embedded-fips")]
     if let Some(runtime) = fips_tunnel_runtime
@@ -2310,7 +1034,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         listen_port: 0,
         vpn_enabled: false,
         vpn_active: false,
-        relay_connected: false,
         vpn_status: "Disconnected".to_string(),
         expected_peer_count: expected_peers,
         connected_peer_count: 0,
@@ -2452,12 +1175,11 @@ pub(crate) fn build_daemon_runtime_state(
     fips_peer_statuses: &[MeshPeerStatus],
     public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
     vpn_status: &str,
-    relay_connected: bool,
     network: &NetworkSummary,
     port_mapping: &PortMappingStatus,
 ) -> DaemonRuntimeState {
+    let _ = presence;
     let own_pubkey = app.own_nostr_pubkey_hex().ok();
-    let runtime_peers = tunnel_runtime.peer_status().ok();
     let now = unix_timestamp();
     let listen_port = tunnel_runtime.listen_port(app.node.listen_port);
     let local_endpoint = local_signal_endpoint(app, listen_port);
@@ -2465,139 +1187,65 @@ pub(crate) fn build_daemon_runtime_state(
         .unwrap_or_else(|| local_endpoint.clone());
     let mut peers = Vec::new();
 
-    if app.private_mesh_uses_fips() {
-        let fips_status_by_pubkey = fips_peer_statuses
-            .iter()
-            .map(|status| (status.pubkey.as_str(), status))
-            .collect::<HashMap<_, _>>();
-        let network_id = app.effective_network_id();
-        for participant in &app.participant_pubkeys_hex() {
-            if Some(participant.as_str()) == own_pubkey.as_deref() {
-                continue;
-            }
-            let status = if vpn_active {
-                fips_status_by_pubkey.get(participant.as_str()).copied()
-            } else {
-                None
-            };
-            let last_seen_at = status.and_then(|status| status.last_seen_at);
-            let reachable = vpn_active && status.is_some_and(|status| status.connected);
-            let fips_transport_addr = status.and_then(|status| status.transport_addr.clone());
-            let tunnel_ip = derive_mesh_tunnel_ip(&network_id, participant).unwrap_or_default();
-            peers.push(DaemonPeerState {
-                participant_pubkey: participant.clone(),
-                node_id: String::new(),
-                tunnel_ip,
-                endpoint: "fips".to_string(),
-                runtime_endpoint: fips_transport_addr
-                    .clone()
-                    .or_else(|| reachable.then(|| "fips".to_string())),
-                fips_endpoint_npub: status
-                    .map(|status| status.endpoint_npub.clone())
-                    .unwrap_or_default(),
-                fips_transport_addr: fips_transport_addr.unwrap_or_default(),
-                fips_transport_type: status
-                    .and_then(|status| status.transport_type.clone())
-                    .unwrap_or_default(),
-                fips_srtt_ms: status.and_then(|status| status.srtt_ms),
-                fips_packets_sent: status.map(|status| status.link_packets_sent).unwrap_or(0),
-                fips_packets_recv: status.map(|status| status.link_packets_recv).unwrap_or(0),
-                fips_bytes_sent: status.map(|status| status.link_bytes_sent).unwrap_or(0),
-                fips_bytes_recv: status.map(|status| status.link_bytes_recv).unwrap_or(0),
-                tx_bytes: status.map(|status| status.tx_bytes).unwrap_or(0),
-                rx_bytes: status.map(|status| status.rx_bytes).unwrap_or(0),
-                public_key: String::new(),
-                advertised_routes: fips_peer_advertised_routes(app, participant),
-                presence_timestamp: last_seen_at.unwrap_or(0),
-                last_signal_seen_at: last_seen_at,
-                reachable,
-                last_handshake_at: last_seen_at,
-                error: if reachable {
-                    None
-                } else {
-                    status
-                        .and_then(|status| status.error.clone())
-                        .or_else(|| Some("fips presence pending".to_string()))
-                },
-            });
+    let fips_status_by_pubkey = fips_peer_statuses
+        .iter()
+        .map(|status| (status.pubkey.as_str(), status))
+        .collect::<HashMap<_, _>>();
+    let network_id = app.effective_network_id();
+    for participant in &app.participant_pubkeys_hex() {
+        if Some(participant.as_str()) == own_pubkey.as_deref() {
+            continue;
         }
-    } else {
-        for participant in &app.participant_pubkeys_hex() {
-            if Some(participant.as_str()) == own_pubkey.as_deref() {
-                continue;
-            }
-
-            let announcement = vpn_active
-                .then(|| presence.announcement_for(participant))
-                .flatten();
-            let Some(announcement) = announcement else {
-                let transport = daemon_peer_transport_state(None, false, None, now);
-                peers.push(DaemonPeerState {
-                    participant_pubkey: participant.clone(),
-                    node_id: String::new(),
-                    tunnel_ip: String::new(),
-                    endpoint: String::new(),
-                    runtime_endpoint: None,
-                    fips_endpoint_npub: String::new(),
-                    fips_transport_addr: String::new(),
-                    fips_transport_type: String::new(),
-                    fips_srtt_ms: None,
-                    fips_packets_sent: 0,
-                    fips_packets_recv: 0,
-                    fips_bytes_sent: 0,
-                    fips_bytes_recv: 0,
-                    tx_bytes: 0,
-                    rx_bytes: 0,
-                    public_key: String::new(),
-                    advertised_routes: Vec::new(),
-                    presence_timestamp: 0,
-                    last_signal_seen_at: None,
-                    reachable: transport.reachable,
-                    last_handshake_at: transport.last_handshake_at,
-                    error: transport.error,
-                });
-                continue;
-            };
-
-            let signal_active = vpn_active && presence.active().contains_key(participant);
-            let runtime_peer = if vpn_active {
-                peer_runtime_lookup(announcement, runtime_peers.as_ref())
-            } else {
+        let status = if vpn_active {
+            fips_status_by_pubkey.get(participant.as_str()).copied()
+        } else {
+            None
+        };
+        let last_seen_at = status.and_then(|status| status.last_seen_at);
+        let reachable = vpn_active && status.is_some_and(|status| status.connected);
+        let fips_transport_addr = status.and_then(|status| status.transport_addr.clone());
+        let tunnel_ip = derive_mesh_tunnel_ip(&network_id, participant).unwrap_or_default();
+        peers.push(DaemonPeerState {
+            participant_pubkey: participant.clone(),
+            node_id: String::new(),
+            tunnel_ip,
+            endpoint: "fips".to_string(),
+            runtime_endpoint: fips_transport_addr
+                .clone()
+                .or_else(|| reachable.then(|| "fips".to_string())),
+            fips_endpoint_npub: status
+                .map(|status| status.endpoint_npub.clone())
+                .unwrap_or_default(),
+            fips_transport_addr: fips_transport_addr.unwrap_or_default(),
+            fips_transport_type: status
+                .and_then(|status| status.transport_type.clone())
+                .unwrap_or_default(),
+            fips_srtt_ms: status.and_then(|status| status.srtt_ms),
+            fips_packets_sent: status.map(|status| status.link_packets_sent).unwrap_or(0),
+            fips_packets_recv: status.map(|status| status.link_packets_recv).unwrap_or(0),
+            fips_bytes_sent: status.map(|status| status.link_bytes_sent).unwrap_or(0),
+            fips_bytes_recv: status.map(|status| status.link_bytes_recv).unwrap_or(0),
+            tx_bytes: status.map(|status| status.tx_bytes).unwrap_or(0),
+            rx_bytes: status.map(|status| status.rx_bytes).unwrap_or(0),
+            public_key: String::new(),
+            advertised_routes: fips_peer_advertised_routes(app, participant),
+            presence_timestamp: last_seen_at.unwrap_or(0),
+            last_signal_seen_at: last_seen_at,
+            reachable,
+            last_handshake_at: last_seen_at,
+            error: if reachable {
                 None
-            };
-            let transport =
-                daemon_peer_transport_state(Some(announcement), signal_active, runtime_peer, now);
-
-            peers.push(DaemonPeerState {
-                participant_pubkey: participant.clone(),
-                node_id: announcement.node_id.clone(),
-                tunnel_ip: announcement.tunnel_ip.clone(),
-                endpoint: announcement.endpoint.clone(),
-                runtime_endpoint: runtime_peer.and_then(|peer| peer.endpoint.clone()),
-                fips_endpoint_npub: String::new(),
-                fips_transport_addr: String::new(),
-                fips_transport_type: String::new(),
-                fips_srtt_ms: None,
-                fips_packets_sent: 0,
-                fips_packets_recv: 0,
-                fips_bytes_sent: 0,
-                fips_bytes_recv: 0,
-                tx_bytes: runtime_peer.map(|peer| peer.tx_bytes).unwrap_or(0),
-                rx_bytes: runtime_peer.map(|peer| peer.rx_bytes).unwrap_or(0),
-                public_key: announcement.public_key.clone(),
-                advertised_routes: announcement.advertised_routes.clone(),
-                presence_timestamp: announcement.timestamp,
-                last_signal_seen_at: presence.last_seen_at(participant),
-                reachable: transport.reachable,
-                last_handshake_at: transport.last_handshake_at,
-                error: transport.error,
-            });
-        }
+            } else {
+                status
+                    .and_then(|status| status.error.clone())
+                    .or_else(|| Some("fips presence pending".to_string()))
+            },
+        });
     }
 
     let connected_peer_count = if !vpn_active {
         0
-    } else if app.private_mesh_uses_fips() {
+    } else {
         let participant_pubkeys = app
             .participant_pubkeys_hex()
             .into_iter()
@@ -2608,30 +1256,9 @@ pub(crate) fn build_daemon_runtime_state(
             .filter(|status| participant_pubkeys.contains(&status.pubkey))
             .filter(|status| status.connected)
             .count()
-    } else {
-        connected_peer_count_for_runtime(
-            app,
-            own_pubkey.as_deref(),
-            presence,
-            runtime_peers.as_ref(),
-            now,
-        )
     };
-    let signal_connected = if app.private_mesh_uses_fips() {
-        vpn_active
-    } else {
-        relay_connected
-    };
-    let mesh_ready = vpn_active && (signal_connected || connected_peer_count > 0);
-    let health = build_health_issues(
-        app,
-        vpn_active,
-        signal_connected,
-        mesh_ready,
-        network,
-        port_mapping,
-        &peers,
-    );
+    let mesh_ready = vpn_active;
+    let health = build_health_issues(app, vpn_active, mesh_ready, network, port_mapping, &peers);
     DaemonRuntimeState {
         updated_at: now,
         binary_version: PRODUCT_VERSION.to_string(),
@@ -2640,7 +1267,6 @@ pub(crate) fn build_daemon_runtime_state(
         listen_port,
         vpn_enabled,
         vpn_active,
-        relay_connected: signal_connected,
         vpn_status: vpn_status.to_string(),
         expected_peer_count: expected_peers,
         connected_peer_count,
@@ -2663,7 +1289,6 @@ pub(crate) fn persist_daemon_runtime_state(
     fips_peer_statuses: &[MeshPeerStatus],
     public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
     vpn_status: &str,
-    relay_connected: bool,
     network: &NetworkSummary,
     port_mapping: &PortMappingStatus,
 ) -> Result<()> {
@@ -2679,7 +1304,6 @@ pub(crate) fn persist_daemon_runtime_state(
             fips_peer_statuses,
             public_signal_endpoint,
             vpn_status,
-            relay_connected,
             network,
             port_mapping,
         ),

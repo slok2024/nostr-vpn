@@ -13,7 +13,6 @@ fn daemon_runtime_state_requires_advertised_routes() {
   "updated_at": 1773650797,
   "vpn_enabled": true,
   "vpn_active": true,
-  "relay_connected": true,
   "vpn_status": "Connected",
   "expected_peer_count": 1,
   "connected_peer_count": 1,
@@ -51,7 +50,6 @@ fn read_daemon_state_trims_nul_padding() {
   "binary_version": "test",
   "vpn_enabled": true,
   "vpn_active": true,
-  "relay_connected": false,
   "vpn_status": "Ready",
   "expected_peer_count": 0,
   "connected_peer_count": 0,
@@ -86,7 +84,6 @@ fn daemon_control_request_projects_desired_vpn_state_immediately() {
         updated_at: 1,
         vpn_enabled: true,
         vpn_active: true,
-        relay_connected: true,
         vpn_status: "VPN on".to_string(),
         expected_peer_count: 1,
         connected_peer_count: 1,
@@ -228,7 +225,7 @@ fn persist_daemon_runtime_state_marks_vpn_on_as_active() {
     let state_path = dir.join("daemon.state.json");
 
     let mut config = AppConfig::generated();
-    config.private_data_plane = nostr_vpn_core::data_plane::PrivateDataPlane::WireGuard;
+    config.private_data_plane = nostr_vpn_core::data_plane::PrivateDataPlane::Fips;
     config.networks[0].participants = vec!["11".repeat(32)];
     let presence = PeerPresenceBook::default();
     let tunnel_runtime = crate::CliTunnelRuntime::new("utun100");
@@ -243,7 +240,6 @@ fn persist_daemon_runtime_state_marks_vpn_on_as_active() {
         &[],
         None,
         "VPN on",
-        false,
         &nostr_vpn_core::diagnostics::NetworkSummary::default(),
         &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
     )
@@ -254,7 +250,6 @@ fn persist_daemon_runtime_state_marks_vpn_on_as_active() {
         .expect("daemon state should exist");
     assert!(state.vpn_active);
     assert_eq!(state.vpn_status, "VPN on");
-    assert!(!state.relay_connected);
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -277,7 +272,6 @@ fn fips_runtime_state_is_ready_without_waiting_for_every_peer() {
         &[],
         None,
         "VPN on",
-        false,
         &nostr_vpn_core::diagnostics::NetworkSummary::default(),
         &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
     );
@@ -324,7 +318,6 @@ fn daemon_runtime_state_marks_peers_unreachable_when_vpn_is_off() {
         &[peer_status],
         None,
         "Paused",
-        false,
         &nostr_vpn_core::diagnostics::NetworkSummary::default(),
         &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
     );
@@ -618,7 +611,6 @@ fn daemon_runtime_state_tracks_live_endpoint_and_listen_port() {
         &[],
         Some(&public_endpoint),
         "Connected",
-        true,
         &nostr_vpn_core::diagnostics::NetworkSummary::default(),
         &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
     );

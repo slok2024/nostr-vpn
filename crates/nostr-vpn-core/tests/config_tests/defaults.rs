@@ -2,15 +2,7 @@ use super::*;
 
 #[test]
 fn default_relays_match_hashtree_defaults() {
-    assert_eq!(
-        DEFAULT_RELAYS,
-        [
-            "wss://temp.iris.to",
-            "wss://relay.damus.io",
-            "wss://relay.snort.social",
-            "wss://relay.primal.net",
-        ]
-    );
+    assert!(DEFAULT_RELAYS.is_empty());
 }
 
 #[test]
@@ -34,7 +26,7 @@ fn generated_config_auto_populates_keys() {
     assert!(!config.nostr.public_key.is_empty());
     assert!(!config.node_name.trim().is_empty());
     assert_ne!(config.node_name, "nostr-vpn-node");
-    assert!(!config.nostr.relays.is_empty());
+    assert!(config.nostr.relays.is_empty());
     assert!(!config.auto_disconnect_relays_when_mesh_ready);
     assert!(config.autoconnect);
     assert!(config.lan_discovery_enabled);
