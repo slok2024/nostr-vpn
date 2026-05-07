@@ -238,6 +238,7 @@ impl NativeAppRuntime {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn state(&self) -> NativeAppState {
         let capabilities = current_runtime_capabilities();
         let own_pubkey_hex = self.config.own_nostr_pubkey_hex().unwrap_or_default();
@@ -1030,7 +1031,7 @@ impl NativeAppRuntime {
         own_pubkey_hex: &str,
         vpn_active: bool,
     ) -> NativeParticipantState {
-        let daemon_peer = vpn_active.then(|| ()).and_then(|()| {
+        let daemon_peer = vpn_active.then_some(()).and_then(|()| {
             self.daemon_state.as_ref().and_then(|state| {
                 state
                     .peers
@@ -1583,7 +1584,9 @@ fn peer_link_text(peer: &DaemonPeerState) -> Option<String> {
     let transport = non_empty(&peer.fips_transport_type).unwrap_or_else(|| "fips".to_string());
     let mut text = format!("{transport} {}", shorten_middle(&addr, 22, 10));
     if let Some(srtt_ms) = peer.fips_srtt_ms {
-        text.push_str(&format!(" ({srtt_ms} ms)"));
+        text.push_str(" (");
+        text.push_str(&srtt_ms.to_string());
+        text.push_str(" ms)");
     }
     Some(text)
 }

@@ -74,9 +74,10 @@ impl MobileTunnelConfig {
         route_targets.sort();
         route_targets.dedup();
 
-        let local_address = derive_mesh_tunnel_ip(&network_id, &own_pubkey)
-            .map(|tunnel_ip| local_interface_address_for_tunnel(&tunnel_ip))
-            .unwrap_or_else(|| local_interface_address_for_tunnel(&app.node.tunnel_ip));
+        let local_address = derive_mesh_tunnel_ip(&network_id, &own_pubkey).map_or_else(
+            || local_interface_address_for_tunnel(&app.node.tunnel_ip),
+            |tunnel_ip| local_interface_address_for_tunnel(&tunnel_ip),
+        );
 
         Ok(Self {
             identity_nsec: app.nostr.secret_key.clone(),
