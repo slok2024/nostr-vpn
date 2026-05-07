@@ -49,7 +49,7 @@ import org.nostrvpn.app.core.ParticipantState
 import org.nostrvpn.app.core.RelayState
 
 @Composable
-internal fun Hero(state: AppState, dispatch: (JSONObject) -> Unit) {
+internal fun Hero(state: AppState, network: NetworkState?, dispatch: (JSONObject) -> Unit) {
     AppCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -61,7 +61,7 @@ internal fun Hero(state: AppState, dispatch: (JSONObject) -> Unit) {
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    localDeviceTitle(state),
+                    networkTitle(network),
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -91,10 +91,8 @@ internal fun Hero(state: AppState, dispatch: (JSONObject) -> Unit) {
     }
 }
 
-private fun localDeviceTitle(state: AppState): String =
-    state.selfMagicDnsName
-        .ifBlank { state.nodeName }
-        .ifBlank { "This device" }
+private fun networkTitle(network: NetworkState?): String =
+    network?.name?.ifBlank { "Private network" } ?: "Private network"
 
 private fun peerSummary(state: AppState): String {
     if (state.expectedPeerCount == 0L) {
@@ -104,7 +102,7 @@ private fun peerSummary(state: AppState): String {
 }
 
 @Composable
-internal fun ParticipantRow(participant: ParticipantState) {
+internal fun ParticipantRow(participant: ParticipantState, isSelf: Boolean = false) {
     AppCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Dot(selected = participant.reachable)
@@ -117,6 +115,7 @@ internal fun ParticipantRow(participant: ParticipantState) {
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (isSelf) Pill("Self", Color(0xFFECFDF5), Ok)
                     if (participant.isAdmin) Pill("Admin", Color(0xFFF5F3FF), Accent)
                     if (participant.offersExitNode) Pill("Exit", Color(0xFFFFF7ED), Color(0xFFA16207))
                 }

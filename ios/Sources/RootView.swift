@@ -39,7 +39,7 @@ private struct DevicesPage: View {
                     NoticeCard(text: model.state.error.isEmpty ? model.statusMessage : model.state.error)
                 }
                 if let network = model.activeNetwork {
-                    ForEach(visibleParticipants(network)) { participant in
+                    ForEach(network.participants) { participant in
                         ParticipantRow(model: model, participant: participant)
                     }
                     ForEach(network.inboundJoinRequests) { request in
@@ -85,12 +85,6 @@ private struct DevicesPage: View {
         }
     }
 
-    private func visibleParticipants(_ network: NetworkState) -> [ParticipantState] {
-        guard !model.state.ownNpub.isEmpty else {
-            return network.participants
-        }
-        return network.participants.filter { $0.npub != model.state.ownNpub }
-    }
 }
 
 private struct AddDeviceSheet: View {
@@ -214,7 +208,7 @@ private struct HeroCard: View {
                     .fill(model.state.vpnActive ? AppColors.ok : Color.gray.opacity(0.35))
                     .frame(width: 12, height: 12)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(localDeviceTitle)
+                    Text(heroNetworkTitle)
                         .font(.title2.bold())
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
@@ -252,14 +246,11 @@ private struct HeroCard: View {
         return "\(model.state.connectedPeerCount) of \(model.state.expectedPeerCount) connected"
     }
 
-    private var localDeviceTitle: String {
-        if !model.state.selfMagicDnsName.isEmpty {
-            return model.state.selfMagicDnsName
+    private var heroNetworkTitle: String {
+        if let networkName = model.activeNetwork?.displayName, !networkName.isEmpty {
+            return networkName
         }
-        if !model.state.nodeName.isEmpty {
-            return model.state.nodeName
-        }
-        return "This device"
+        return "Private network"
     }
 }
 
@@ -280,6 +271,9 @@ private struct ParticipantRow: View {
                             .lineLimit(1)
                         if participant.isAdmin {
                             Pill("Admin", tint: AppColors.accent)
+                        }
+                        if participant.npub == model.state.ownNpub && !model.state.ownNpub.isEmpty {
+                            Pill("Self", tint: AppColors.ok)
                         }
                         if participant.offersExitNode {
                             Pill("Exit", tint: .orange)

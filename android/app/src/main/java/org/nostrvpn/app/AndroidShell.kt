@@ -105,7 +105,7 @@ internal fun NostrVpnApp(
             contentPadding = PaddingValues(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item { Hero(state, dispatch) }
+            item { Hero(state, network, dispatch) }
             if (state.error.isNotBlank()) {
                 item { Notice(state.error) }
             }
@@ -199,13 +199,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.devicesPage(
         item { EmptyCard("No network") }
         return
     }
-    val participants = if (state.ownNpub.isBlank()) {
-        network.participants
-    } else {
-        network.participants.filter { it.npub != state.ownNpub }
-    }
-    items(participants, key = { it.pubkeyHex }) { participant ->
-        ParticipantRow(participant)
+    items(network.participants, key = { it.pubkeyHex.ifBlank { it.npub } }) { participant ->
+        ParticipantRow(participant, isSelf = participant.npub == state.ownNpub && state.ownNpub.isNotBlank())
     }
     items(network.inboundJoinRequests, key = { it.requesterNpub }) { request ->
         AppCard {
