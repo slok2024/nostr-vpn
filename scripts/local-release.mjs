@@ -161,6 +161,14 @@ function envFlagEnabled(value) {
   return /^(1|true|yes|on)$/i.test(String(value ?? '').trim())
 }
 
+function cargoTargetDir(env = process.env) {
+  const configured = String(env.CARGO_TARGET_DIR ?? '').trim()
+  if (configured.length === 0) {
+    return join(repoRoot, 'target')
+  }
+  return resolve(repoRoot, configured)
+}
+
 function run(command, args, { cwd = repoRoot, env = process.env, capture = false, dryRun = false } = {}) {
   const rendered = [command, ...args].map(quote).join(' ')
   console.log(`$ ${rendered}`)
@@ -422,7 +430,7 @@ function buildMacosArtifacts({ tag, dryRun, builtLines }) {
   run('bash', [join(repoRoot, 'scripts', 'macos-build'), 'macos-build'], { env, dryRun })
 
   packageUnixCliTarball({
-    binaryPath: join(repoRoot, 'target', 'aarch64-apple-darwin', 'release', 'nvpn'),
+    binaryPath: join(cargoTargetDir(env), 'aarch64-apple-darwin', 'release', 'nvpn'),
     targetTriple: 'aarch64-apple-darwin',
     tag,
     dryRun,
