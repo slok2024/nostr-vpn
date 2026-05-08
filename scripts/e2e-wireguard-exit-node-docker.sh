@@ -8,6 +8,7 @@ COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.exit-nod
 REFLECTOR_ADDR="198.51.100.3:3478"
 CONFIG_PATH="/root/.config/nvpn/config.toml"
 PUBLIC_INTERNET_TARGET="${NVPN_EXIT_NODE_E2E_PUBLIC_IP:-198.51.100.100}"
+PROVIDER_INTERNET_TARGET="${NVPN_WIREGUARD_EXIT_NODE_E2E_PROVIDER_IP:-203.0.113.100}"
 
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -117,6 +118,7 @@ configure_wireguard_upstream() {
     ip address add 10.200.0.1/24 dev wg-upstream
     wg set wg-upstream private-key /tmp/server.key listen-port 51830 peer '$client_public' allowed-ips 10.200.0.2/32
     ip link set wg-upstream up
+    ip address add '$PROVIDER_INTERNET_TARGET/32' dev lo
     sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
     iptables -P FORWARD ACCEPT
     iptables -t nat -A POSTROUTING -o \"\$public_iface\" -s 10.200.0.0/24 -j MASQUERADE
@@ -239,6 +241,8 @@ REFLECTOR_ROUTE="$("${COMPOSE[@]}" exec -T node-b sh -lc "ip route get 198.51.10
 BOB_DEFAULT_ROUTE="$("${COMPOSE[@]}" exec -T node-b sh -lc "ip route show default | head -n1 | tr -d '\r'")"
 ALICE_DEFAULT_ROUTE="$("${COMPOSE[@]}" exec -T node-a sh -lc "ip route show default | head -n1 | tr -d '\r'")"
 ALICE_FORWARD_ROUTE="$("${COMPOSE[@]}" exec -T node-a sh -lc "ip route show table 51888 | tr -d '\r'")"
+ALICE_WG_ENDPOINT_ROUTE="$("${COMPOSE[@]}" exec -T node-a sh -lc "ip route get 198.51.100.20 | tr -d '\r'")"
+ALICE_PROVIDER_ROUTE="$("${COMPOSE[@]}" exec -T node-a sh -lc "ip route get '$PROVIDER_INTERNET_TARGET' | tr -d '\r'")"
 
 if grep -q 'dev utun100' <<<"$REFLECTOR_ROUTE"; then
   echo "wireguard exit-node docker e2e failed: reflector route unexpectedly points into the tunnel" >&2
@@ -252,9 +256,21 @@ if ! grep -q 'dev utun100' <<<"$BOB_DEFAULT_ROUTE"; then
   exit 1
 fi
 
-if grep -q 'dev nvpn-wg-exit' <<<"$ALICE_DEFAULT_ROUTE"; then
-  echo "wireguard exit-node docker e2e failed: provider host default route moved into WireGuard" >&2
+if ! grep -q 'dev nvpn-wg-exit' <<<"$ALICE_DEFAULT_ROUTE"; then
+  echo "wireguard exit-node docker e2e failed: provider host default route did not move into WireGuard" >&2
   echo "$ALICE_DEFAULT_ROUTE"
+  exit 1
+fi
+
+if grep -q 'dev nvpn-wg-exit' <<<"$ALICE_WG_ENDPOINT_ROUTE"; then
+  echo "wireguard exit-node docker e2e failed: WireGuard peer endpoint route points back into WireGuard" >&2
+  echo "$ALICE_WG_ENDPOINT_ROUTE"
+  exit 1
+fi
+
+if ! grep -q 'dev nvpn-wg-exit' <<<"$ALICE_PROVIDER_ROUTE"; then
+  echo "wireguard exit-node docker e2e failed: provider internet route did not use WireGuard" >&2
+  echo "$ALICE_PROVIDER_ROUTE"
   exit 1
 fi
 
@@ -270,6 +286,12 @@ if ! ping_until_success node-b "$PUBLIC_INTERNET_TARGET" /tmp/nvpn-wireguard-exi
   exit 1
 fi
 
+if ! ping_until_success node-a "$PROVIDER_INTERNET_TARGET" /tmp/nvpn-wireguard-exit-provider-ping.log; then
+  echo "wireguard exit-node docker e2e failed: provider could not reach internet target through WireGuard" >&2
+  cat /tmp/nvpn-wireguard-exit-provider-ping.log 2>/dev/null || true
+  exit 1
+fi
+
 WG_SHOW="$("${COMPOSE[@]}" exec -T node-a sh -lc "wg show nvpn-wg-exit | tr -d '\r'")"
 grep -q 'latest handshake' <<<"$WG_SHOW"
 
@@ -279,11 +301,17 @@ echo "--- Client default route ---"
 echo "$BOB_DEFAULT_ROUTE"
 echo "--- Provider default route ---"
 echo "$ALICE_DEFAULT_ROUTE"
+echo "--- Provider WireGuard endpoint route ---"
+echo "$ALICE_WG_ENDPOINT_ROUTE"
+echo "--- Provider internet route ---"
+echo "$ALICE_PROVIDER_ROUTE"
 echo "--- Provider forwarded route ---"
 echo "$ALICE_FORWARD_ROUTE"
 echo "--- Provider WireGuard ---"
 echo "$WG_SHOW"
+echo "--- Provider internet ping ---"
+cat /tmp/nvpn-wireguard-exit-provider-ping.log
 echo "--- Public internet ping ---"
 cat /tmp/nvpn-wireguard-exit-public-ping.log
 
-echo "wireguard exit-node docker e2e passed: FIPS members selected a normal exit node while the provider sent forwarded exit traffic through its WireGuard upstream"
+echo "wireguard exit-node docker e2e passed: FIPS members selected a normal exit node while provider-owned and forwarded exit traffic used its WireGuard upstream"

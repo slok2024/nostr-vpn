@@ -1565,6 +1565,8 @@ struct LinuxWireGuardExitRuntime {
     table: u32,
     priority: u32,
     created_interface: bool,
+    endpoint_bypass_routes: Vec<String>,
+    previous_default_route: Option<String>,
 }
 
 #[cfg(any(target_os = "macos", test))]

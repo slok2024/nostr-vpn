@@ -1595,14 +1595,20 @@ impl FipsPrivateTunnelRuntime {
         source_cidr: &str,
     ) -> Result<()> {
         let mut preserve_created_interface = false;
+        let mut previous_runtime = None;
         if let Some(runtime) = self.exit_node_runtime.wireguard_exit.as_ref()
             && (runtime.interface != config.interface || runtime.source_cidr != source_cidr)
         {
             self.cleanup_linux_wireguard_exit_upstream();
         } else if let Some(runtime) = self.exit_node_runtime.wireguard_exit.as_ref() {
             preserve_created_interface = runtime.created_interface;
+            previous_runtime = Some(runtime.clone());
         }
-        let mut runtime = crate::apply_linux_wireguard_exit_upstream(config, source_cidr)?;
+        let mut runtime = crate::apply_linux_wireguard_exit_upstream(
+            config,
+            source_cidr,
+            previous_runtime.as_ref(),
+        )?;
         runtime.created_interface |= preserve_created_interface;
         self.exit_node_runtime.wireguard_exit = Some(runtime);
         Ok(())

@@ -287,7 +287,7 @@ nvpn set \
   --wireguard-exit-allowed-ips 0.0.0.0/0
 ```
 
-Members still see this as the same FIPS exit node; WireGuard is only the provider's outbound leg.
+Members still see this as the same FIPS exit node; the provider's own default internet route and forwarded member exit traffic both use the WireGuard upstream.
 
 Clear exit-node selection:
 
@@ -359,7 +359,7 @@ Docker e2e scripts under [`scripts/`](scripts):
 - `./scripts/e2e-exit-node-docker.sh`
   Verifies exit-node advertisement, selection, tunnel traffic to the chosen exit node, and default-route traffic crossing the exit path to an external target. Set `NVPN_EXIT_NODE_E2E_PUBLIC_IP=9.9.9.9` (or another reachable public IP) to also prove a real internet hop routes through the tunnel.
 - `./scripts/e2e-wireguard-exit-node-docker.sh`
-  Verifies that a FIPS exit-node provider can route forwarded member traffic through its WireGuard upstream without moving the provider host default route.
+  Verifies that a FIPS exit-node provider routes forwarded member traffic and its own default internet traffic through the WireGuard upstream while keeping the WireGuard peer endpoint on the underlay.
 These flows are Linux-oriented because they require real tunnel devices and container networking privileges.
 
 ## Desktop update end-to-end coverage

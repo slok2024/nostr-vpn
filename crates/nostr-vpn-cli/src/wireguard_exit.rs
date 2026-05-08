@@ -1,6 +1,7 @@
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
@@ -57,9 +58,37 @@ pub(crate) fn linux_wireguard_exit_ipv6_default(config: &WireGuardExitConfig) ->
 pub(crate) fn apply_linux_wireguard_exit_upstream(
     config: &WireGuardExitConfig,
     source_cidr: &str,
+    previous_runtime: Option<&crate::LinuxWireGuardExitRuntime>,
 ) -> Result<crate::LinuxWireGuardExitRuntime> {
     let iface = validate_linux_wireguard_exit_config(config)?;
     let created_interface = ensure_linux_wireguard_link(&iface)?;
+    let previous_default_route = previous_runtime
+        .and_then(|runtime| runtime.previous_default_route.clone())
+        .or_else(|| {
+            crate::linux_default_route()
+                .ok()
+                .filter(|route| route.dev != iface)
+                .map(|route| route.line)
+        });
+    let endpoint_bypass_specs = linux_wireguard_exit_endpoint_bypass_specs(
+        config,
+        &iface,
+        previous_default_route.as_deref(),
+    )?;
+    let endpoint_bypass_routes = endpoint_bypass_specs
+        .iter()
+        .map(|route| route.target.clone())
+        .collect::<Vec<_>>();
+    let stale_endpoint_bypass_routes = previous_runtime
+        .map(|runtime| {
+            runtime
+                .endpoint_bypass_routes
+                .iter()
+                .filter(|route| !endpoint_bypass_routes.contains(route))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let private_key_file = write_temp_secret_file(&iface, "key", &config.private_key)?;
     let psk_file = if config.peer_preshared_key.trim().is_empty() {
         None
@@ -77,6 +106,7 @@ pub(crate) fn apply_linux_wireguard_exit_upstream(
         source_cidr,
         &private_key_file,
         psk_file.as_ref(),
+        &endpoint_bypass_specs,
     );
 
     let _ = fs::remove_file(&private_key_file);
@@ -84,12 +114,19 @@ pub(crate) fn apply_linux_wireguard_exit_upstream(
         let _ = fs::remove_file(psk_file);
     }
 
-    result.map(|()| crate::LinuxWireGuardExitRuntime {
-        interface: iface,
-        source_cidr: source_cidr.to_string(),
-        table: WIREGUARD_EXIT_TABLE,
-        priority: WIREGUARD_EXIT_RULE_PRIORITY,
-        created_interface,
+    result.map(|()| {
+        for route in stale_endpoint_bypass_routes {
+            let _ = crate::delete_linux_endpoint_bypass_route(&route);
+        }
+        crate::LinuxWireGuardExitRuntime {
+            interface: iface,
+            source_cidr: source_cidr.to_string(),
+            table: WIREGUARD_EXIT_TABLE,
+            priority: WIREGUARD_EXIT_RULE_PRIORITY,
+            created_interface,
+            endpoint_bypass_routes,
+            previous_default_route,
+        }
     })
 }
 
@@ -99,6 +136,7 @@ fn apply_linux_wireguard_exit_upstream_inner(
     source_cidr: &str,
     private_key_file: &PathBuf,
     psk_file: Option<&PathBuf>,
+    endpoint_bypass_specs: &[crate::LinuxEndpointBypassRoute],
 ) -> Result<()> {
     crate::run_checked(
         ProcessCommand::new("ip")
@@ -108,6 +146,9 @@ fn apply_linux_wireguard_exit_upstream_inner(
             .arg("dev")
             .arg(iface),
     )?;
+    for route in endpoint_bypass_specs {
+        crate::apply_linux_endpoint_bypass_route(route)?;
+    }
 
     let mut wg = ProcessCommand::new("wg");
     wg.arg("set")
@@ -140,6 +181,8 @@ fn apply_linux_wireguard_exit_upstream_inner(
             .arg(iface),
     )?;
 
+    apply_linux_wireguard_exit_default_route(iface, config.address.trim())?;
+
     crate::run_checked(
         ProcessCommand::new("ip")
             .arg("-4")
@@ -156,6 +199,7 @@ fn apply_linux_wireguard_exit_upstream_inner(
 }
 
 pub(crate) fn cleanup_linux_wireguard_exit_upstream(runtime: &crate::LinuxWireGuardExitRuntime) {
+    restore_linux_wireguard_exit_default_route(runtime);
     let _ = crate::run_checked(
         ProcessCommand::new("ip")
             .arg("-4")
@@ -176,6 +220,9 @@ pub(crate) fn cleanup_linux_wireguard_exit_upstream(runtime: &crate::LinuxWireGu
             .arg("table")
             .arg(runtime.table.to_string()),
     );
+    for route in &runtime.endpoint_bypass_routes {
+        let _ = crate::delete_linux_endpoint_bypass_route(route);
+    }
     if runtime.created_interface {
         let _ = crate::run_checked(
             ProcessCommand::new("ip")
@@ -186,6 +233,62 @@ pub(crate) fn cleanup_linux_wireguard_exit_upstream(runtime: &crate::LinuxWireGu
         );
     }
     let _ = crate::flush_linux_route_cache();
+}
+
+fn linux_wireguard_exit_endpoint_bypass_specs(
+    config: &WireGuardExitConfig,
+    iface: &str,
+    previous_default_route: Option<&str>,
+) -> Result<Vec<crate::LinuxEndpointBypassRoute>> {
+    let hosts = wireguard_exit_endpoint_ipv4_hosts(&config.endpoint);
+    if hosts.is_empty() {
+        return Ok(Vec::new());
+    }
+    crate::linux_bypass_route_specs_for_hosts(hosts, iface, previous_default_route)
+}
+
+fn apply_linux_wireguard_exit_default_route(iface: &str, address: &str) -> Result<()> {
+    let mut command = ProcessCommand::new("ip");
+    command
+        .arg("-4")
+        .arg("route")
+        .arg("replace")
+        .arg("default")
+        .arg("dev")
+        .arg(iface);
+    if let Ok(source) = crate::strip_cidr(address).parse::<Ipv4Addr>() {
+        command.arg("src").arg(source.to_string());
+    }
+    crate::run_checked(&mut command)
+}
+
+fn restore_linux_wireguard_exit_default_route(runtime: &crate::LinuxWireGuardExitRuntime) {
+    let current_is_wireguard = crate::linux_default_route()
+        .map(|route| route.dev == runtime.interface)
+        .unwrap_or(true);
+    if !current_is_wireguard {
+        return;
+    }
+
+    if let Some(route) = runtime.previous_default_route.as_deref() {
+        if let Err(error) = crate::restore_linux_default_route(route) {
+            eprintln!("fips: failed to restore pre-WireGuard default route: {error}");
+        }
+    } else if let Err(error) = delete_linux_wireguard_exit_default_route(&runtime.interface) {
+        eprintln!("fips: failed to delete WireGuard exit default route: {error}");
+    }
+}
+
+fn delete_linux_wireguard_exit_default_route(iface: &str) -> Result<()> {
+    crate::run_checked(
+        ProcessCommand::new("ip")
+            .arg("-4")
+            .arg("route")
+            .arg("del")
+            .arg("default")
+            .arg("dev")
+            .arg(iface),
+    )
 }
 
 fn ensure_linux_wireguard_link(iface: &str) -> Result<bool> {
@@ -238,6 +341,33 @@ fn ensure_linux_wireguard_exit_policy_rule(source_cidr: &str) -> Result<()> {
     )
 }
 
+fn wireguard_exit_endpoint_ipv4_hosts(endpoint: &str) -> Vec<Ipv4Addr> {
+    let Some((host, port)) = crate::split_host_port(endpoint, 51820) else {
+        return Vec::new();
+    };
+    if let Ok(ip) = host.parse::<Ipv4Addr>() {
+        return vec![ip];
+    }
+    if host.parse::<IpAddr>().is_ok() {
+        return Vec::new();
+    }
+
+    let mut hosts = (host.as_str(), port)
+        .to_socket_addrs()
+        .map(|addrs| {
+            addrs
+                .filter_map(|addr| match addr.ip() {
+                    IpAddr::V4(ip) => Some(ip),
+                    IpAddr::V6(_) => None,
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    hosts.sort_unstable();
+    hosts.dedup();
+    hosts
+}
+
 pub(crate) fn linux_wireguard_exit_policy_rule_exists(
     output: &str,
     source_cidr: &str,
@@ -282,7 +412,9 @@ fn linux_iface_name_is_safe(iface: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::linux_wireguard_exit_policy_rule_exists;
+    use std::net::Ipv4Addr;
+
+    use super::{linux_wireguard_exit_policy_rule_exists, wireguard_exit_endpoint_ipv4_hosts};
 
     #[test]
     fn policy_rule_parser_matches_exact_managed_rule() {
@@ -300,5 +432,13 @@ mod tests {
             51_888,
             10_888
         ));
+    }
+
+    #[test]
+    fn endpoint_bypass_hosts_parse_ipv4_endpoint() {
+        assert_eq!(
+            wireguard_exit_endpoint_ipv4_hosts("198.51.100.20:51830"),
+            vec!["198.51.100.20".parse::<Ipv4Addr>().unwrap()]
+        );
     }
 }
