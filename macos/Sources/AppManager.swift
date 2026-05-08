@@ -297,17 +297,6 @@ final class AppManager: ObservableObject {
         dispatch(.updateSettings(patch: settingsPatch(exitNode: npub)), status: "Saving exit node")
     }
 
-    func addRelay(_ relay: String) {
-        let trimmed = relay.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            dispatch(.addRelay(relay: trimmed), status: "Adding relay")
-        }
-    }
-
-    func removeRelay(_ relay: String) {
-        dispatch(.removeRelay(relay: relay), status: "Removing relay")
-    }
-
     func addParticipant(networkId: String, npub: String, alias: String? = nil) {
         let trimmed = npub.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {

@@ -110,11 +110,6 @@
       ]
     }
   ],
-  "relays": [
-    { "url": "wss://relay.damus.io", "state": "up", "statusText": "connected" },
-    { "url": "wss://relay.primal.net", "state": "up", "statusText": "connected" }
-  ],
-  "relaySummary": { "up": 2, "down": 0, "checking": 0, "unknown": 0 },
   "lanPeers": [
     {
       "npub": "npub1nearbyadmin000000000000000000000000000000000000000000000",

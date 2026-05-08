@@ -1,15 +1,4 @@
 services:
-  relay:
-    build:
-      context: .
-      dockerfile: Dockerfile.e2e
-      additional_contexts:
-        fips: ../fips
-    command: ["nostr-vpn-relay", "--bind", "0.0.0.0:8080"]
-    networks:
-      internet:
-        ipv4_address: 203.0.113.2
-
   reflector:
     build:
       context: .
@@ -65,7 +54,6 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     depends_on:
-      - relay
       - reflector
     networks:
       internet:
@@ -83,7 +71,6 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     depends_on:
-      - relay
       - reflector
       - nat-b
     networks:

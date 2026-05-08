@@ -258,7 +258,7 @@ listen_port = 51820
     let config = AppConfig::load(&path).expect("load config");
     let _ = fs::remove_file(&path);
 
-    assert!(!config.auto_disconnect_relays_when_mesh_ready);
+    assert_eq!(config.node_name, "node");
 }
 
 #[test]

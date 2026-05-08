@@ -14,7 +14,7 @@ use crate::ServerState;
 use crate::invite::active_network_invite_code;
 use crate::network_views::{build_network_views, is_mesh_complete};
 use crate::nvpn_cli::{fetch_cli_status, load_config, reload_daemon_if_running, save_config};
-use crate::ui_types::{CliStatusResponse, RelaySummary, UiState};
+use crate::ui_types::{CliStatusResponse, UiState};
 
 pub(crate) fn update_config_and_reload(
     state: &ServerState,
@@ -50,8 +50,6 @@ pub(crate) fn build_ui_state(state: &ServerState) -> Result<UiState> {
     let own_npub = to_npub(&own_pubkey_hex);
     let network_runtime_views = build_network_views(&config, daemon_state, vpn_active);
     let networks = network_runtime_views.networks;
-    let relays = Vec::new();
-    let relay_summary = RelaySummary::default();
     let fallback_expected_peer_count = network_runtime_views.expected_peer_count;
     let fallback_connected_peer_count = network_runtime_views.connected_peer_count;
     let expected_peer_count = daemon_state
@@ -152,8 +150,6 @@ pub(crate) fn build_ui_state(state: &ServerState) -> Result<UiState> {
         network,
         port_mapping,
         networks,
-        relays,
-        relay_summary,
         lan_peers: Vec::new(),
     })
 }

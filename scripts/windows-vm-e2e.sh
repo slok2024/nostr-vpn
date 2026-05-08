@@ -47,6 +47,7 @@ run_ps_user() {
 
 cleanup_gui() {
   run_ps_user 'Get-Process -Name NostrVpn.Windows -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue' >/dev/null 2>&1 || true
+  run_ps_system 'Get-Process -Name Consent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue' >/dev/null 2>&1 || true
   rm -f "$FULL_SCREENSHOT"
 }
 trap cleanup_gui EXIT
@@ -68,6 +69,8 @@ run_ps_system "Set-Location \"$GUEST_REPO\"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\windows-e2e.ps1 -SkipGui
 exit \$LASTEXITCODE"
 
+run_ps_system 'Get-Process -Name Consent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue'
+
 run_ps_user "\$ErrorActionPreference = \"Stop\"
 \$AppExe = \"$GUEST_REPO\\windows\\NostrVpn.Windows\\bin\\Debug\\net8.0-windows\\NostrVpn.Windows.exe\"
 Get-Process -Name NostrVpn.Windows -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -87,6 +90,8 @@ public static class NvpnWindowRect {
 for (\$i = 0; \$i -lt 40; \$i++) {
   Start-Sleep -Milliseconds 500
   \$proc = Get-Process -Name NostrVpn.Windows -ErrorAction SilentlyContinue | Select-Object -First 1
+  \$uac = Get-Process -Name Consent -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (\$uac -and \$uac.MainWindowTitle -like \"*User Account Control*\") { throw \"UAC prompt appeared while launching Windows GUI\" }
   if (\$proc -and \$proc.MainWindowHandle -ne 0) { break }
 }
 if (!\$proc -or \$proc.MainWindowHandle -eq 0) { throw \"GUI main window did not appear\" }
@@ -105,6 +110,10 @@ if (-not [NvpnWindowRect]::GetWindowRect(\$proc.MainWindowHandle, [ref]\$rect)) 
 \$window | ConvertTo-Json -Compress | Out-File -Encoding utf8 \$RectPath"
 
 sleep 3
+run_ps_user "\$ErrorActionPreference = \"Stop\"
+\$uac = Get-Process -Name Consent -ErrorAction SilentlyContinue | Select-Object -First 1
+if (\$uac -and \$uac.MainWindowTitle -like \"*User Account Control*\") { throw \"UAC prompt appeared before Windows GUI capture\" }"
+
 prlctl capture "$VM_NAME" --file "$FULL_SCREENSHOT"
 
 node - "$RECT_JSON" "$FULL_SCREENSHOT" "$APP_SCREENSHOT" <<'NODE'

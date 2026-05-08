@@ -129,7 +129,7 @@ ensure_remote_prereqs() {
 
 build_local() {
   local cmd
-  cmd=(cargo build -p nostr-vpn-cli -p nostr-vpn-relay)
+  cmd=(cargo build -p nostr-vpn-cli -p nostr-vpn-reflector)
   if [[ "$BUILD_PROFILE" == "release" ]]; then
     cmd+=(--release)
   fi
@@ -174,7 +174,7 @@ sync_repo() {
 
 build_remote() {
   local cmd
-  cmd="cd $(printf '%q' "$REMOTE_VM_DIR") && cargo build -p nostr-vpn-cli -p nostr-vpn-relay"
+  cmd="cd $(printf '%q' "$REMOTE_VM_DIR") && cargo build -p nostr-vpn-cli -p nostr-vpn-reflector"
   if [[ "$BUILD_PROFILE" == "release" ]]; then
     cmd+=" --release"
   fi

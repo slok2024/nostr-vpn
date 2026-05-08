@@ -78,7 +78,7 @@ build:
         Darwin) just macos-build ;; \
         Linux) just linux-build ;; \
         MINGW*|MSYS*|CYGWIN*) just windows-build ;; \
-        *) cargo build -p nostr-vpn-cli -p nostr-vpn-relay ;; \
+        *) cargo build -p nostr-vpn-cli -p nostr-vpn-reflector ;; \
     esac
     @./scripts/build-output-path
 

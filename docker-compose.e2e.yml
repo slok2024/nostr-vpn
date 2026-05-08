@@ -1,15 +1,4 @@
 services:
-  relay:
-    build:
-      context: .
-      dockerfile: Dockerfile.e2e
-      additional_contexts:
-        fips: ../fips
-    command: ["nostr-vpn-relay", "--bind", "0.0.0.0:8080"]
-    networks:
-      e2e:
-        ipv4_address: 10.203.0.2
-
   node-a:
     build:
       context: .
@@ -21,8 +10,6 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
-    depends_on:
-      - relay
     networks:
       e2e:
         ipv4_address: 10.203.0.10
@@ -38,8 +25,6 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
-    depends_on:
-      - relay
     networks:
       e2e:
         ipv4_address: 10.203.0.11
@@ -55,8 +40,6 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
-    depends_on:
-      - relay
     networks:
       e2e:
         ipv4_address: 10.203.0.12

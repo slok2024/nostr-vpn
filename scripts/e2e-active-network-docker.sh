@@ -7,7 +7,6 @@ COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.e2e.yml"
 
 ACTIVE_NETWORK_ID="docker-active-home"
 INACTIVE_NETWORK_ID="docker-saved-work"
-RELAY_URL="ws://10.203.0.2:8080"
 
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -53,8 +52,8 @@ nostr_pubkey_from_config() {
 cleanup
 
 "${COMPOSE[@]}" build >/dev/null
-"${COMPOSE[@]}" up -d relay node-a node-b >/dev/null
-for service in relay node-a node-b; do
+"${COMPOSE[@]}" up -d node-a node-b >/dev/null
+for service in node-a node-b; do
   wait_for_service "$service"
 done
 
@@ -75,13 +74,19 @@ fi
   --network-id "$ACTIVE_NETWORK_ID" \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
-  --relay "$RELAY_URL" >/dev/null
+  --endpoint "10.203.0.10:51820" \
+  --listen-port 51820 \
+  --fips-advertise-endpoint true \
+  --fips-peer-endpoint "$BOB_NPUB=10.203.0.11:51820" >/dev/null
 
 "${COMPOSE[@]}" exec -T node-b nvpn set \
   --network-id "$ACTIVE_NETWORK_ID" \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
-  --relay "$RELAY_URL" >/dev/null
+  --endpoint "10.203.0.11:51820" \
+  --listen-port 51820 \
+  --fips-advertise-endpoint true \
+  --fips-peer-endpoint "$ALICE_NPUB=10.203.0.10:51820" >/dev/null
 
 ALICE_TUNNEL_IP_BEFORE="$("${COMPOSE[@]}" exec -T node-a nvpn ip)"
 BOB_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-b nvpn ip)"
@@ -126,8 +131,8 @@ for _ in $(seq 1 30); do
   ALICE_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
   BOB_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
 
-  if grep -q "mesh: 1/1 peers with presence" <<<"$ALICE_CONNECT_LOGS" \
-    && grep -q "mesh: 1/1 peers with presence" <<<"$BOB_CONNECT_LOGS"; then
+  if grep -q "mesh: 1/1 peers connected" <<<"$ALICE_CONNECT_LOGS" \
+    && grep -q "mesh: 1/1 peers connected" <<<"$BOB_CONNECT_LOGS"; then
     break
   fi
 
@@ -137,13 +142,13 @@ done
 ALICE_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
 BOB_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
 
-if ! grep -q "mesh: 1/1 peers with presence" <<<"$ALICE_CONNECT_LOGS"; then
+if ! grep -q "mesh: 1/1 peers connected" <<<"$ALICE_CONNECT_LOGS"; then
   echo "active network e2e failed: alice did not stay scoped to the active network" >&2
   echo "$ALICE_CONNECT_LOGS"
   exit 1
 fi
 
-if ! grep -q "mesh: 1/1 peers with presence" <<<"$BOB_CONNECT_LOGS"; then
+if ! grep -q "mesh: 1/1 peers connected" <<<"$BOB_CONNECT_LOGS"; then
   echo "active network e2e failed: bob did not reach 1/1 mesh state" >&2
   echo "$BOB_CONNECT_LOGS"
   exit 1

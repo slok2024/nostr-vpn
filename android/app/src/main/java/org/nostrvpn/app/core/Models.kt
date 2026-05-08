@@ -34,7 +34,6 @@ data class AppState(
     val lanPairingActive: Boolean = false,
     val lanPairingRemainingSecs: Long = 0,
     val networks: List<NetworkState> = emptyList(),
-    val relays: List<RelayState> = emptyList(),
     val lanPeers: List<LanPeerState> = emptyList(),
     val health: List<HealthIssue> = emptyList(),
 )
@@ -80,12 +79,6 @@ data class InboundJoinRequest(
     val requesterNpub: String = "",
     val requesterNodeName: String = "",
     val requestedAtText: String = "",
-)
-
-data class RelayState(
-    val url: String = "",
-    val state: String = "",
-    val statusText: String = "",
 )
 
 data class LanPeerState(
@@ -137,7 +130,6 @@ fun parseAppState(jsonText: String): AppState {
         lanPairingActive = json.optBoolean("lanPairingActive"),
         lanPairingRemainingSecs = json.optLong("lanPairingRemainingSecs"),
         networks = json.optJSONArray("networks").toNetworkList(),
-        relays = json.optJSONArray("relays").toRelayList(),
         lanPeers = json.optJSONArray("lanPeers").toLanPeerList(),
         health = json.optJSONArray("health").toHealthList(),
     )
@@ -189,14 +181,6 @@ private fun JSONArray?.toInboundJoinRequestList(): List<InboundJoinRequest> = ma
         requesterNpub = item.optString("requesterNpub"),
         requesterNodeName = item.optString("requesterNodeName"),
         requestedAtText = item.optString("requestedAtText"),
-    )
-}
-
-private fun JSONArray?.toRelayList(): List<RelayState> = mapObjects { item ->
-    RelayState(
-        url = item.optString("url"),
-        state = item.optString("state"),
-        statusText = item.optString("statusText"),
     )
 }
 

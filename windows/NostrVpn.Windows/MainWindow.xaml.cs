@@ -148,14 +148,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void RemoveRelay_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button { Tag: string relay })
-        {
-            await ViewModel.RemoveRelayAsync(relay);
-        }
-    }
-
     private static T? FindParent<T>(DependencyObject child) where T : DependencyObject
     {
         var current = VisualTreeHelper.GetParent(child);

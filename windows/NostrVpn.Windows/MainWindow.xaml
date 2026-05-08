@@ -387,33 +387,6 @@
               </Border>
             </Expander>
 
-            <Expander Header="Discovery Relays" Margin="0,0,0,14">
-              <Border Style="{StaticResource Card}" Margin="0,8,0,0">
-                <StackPanel>
-                  <ItemsControl ItemsSource="{Binding State.Relays}">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate>
-                        <DockPanel Margin="0,0,0,8">
-                          <Button DockPanel.Dock="Right" Content="Remove" Tag="{Binding Url}" Click="RemoveRelay_Click" />
-                          <StackPanel>
-                            <TextBlock Text="{Binding Url}" TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource TextSecondary}" />
-                          </StackPanel>
-                        </DockPanel>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="*" />
-                      <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBox Text="{Binding RelayInput, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" />
-                    <Button Grid.Column="1" Content="Add" Command="{Binding AddRelayCommand}" />
-                  </Grid>
-                </StackPanel>
-              </Border>
-            </Expander>
           </StackPanel>
         </StackPanel>
         </Grid>

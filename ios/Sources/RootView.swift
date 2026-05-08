@@ -195,7 +195,6 @@ private struct SettingsPage: View {
             LazyVStack(spacing: 14) {
                 DeviceSettingsCard(model: model)
                 NetworksCard(model: model)
-                RelaysCard(model: model)
                 DiagnosticsCard(state: model.state)
             }
             .padding()
@@ -491,44 +490,6 @@ private struct NetworksCard: View {
                     newNetwork = ""
                 }
                 .disabled(newNetwork.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-    }
-}
-
-private struct RelaysCard: View {
-    @ObservedObject var model: AppModel
-    @State private var relay = ""
-
-    var body: some View {
-        AppCard {
-            Text("FIPS Relays")
-                .font(.headline)
-            ForEach(model.state.relays) { item in
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text(item.url)
-                            .lineLimit(1)
-                        Text(item.statusText)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("Remove") {
-                        model.dispatch(NativeActions.removeRelay(item.url), status: "Removing relay")
-                    }
-                }
-            }
-            HStack {
-                TextField("Relay URL", text: $relay)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .textFieldStyle(.roundedBorder)
-                Button("Add") {
-                    model.dispatch(NativeActions.addRelay(relay), status: "Adding relay")
-                    relay = ""
-                }
-                .disabled(relay.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
     }

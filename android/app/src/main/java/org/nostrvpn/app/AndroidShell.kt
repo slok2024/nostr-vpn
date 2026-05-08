@@ -334,6 +334,5 @@ private fun androidx.compose.foundation.lazy.LazyListScope.settingsPage(
 ) {
     item { DeviceSettingsCard(state, dispatch) }
     item { NetworksCard(state, network, dispatch) }
-    item { RelaysCard(state.relays, dispatch) }
     item { DiagnosticsCard(state) }
 }

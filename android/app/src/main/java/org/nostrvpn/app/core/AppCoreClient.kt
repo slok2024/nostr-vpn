@@ -36,8 +36,6 @@ object NativeActions {
     fun importInvite(invite: String) = action("import_network_invite", "invite" to invite)
     fun startLanPairing() = action("start_lan_pairing")
     fun stopLanPairing() = action("stop_lan_pairing")
-    fun addRelay(relay: String) = action("add_relay", "relay" to relay)
-    fun removeRelay(relay: String) = action("remove_relay", "relay" to relay)
     fun addNetwork(name: String) = action("add_network", "name" to name)
     fun setNetworkEnabled(networkId: String, enabled: Boolean) =
         action("set_network_enabled", "networkId" to networkId, "enabled" to enabled)

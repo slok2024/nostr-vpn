@@ -40,8 +40,6 @@ use crate::network_roster::{
 use crate::network_routes::is_exit_node_route;
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::generate_keypair;
-
 pub const DEFAULT_RELAYS: &[&str] = &[];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,9 +71,6 @@ pub struct AppConfig {
     pub networks: Vec<NetworkConfig>,
     #[serde(default = "default_node_name")]
     pub node_name: String,
-    // Legacy field kept so older config files still deserialize cleanly.
-    #[serde(default, skip_serializing)]
-    pub auto_disconnect_relays_when_mesh_ready: bool,
     #[serde(default = "default_lan_discovery_enabled", skip_serializing)]
     pub lan_discovery_enabled: bool,
     #[serde(default = "default_launch_on_startup")]
@@ -204,7 +199,6 @@ impl Default for AppConfig {
                 shared_roster_signed_by: String::new(),
             }],
             node_name: default_node_name(),
-            auto_disconnect_relays_when_mesh_ready: false,
             lan_discovery_enabled: default_lan_discovery_enabled(),
             launch_on_startup: default_launch_on_startup(),
             autoconnect: default_autoconnect(),
@@ -238,10 +232,6 @@ impl Default for NatConfig {
 pub struct NodeConfig {
     #[serde(default = "default_node_id")]
     pub id: String,
-    #[serde(default)]
-    pub private_key: String,
-    #[serde(default)]
-    pub public_key: String,
     #[serde(default = "default_endpoint")]
     pub endpoint: String,
     #[serde(default = "default_tunnel_ip")]
@@ -256,11 +246,8 @@ pub struct NodeConfig {
 
 impl Default for NodeConfig {
     fn default() -> Self {
-        let key_pair = generate_keypair();
         Self {
             id: default_node_id(),
-            private_key: key_pair.private_key,
-            public_key: key_pair.public_key,
             endpoint: default_endpoint(),
             tunnel_ip: default_tunnel_ip(),
             listen_port: default_listen_port(),
@@ -302,7 +289,6 @@ impl AppConfig {
 
     pub fn ensure_defaults(&mut self) {
         self.ensure_nostr_identity();
-        self.auto_disconnect_relays_when_mesh_ready = false;
         let own_pubkey_hex = self.own_nostr_pubkey_hex().ok();
         if uses_default_node_name(&self.node_name, own_pubkey_hex.as_deref()) {
             let hostname = detected_hostname();
@@ -350,11 +336,6 @@ impl AppConfig {
         self.node.advertised_routes = advertised_routes;
         self.node.advertise_exit_node = advertise_exit_node;
 
-        if self.node.private_key.trim().is_empty() || self.node.public_key.trim().is_empty() {
-            let key_pair = generate_keypair();
-            self.node.private_key = key_pair.private_key;
-            self.node.public_key = key_pair.public_key;
-        }
         self.exit_node = normalize_nostr_pubkey(self.exit_node.trim()).unwrap_or_default();
         if let Ok(own_pubkey) = self.own_nostr_pubkey_hex()
             && self.exit_node == own_pubkey

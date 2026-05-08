@@ -28,7 +28,6 @@ It currently ships:
 | Component | Purpose |
 | --- | --- |
 | `nvpn` | Main CLI for config, daemon lifecycle, networking, diagnostics, and tunnel sessions |
-| `nostr-vpn-relay` | Minimal local websocket relay used for integration and e2e testing |
 | `nvpn-reflector` | Minimal UDP reflector used for NAT discovery and hole-punch testing |
 | `nostr-vpn-core` | Shared library for config, FIPS control state, NAT helpers, diagnostics, and MagicDNS |
 | `nostr-vpn-app-core` | Native app state/action contract and UniFFI bridge used by the Rust-core/native-front rewrite |
@@ -60,15 +59,6 @@ Private mesh traffic defaults to [FIPS](https://github.com/mmalmi/fips). `nvpn` 
 - Exposes JSON status, network diagnostics, and doctor bundles
 - Includes a native macOS GUI with service-first session control, invite QR/import flows, menu bar integration, MagicDNS controls, health reporting, and port-mapping status
 - Includes Linux-focused Docker e2e coverage for FIPS mesh formation, NAT traversal, and routed UDP
-
-## Default relays
-
-Used when a config does not specify its own relay list:
-
-- `wss://temp.iris.to`
-- `wss://relay.damus.io`
-- `wss://relay.snort.social`
-- `wss://relay.primal.net`
 
 ## Config model
 
@@ -156,7 +146,7 @@ just run
 If you only want the CLI and test binaries:
 
 ```bash
-cargo build -p nostr-vpn-cli -p nostr-vpn-relay
+cargo build -p nostr-vpn-cli -p nostr-vpn-reflector
 ```
 
 ## Install `nvpn`
@@ -216,8 +206,10 @@ Adjust persisted settings if needed:
 
 ```bash
 nvpn set \
-  --relay ws://127.0.0.1:8080 \
   --endpoint 192.0.2.10:51820 \
+  --listen-port 51820 \
+  --fips-advertise-endpoint true \
+  --fips-peer-endpoint npub1...bob=192.0.2.11:51820 \
   --tunnel-ip 10.44.0.10/32
 ```
 
@@ -290,16 +282,23 @@ nvpn set --exit-node off
 
 Lower-level commands:
 
-- `announce`
-- `listen`
-- `render-wg`
-- `keygen`
 - `init`
+- `service`
+- `connect`
+- `status`
+- `set`
+- `create-invite`
+- `import-invite`
+- `add-participant`
+- `remove-participant`
+- `add-admin`
+- `remove-admin`
 - `nat-discover`
 - `hole-punch`
 - `ping`
 - `ip`
 - `whois`
+- `doctor`
 
 ## Native Apps
 
@@ -316,20 +315,14 @@ Notes:
 - mobile shells will own their platform VPN runtime bridges while sharing the same Rust app contract
 - the legacy Tauri/Svelte app was removed after the native rewrite became the canonical architecture
 
-## Local relay and NAT test binaries
+## Local NAT test binary
 
 For local integration testing:
-
-Run a websocket relay:
-
-```bash
-cargo run -p nostr-vpn-relay --bin nostr-vpn-relay -- --bind 127.0.0.1:8080
-```
 
 Run a UDP reflector:
 
 ```bash
-cargo run -p nostr-vpn-relay --bin nvpn-reflector -- --bind 127.0.0.1:3478
+cargo run -p nostr-vpn-reflector --bin nvpn-reflector -- --bind 127.0.0.1:3478
 ```
 
 The reflector is used by `nvpn nat-discover` and `nvpn hole-punch` in local and Docker e2e setups.
@@ -339,7 +332,7 @@ The reflector is used by `nvpn nat-discover` and `nvpn hole-punch` in local and 
 Docker e2e scripts under [`scripts/`](scripts):
 
 - `./scripts/e2e-docker.sh`
-  Legacy WireGuard signaling coverage retained only for historical comparison.
+  Verifies static FIPS peer configuration, mesh formation, and tunnel ping.
 - `./scripts/e2e-connect-docker.sh`
   Verifies config-driven `nvpn connect`, FIPS mesh formation, and tunnel ping.
 - `./scripts/e2e-active-network-docker.sh`
@@ -376,7 +369,7 @@ The update E2E scripts set `NVPN_UPDATE_MANIFEST_URL` to a local fixture and sup
 - [`crates/nostr-vpn-cli`](crates/nostr-vpn-cli): `nvpn` CLI and daemon implementation
 - [`crates/nostr-vpn-app-core`](crates/nostr-vpn-app-core): native app state/action contract and UniFFI bridge
 - [`macos`](macos), [`linux`](linux), [`windows`](windows), [`android`](android), [`ios`](ios): native platform shells
-- [`crates/nostr-vpn-relay`](crates/nostr-vpn-relay): test relay and reflector binaries
+- [`crates/nostr-vpn-reflector`](crates/nostr-vpn-reflector): NAT discovery and hole-punch reflector binary
 - [`scripts`](scripts): build, release, Docker e2e, and desktop updater e2e entrypoints
 
 ## Release workflow notes

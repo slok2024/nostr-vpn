@@ -20,10 +20,10 @@ just linux-build
 ```
 
 The shell follows the current SwiftUI/AppKit app structure: Devices, Share,
-Exit Nodes, Settings, and an Advanced disclosure for relays and diagnostics. It
+Exit Nodes, Settings, and an Advanced diagnostics disclosure. It
 owns the same core flows for connect/disconnect, roster presence, participant
 management, invite QR/import, LAN pairing, saved networks, exit-node selection,
-relays, service/CLI actions, and diagnostics. Remaining
+service/CLI actions, and diagnostics. Remaining
 Linux-native work is desktop portal integration, live camera QR scanning,
 tray/status notifier support, and packaged update UX.
 

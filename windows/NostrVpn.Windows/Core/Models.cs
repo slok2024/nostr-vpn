@@ -23,7 +23,6 @@ public sealed class NativeAppState
     public bool DaemonRunning { get; set; }
     public bool VpnEnabled { get; set; }
     public bool VpnActive { get; set; }
-    public bool RelayConnected { get; set; }
     public string VpnStatus { get; set; } = "";
     public string DaemonBinaryVersion { get; set; } = "";
     public string ServiceBinaryVersion { get; set; } = "";
@@ -55,8 +54,6 @@ public sealed class NativeAppState
     public NativeNetworkSummary Network { get; set; } = new();
     public NativePortMappingStatus PortMapping { get; set; } = new();
     public List<NativeNetworkState> Networks { get; set; } = [];
-    public List<NativeRelayState> Relays { get; set; } = [];
-    public NativeRelaySummary RelaySummary { get; set; } = new();
     public List<NativeLanPeerState> LanPeers { get; set; } = [];
 }
 
@@ -119,21 +116,6 @@ public sealed class NativeInboundJoinRequestState
     public string RequesterPubkeyHex { get; set; } = "";
     public string RequesterNodeName { get; set; } = "";
     public string RequestedAtText { get; set; } = "";
-}
-
-public sealed class NativeRelayState
-{
-    public string Url { get; set; } = "";
-    public string State { get; set; } = "";
-    public string StatusText { get; set; } = "";
-}
-
-public sealed class NativeRelaySummary
-{
-    public ulong Up { get; set; }
-    public ulong Down { get; set; }
-    public ulong Checking { get; set; }
-    public ulong Unknown { get; set; }
 }
 
 public sealed class NativeLanPeerState

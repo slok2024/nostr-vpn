@@ -2,6 +2,8 @@
 use std::fs;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 use std::net::Ipv4Addr;
+#[cfg(any(target_os = "linux", test))]
+use std::net::Ipv6Addr;
 #[cfg(target_os = "linux")]
 use std::net::ToSocketAddrs;
 #[cfg(target_os = "linux")]
@@ -731,6 +733,8 @@ pub(crate) fn apply_local_interface_network_with_mtu(
     #[cfg(target_os = "linux")]
     {
         let ipv4_route_source = linux_ipv4_route_source(address);
+        let local_has_ipv4 = linux_tunnel_address_is_ipv4(address);
+        let local_has_ipv6 = linux_tunnel_address_is_ipv6(address);
         run_checked(
             ProcessCommand::new("ip")
                 .arg("address")
@@ -750,6 +754,12 @@ pub(crate) fn apply_local_interface_network_with_mtu(
                 .arg(iface),
         )?;
         for target in route_targets {
+            if linux_route_target_is_ipv4(target) && !local_has_ipv4 {
+                continue;
+            }
+            if linux_route_target_is_ipv6(target) && !local_has_ipv6 {
+                continue;
+            }
             if target == "0.0.0.0/0" {
                 let _ = ProcessCommand::new("ip")
                     .arg("-4")
@@ -825,9 +835,24 @@ pub(crate) fn linux_ipv4_route_source(address: &str) -> Option<String> {
         .map(|ip| ip.to_string())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn linux_tunnel_address_is_ipv4(address: &str) -> bool {
+    strip_cidr(address).parse::<Ipv4Addr>().is_ok()
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn linux_tunnel_address_is_ipv6(address: &str) -> bool {
+    strip_cidr(address).parse::<Ipv6Addr>().is_ok()
+}
+
+#[cfg(any(target_os = "linux", test))]
 pub(crate) fn linux_route_target_is_ipv4(target: &str) -> bool {
     strip_cidr(target).parse::<Ipv4Addr>().is_ok()
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn linux_route_target_is_ipv6(target: &str) -> bool {
+    strip_cidr(target).parse::<Ipv6Addr>().is_ok()
 }
 
 #[cfg(target_os = "macos")]
@@ -837,4 +862,21 @@ fn apply_macos_route(iface: &str, target: &str) -> Result<()> {
         return apply_macos_default_route(None, Some(iface));
     }
     apply_macos_route_spec(target, None, Some(iface))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_route_family_helpers_detect_ipv4_and_ipv6_cidrs() {
+        assert!(linux_tunnel_address_is_ipv4("10.44.0.1/32"));
+        assert!(!linux_tunnel_address_is_ipv6("10.44.0.1/32"));
+        assert!(linux_tunnel_address_is_ipv6("fd00::1/128"));
+        assert!(!linux_tunnel_address_is_ipv4("fd00::1/128"));
+        assert!(linux_route_target_is_ipv4("0.0.0.0/0"));
+        assert!(!linux_route_target_is_ipv4("::/0"));
+        assert!(linux_route_target_is_ipv6("::/0"));
+        assert!(!linux_route_target_is_ipv6("10.44.0.0/16"));
+    }
 }

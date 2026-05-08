@@ -20,14 +20,11 @@ fn network_id_derivation_is_order_independent() {
 fn generated_config_auto_populates_keys() {
     let config = AppConfig::generated();
 
-    assert!(!config.node.private_key.is_empty());
-    assert!(!config.node.public_key.is_empty());
     assert!(!config.nostr.secret_key.is_empty());
     assert!(!config.nostr.public_key.is_empty());
     assert!(!config.node_name.trim().is_empty());
     assert_ne!(config.node_name, "nostr-vpn-node");
     assert!(config.nostr.relays.is_empty());
-    assert!(!config.auto_disconnect_relays_when_mesh_ready);
     assert!(config.autoconnect);
     assert!(config.lan_discovery_enabled);
     assert!(config.launch_on_startup);
@@ -38,22 +35,6 @@ fn generated_config_auto_populates_keys() {
     assert!(!config.node.advertise_exit_node);
     assert!(config.node.advertised_routes.is_empty());
     assert!(config.effective_advertised_routes().is_empty());
-}
-
-#[test]
-fn load_ignores_legacy_data_plane_switches() {
-    let path = unique_temp_config_path("legacy-data-plane-switches");
-    let raw = r#"
-private_data_plane = "wireguard"
-exit_data_plane = "wireguard"
-"#;
-
-    fs::write(&path, raw).expect("write config");
-    let config = AppConfig::load(&path).expect("load config");
-    let _ = fs::remove_file(&path);
-
-    assert!(config.fips_peer_endpoints.is_empty());
-    assert!(config.exit_node.is_empty());
 }
 
 #[test]

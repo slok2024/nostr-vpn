@@ -5,7 +5,6 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_NAME="nostr-vpn-e2e-nat"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.nat-e2e.yml")
 
-RELAY_URL="ws://203.0.113.2:8080"
 REFLECTOR_ADDR="203.0.113.3:3478"
 CONFIG_PATH="/root/.config/nvpn/config.toml"
 
@@ -26,7 +25,7 @@ dump_debug() {
   set +e
   echo "nat docker e2e failed, collecting debug output..."
   "${COMPOSE[@]}" ps || true
-  for service in relay reflector nat-b node-a node-b; do
+  for service in reflector nat-b node-a node-b; do
     echo "--- logs: $service ---"
     "${COMPOSE[@]}" logs --no-color --tail 120 "$service" || true
   done
@@ -114,9 +113,9 @@ nostr_pubkey_from_config() {
 }
 
 "${COMPOSE[@]}" build >/dev/null
-"${COMPOSE[@]}" up -d relay reflector nat-b >/dev/null
+"${COMPOSE[@]}" up -d reflector nat-b >/dev/null
 
-for service in relay reflector nat-b; do
+for service in reflector nat-b; do
   wait_for_service "$service"
 done
 
@@ -144,8 +143,18 @@ if [[ -z "$ALICE_NPUB" || -z "$BOB_NPUB" ]]; then
   exit 1
 fi
 
-"${COMPOSE[@]}" exec -T node-a nvpn set --participant "$BOB_NPUB" --relay "$RELAY_URL" >/dev/null
-"${COMPOSE[@]}" exec -T node-b nvpn set --participant "$ALICE_NPUB" --relay "$RELAY_URL" >/dev/null
+"${COMPOSE[@]}" exec -T node-a nvpn set \
+  --participant "$BOB_NPUB" \
+  --endpoint "203.0.113.10:51820" \
+  --listen-port 51820 \
+  --fips-advertise-endpoint true \
+  --fips-peer-endpoint "$BOB_NPUB=203.0.113.11:51820" >/dev/null
+"${COMPOSE[@]}" exec -T node-b nvpn set \
+  --participant "$ALICE_NPUB" \
+  --endpoint "203.0.113.11:51820" \
+  --listen-port 51820 \
+  --fips-advertise-endpoint true \
+  --fips-peer-endpoint "$ALICE_NPUB=203.0.113.10:51820" >/dev/null
 
 for node in node-a node-b; do
   "${COMPOSE[@]}" exec -T "$node" sh -lc \

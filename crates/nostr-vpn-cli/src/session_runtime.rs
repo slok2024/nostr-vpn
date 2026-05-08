@@ -108,7 +108,6 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
         ));
     }
 
-    let relays = resolve_relays(&args.relay, &app);
     let own_pubkey = app.own_nostr_pubkey_hex().ok();
     let expected_peers = expected_peer_count(&app);
     let iface = args.iface.clone();
@@ -147,7 +146,6 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
             &app,
             &network_id,
             iface.clone(),
-            &relays,
             own_pubkey.as_deref(),
             fips_endpoint_cache.as_ref(),
             public_signal_endpoint.as_ref(),
@@ -159,13 +157,11 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
     let _magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);
 
     println!(
-        "connect: network {} on {} relays; waiting for {expected_peers} configured peer(s)",
-        network_id,
-        relays.len()
+        "connect: network {network_id} using FIPS private mesh; waiting for {expected_peers} configured peer(s)"
     );
 
     let mut announce_interval =
-        tokio::time::interval(Duration::from_secs(args.announce_interval_secs.max(5)));
+        tokio::time::interval(Duration::from_secs(args.mesh_refresh_interval_secs.max(5)));
     announce_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut tunnel_heartbeat_interval = tokio::time::interval(Duration::from_secs(2));
     tunnel_heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -255,7 +251,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         network_override.clone(),
         participants_override.clone(),
     )?;
-    let mut relays = resolve_relays(&args.relay, &app);
     let mut own_pubkey = app.own_nostr_pubkey_hex().ok();
     let mut expected_peers = expected_peer_count(&app);
     #[cfg(not(feature = "embedded-fips"))]
@@ -307,7 +302,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             &app,
             &network_id,
             iface.clone(),
-            &relays,
             own_pubkey.as_deref(),
             fips_endpoint_cache.as_ref(),
             public_signal_endpoint.as_ref(),
@@ -325,7 +319,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         .and_then(|cache| serde_json::to_string(cache).ok());
 
     let mut announce_interval =
-        tokio::time::interval(Duration::from_secs(args.announce_interval_secs.max(5)));
+        tokio::time::interval(Duration::from_secs(args.mesh_refresh_interval_secs.max(5)));
     announce_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut state_interval = tokio::time::interval(Duration::from_secs(1));
     state_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -580,7 +574,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             runtime,
                             &app,
                             &network_id,
-                            &relays,
                             own_pubkey.as_deref(),
                             fips_endpoint_cache.as_ref(),
                             public_signal_endpoint.as_ref(),
@@ -620,20 +613,17 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             let reload = build_daemon_reload_config(
                                 app.clone(),
                                 app.effective_network_id(),
-                                &args.relay,
                             );
                             app = reload.app;
                             network_id = reload.network_id;
                             expected_peers = reload.expected_peers;
                             own_pubkey = reload.own_pubkey;
-                            relays = reload.relays;
 
                             fips_join_request_sends.clear();
                             if let Err(error) = refresh_fips_tunnel_config(
                                 runtime,
                                 &app,
                                 &network_id,
-                                &relays,
                                 own_pubkey.as_deref(),
                                 fips_endpoint_cache.as_ref(),
                                 public_signal_endpoint.as_ref(),
@@ -713,13 +703,11 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                             let reload = build_daemon_reload_config(
                                                 reloaded_app,
                                                 reloaded_network_id,
-                                                &args.relay,
                                             );
                                             app = reload.app;
                                             network_id = reload.network_id;
                                             expected_peers = reload.expected_peers;
                                             own_pubkey = reload.own_pubkey;
-                                            relays = reload.relays;
 
                                             let join_requests_active = app.join_requests_enabled();
                                             let vpn_active =
@@ -799,7 +787,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         &app,
                         &network_id,
                         &iface,
-                        &relays,
                         own_pubkey.as_deref(),
                         fips_endpoint_cache.as_ref(),
                         public_signal_endpoint.as_ref(),

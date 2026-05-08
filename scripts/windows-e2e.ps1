@@ -1,7 +1,5 @@
 param(
   [string]$Configuration = "Debug",
-  [string]$RelayUrl = "ws://127.0.0.1:18080",
-  [string]$RelayBind = "127.0.0.1:18080",
   [string]$ArtifactRoot = "C:\Mac\Home\src\nostr-vpn\artifacts",
   [switch]$SkipCleanupOnFailure,
   [switch]$PacketDebug,
@@ -12,7 +10,6 @@ $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $Bin = Join-Path $Root "target\debug\nvpn.exe"
-$RelayBin = Join-Path $Root "target\debug\nostr-vpn-relay.exe"
 $AppExe = Join-Path $Root "windows\NostrVpn.Windows\bin\$Configuration\net8.0-windows\NostrVpn.Windows.exe"
 $E2eRoot = Join-Path $env:TEMP "nvpn-windows-e2e"
 $Screenshot = Join-Path $ArtifactRoot "windows-e2e-gui.png"
@@ -169,16 +166,12 @@ function Write-NetworkDiagnostics {
 if (!(Test-Path $Bin)) {
   throw "Missing nvpn.exe: $Bin"
 }
-if (!(Test-Path $RelayBin)) {
-  throw "Missing nostr-vpn-relay.exe: $RelayBin"
-}
 if (!$SkipGui -and !(Test-Path $AppExe)) {
   throw "Missing Windows app: $AppExe"
 }
 
 Stop-Name "NostrVpn.Windows"
 Stop-Name "nvpn"
-Stop-Name "nostr-vpn-relay"
 Remove-Item -Recurse -Force $E2eRoot -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $E2eRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $GuiDir | Out-Null
@@ -190,7 +183,6 @@ if (Test-Path $AliceConfig) {
   $HadConfig = $true
 }
 
-$RelayProc = $null
 $AliceProc = $null
 $BobProc = $null
 $AppProc = $null
@@ -215,7 +207,7 @@ try {
     "--node-name", "Windows GUI",
     "--listen-port", "55181",
     "--endpoint", "127.0.0.1:55181",
-    "--relay", $RelayUrl,
+    "--fips-advertise-endpoint", "true",
     "--participant", $AliceNpub,
     "--participant", $BobNpub,
     "--fips-peer-endpoint", "$BobNpub=127.0.0.1:55182"
@@ -225,19 +217,11 @@ try {
     "--node-name", "Windows peer",
     "--listen-port", "55182",
     "--endpoint", "127.0.0.1:55182",
-    "--relay", $RelayUrl,
+    "--fips-advertise-endpoint", "true",
     "--participant", $AliceNpub,
     "--participant", $BobNpub,
     "--fips-peer-endpoint", "$AliceNpub=127.0.0.1:55181"
   )
-
-  $RelayProc = Start-Process -FilePath $RelayBin `
-    -ArgumentList (Join-CommandLine @("--bind", $RelayBind)) `
-    -RedirectStandardOutput (Join-Path $E2eRoot "relay.out.log") `
-    -RedirectStandardError (Join-Path $E2eRoot "relay.err.log") `
-    -WindowStyle Hidden `
-    -PassThru
-  Start-Sleep -Seconds 1
 
   if ($PacketDebug) {
     $env:NVPN_FIPS_PACKET_DEBUG = "1"
@@ -245,21 +229,21 @@ try {
     Remove-Item Env:\NVPN_FIPS_PACKET_DEBUG -ErrorAction SilentlyContinue
   }
   $AliceProc = Start-Process -FilePath $Bin `
-    -ArgumentList (Join-CommandLine @("connect", "--config", $AliceConfig, "--iface", "nvpn-gui", "--announce-interval-secs", "5")) `
+    -ArgumentList (Join-CommandLine @("connect", "--config", $AliceConfig, "--iface", "nvpn-gui", "--mesh-refresh-interval-secs", "5")) `
     -RedirectStandardOutput (Join-Path $E2eRoot "alice.out.log") `
     -RedirectStandardError (Join-Path $E2eRoot "alice.err.log") `
     -WindowStyle Hidden `
     -PassThru
   $BobProc = Start-Process -FilePath $Bin `
-    -ArgumentList (Join-CommandLine @("connect", "--config", $BobConfig, "--iface", "nvpn-peer", "--announce-interval-secs", "5")) `
+    -ArgumentList (Join-CommandLine @("connect", "--config", $BobConfig, "--iface", "nvpn-peer", "--mesh-refresh-interval-secs", "5")) `
     -RedirectStandardOutput (Join-Path $E2eRoot "bob.out.log") `
     -RedirectStandardError (Join-Path $E2eRoot "bob.err.log") `
     -WindowStyle Hidden `
     -PassThru
   Remove-Item Env:\NVPN_FIPS_PACKET_DEBUG -ErrorAction SilentlyContinue
 
-  Wait-ForLog (Join-Path $E2eRoot "alice.out.log") "mesh: 1/1 peers with presence" "Alice" $AliceProc (Join-Path $E2eRoot "alice.err.log")
-  Wait-ForLog (Join-Path $E2eRoot "bob.out.log") "mesh: 1/1 peers with presence" "Bob" $BobProc (Join-Path $E2eRoot "bob.err.log")
+  Wait-ForLog (Join-Path $E2eRoot "alice.out.log") "mesh: 1/1 peers connected" "Alice" $AliceProc (Join-Path $E2eRoot "alice.err.log")
+  Wait-ForLog (Join-Path $E2eRoot "bob.out.log") "mesh: 1/1 peers connected" "Bob" $BobProc (Join-Path $E2eRoot "bob.err.log")
   Start-Sleep -Seconds 3
 
   $BobIp = (& $Bin ip --config $AliceConfig --peer --discover-secs 0 | Select-Object -First 1).Trim()
@@ -303,7 +287,7 @@ try {
   $Succeeded = $true
 } finally {
   if ($SkipCleanupOnFailure -and !$Succeeded) {
-    Write-Host "Skipping cleanup after failure. Processes: relay=$($RelayProc.Id) alice=$($AliceProc.Id) bob=$($BobProc.Id) app=$($AppProc.Id)"
+    Write-Host "Skipping cleanup after failure. Processes: alice=$($AliceProc.Id) bob=$($BobProc.Id) app=$($AppProc.Id)"
   } else {
     if ($AppProc -and !$AppProc.HasExited) {
       Stop-Process -Id $AppProc.Id -Force -ErrorAction SilentlyContinue
@@ -313,9 +297,6 @@ try {
     }
     if ($BobProc -and !$BobProc.HasExited) {
       Stop-Process -Id $BobProc.Id -Force -ErrorAction SilentlyContinue
-    }
-    if ($RelayProc -and !$RelayProc.HasExited) {
-      Stop-Process -Id $RelayProc.Id -Force -ErrorAction SilentlyContinue
     }
     if ($HadConfig -and (Test-Path $BackupConfig)) {
       Copy-Item $BackupConfig $AliceConfig -Force

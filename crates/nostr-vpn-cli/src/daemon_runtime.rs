@@ -925,8 +925,8 @@ pub(crate) fn spawn_daemon_process(args: &ConnectArgs, config_path: &Path) -> Re
         .arg(config_path)
         .arg("--iface")
         .arg(&args.iface)
-        .arg("--announce-interval-secs")
-        .arg(args.announce_interval_secs.to_string())
+        .arg("--mesh-refresh-interval-secs")
+        .arg(args.mesh_refresh_interval_secs.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(stderr_log));
@@ -936,9 +936,6 @@ pub(crate) fn spawn_daemon_process(args: &ConnectArgs, config_path: &Path) -> Re
     }
     for participant in &args.participants {
         command.arg("--participant").arg(participant);
-    }
-    for relay in &args.relay {
-        command.arg("--relay").arg(relay);
     }
 
     let mut child = command

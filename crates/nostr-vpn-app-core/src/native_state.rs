@@ -2,23 +2,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NativeRelayState {
-    pub url: String,
-    pub state: String,
-    pub status_text: String,
-}
-
-#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NativeRelaySummary {
-    pub up: u64,
-    pub down: u64,
-    pub checking: u64,
-    pub unknown: u64,
-}
-
-#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct NativeParticipantState {
     pub npub: String,
     pub pubkey_hex: String,
@@ -190,7 +173,5 @@ pub struct NativeAppState {
     pub network: NativeNetworkSummary,
     pub port_mapping: NativePortMappingStatus,
     pub networks: Vec<NativeNetworkState>,
-    pub relays: Vec<NativeRelayState>,
-    pub relay_summary: NativeRelaySummary,
     pub lan_peers: Vec<NativeLanPeerState>,
 }

@@ -22,7 +22,6 @@ const TUNNEL_CHANNEL_CAPACITY: usize = 1024;
 pub(crate) struct MobileTunnelConfig {
     pub(crate) identity_nsec: String,
     pub(crate) network_id: String,
-    pub(crate) relays: Vec<String>,
     pub(crate) local_address: String,
     pub(crate) mtu: u16,
     pub(crate) peers: Vec<FipsMeshPeerConfig>,
@@ -74,14 +73,14 @@ impl MobileTunnelConfig {
         route_targets.sort();
         route_targets.dedup();
 
-        let local_address = derive_mesh_tunnel_ip(&network_id, &own_pubkey)
-            .map(|tunnel_ip| local_interface_address_for_tunnel(&tunnel_ip))
-            .unwrap_or_else(|| local_interface_address_for_tunnel(&app.node.tunnel_ip));
+        let local_address = derive_mesh_tunnel_ip(&network_id, &own_pubkey).map_or_else(
+            || local_interface_address_for_tunnel(&app.node.tunnel_ip),
+            |tunnel_ip| local_interface_address_for_tunnel(&tunnel_ip),
+        );
 
         Ok(Self {
             identity_nsec: app.nostr.secret_key.clone(),
             network_id,
-            relays: Vec::new(),
             local_address,
             mtu: DEFAULT_MOBILE_MTU,
             peers,
@@ -147,7 +146,7 @@ impl MobileTunnel {
     )> {
         let scope = format!("nostr-vpn:{}", config.network_id.trim());
         let endpoint = FipsEndpoint::builder()
-            .config(fips_endpoint_config(&scope, &config.relays, &config.peers))
+            .config(fips_endpoint_config(&scope, &config.peers))
             .identity_nsec(config.identity_nsec)
             .discovery_scope(scope)
             .without_system_tun()
@@ -255,11 +254,7 @@ impl Drop for MobileTunnel {
     }
 }
 
-fn fips_endpoint_config(
-    scope: &str,
-    _relays: &[String],
-    peers: &[FipsMeshPeerConfig],
-) -> FipsConfig {
+fn fips_endpoint_config(scope: &str, peers: &[FipsMeshPeerConfig]) -> FipsConfig {
     let mut config = FipsConfig::new();
     config.node.discovery.nostr.enabled = false;
     config.node.discovery.nostr.advertise = false;
@@ -323,7 +318,6 @@ fn empty_config() -> MobileTunnelConfig {
     MobileTunnelConfig {
         identity_nsec: String::new(),
         network_id: String::new(),
-        relays: Vec::new(),
         local_address: String::new(),
         mtu: DEFAULT_MOBILE_MTU,
         peers: Vec::new(),
@@ -386,9 +380,7 @@ mod tests {
             vec!["10.44.22.44/32".to_string()],
         )
         .expect("peer");
-        let relays = vec!["wss://relay.example".to_string()];
-
-        let config = fips_endpoint_config("nostr-vpn:test", &relays, &[peer]);
+        let config = fips_endpoint_config("nostr-vpn:test", &[peer]);
 
         assert!(!config.node.discovery.nostr.enabled);
         assert!(!config.node.discovery.nostr.advertise);
@@ -411,9 +403,7 @@ mod tests {
 
     #[test]
     fn mobile_fips_config_does_not_advertise_without_peers() {
-        let relays = vec!["wss://relay.example".to_string()];
-
-        let config = fips_endpoint_config("nostr-vpn:test", &relays, &[]);
+        let config = fips_endpoint_config("nostr-vpn:test", &[]);
 
         assert!(!config.node.discovery.nostr.enabled);
         assert!(!config.node.discovery.nostr.advertise);

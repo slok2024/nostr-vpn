@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::env;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -27,8 +28,7 @@ use crate::lan_pairing::{
 use crate::native_state::{
     NativeAppState, NativeHealthIssue, NativeInboundJoinRequestState, NativeLanPeerState,
     NativeNetworkState, NativeNetworkSummary, NativeOutboundJoinRequestState,
-    NativeParticipantState, NativePortMappingStatus, NativeProbeStatus, NativeRelayState,
-    NativeRelaySummary,
+    NativeParticipantState, NativePortMappingStatus, NativeProbeStatus,
 };
 use crate::platform::current_runtime_capabilities;
 use crate::state::{
@@ -235,6 +235,7 @@ impl NativeAppRuntime {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn state(&self) -> NativeAppState {
         let capabilities = current_runtime_capabilities();
         let own_pubkey_hex = self.config.own_nostr_pubkey_hex().unwrap_or_default();
@@ -340,8 +341,6 @@ impl NativeAppRuntime {
             network,
             port_mapping,
             networks: self.network_states(&own_pubkey_hex, vpn_active),
-            relays: self.relay_states(),
-            relay_summary: self.relay_summary(),
             lan_peers: self.lan_peer_states(),
         }
     }
@@ -1015,7 +1014,7 @@ impl NativeAppRuntime {
         own_pubkey_hex: &str,
         vpn_active: bool,
     ) -> NativeParticipantState {
-        let daemon_peer = vpn_active.then(|| ()).and_then(|()| {
+        let daemon_peer = vpn_active.then_some(()).and_then(|()| {
             self.daemon_state.as_ref().and_then(|state| {
                 state
                     .peers
@@ -1092,23 +1091,6 @@ impl NativeAppRuntime {
             status_text: Self::peer_status_text(daemon_peer, is_local, &peer_state),
             last_seen_text: Self::peer_last_fips_seen_text(daemon_peer, is_local),
         }
-    }
-
-    fn relay_states(&self) -> Vec<NativeRelayState> {
-        Vec::new()
-    }
-
-    fn relay_summary(&self) -> NativeRelaySummary {
-        let mut summary = NativeRelaySummary::default();
-        for relay in self.relay_states() {
-            match relay.state.as_str() {
-                "up" => summary.up += 1,
-                "down" => summary.down += 1,
-                "checking" => summary.checking += 1,
-                _ => summary.unknown += 1,
-            }
-        }
-        summary
     }
 
     fn refresh_service_status_if_due(&mut self) {
@@ -1543,7 +1525,7 @@ fn peer_link_text(peer: &DaemonPeerState) -> Option<String> {
     let transport = non_empty(&peer.fips_transport_type).unwrap_or_else(|| "fips".to_string());
     let mut text = format!("{transport} {}", shorten_middle(&addr, 22, 10));
     if let Some(srtt_ms) = peer.fips_srtt_ms {
-        text.push_str(&format!(" ({srtt_ms} ms)"));
+        let _ = write!(text, " ({srtt_ms} ms)");
     }
     Some(text)
 }

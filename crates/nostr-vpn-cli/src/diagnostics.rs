@@ -366,7 +366,6 @@ fn sanitized_config_json(app: &AppConfig) -> serde_json::Value {
         },
         "node": {
             "id": app.node.id,
-            "publicKey": app.node.public_key,
             "endpoint": app.node.endpoint,
             "tunnelIp": app.node.tunnel_ip,
             "listenPort": app.node.listen_port,

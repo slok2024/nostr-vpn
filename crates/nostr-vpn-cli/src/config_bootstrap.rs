@@ -326,18 +326,3 @@ pub(crate) fn apply_participants_override(
 
     Ok(())
 }
-
-pub(crate) fn resolve_relays(cli_relays: &[String], config: &AppConfig) -> Vec<String> {
-    if !cli_relays.is_empty() {
-        return cli_relays.to_vec();
-    }
-
-    if !config.nostr.relays.is_empty() {
-        return config.nostr.relays.clone();
-    }
-
-    DEFAULT_RELAYS
-        .iter()
-        .map(|relay| (*relay).to_string())
-        .collect()
-}

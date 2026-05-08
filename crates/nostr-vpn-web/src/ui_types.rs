@@ -79,23 +79,6 @@ pub(crate) struct DaemonPeerState {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RelaySummary {
-    pub up: usize,
-    pub down: usize,
-    pub checking: usize,
-    pub unknown: usize,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RelayView {
-    pub url: String,
-    pub state: String,
-    pub status_text: String,
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ParticipantView {
@@ -211,8 +194,6 @@ pub(crate) struct UiState {
     pub network: NetworkSummary,
     pub port_mapping: PortMappingStatus,
     pub networks: Vec<NetworkView>,
-    pub relays: Vec<RelayView>,
-    pub relay_summary: RelaySummary,
     pub lan_peers: Vec<serde_json::Value>,
 }
 

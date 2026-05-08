@@ -6,7 +6,6 @@ PROJECT_NAME="nostr-vpn-e2e-fips-routed-udp"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.e2e.yml")
 
 NETWORK_ID="docker-fips-routed-udp"
-RELAY_URL="ws://10.203.0.2:8080"
 CONFIG_PATH="/root/.config/nvpn/config.toml"
 UDP_PORT=42424
 
@@ -23,7 +22,7 @@ dump_debug() {
   set +e
   echo "fips routed udp e2e failed, collecting debug output..."
   "${COMPOSE[@]}" ps || true
-  for service in relay node-a node-b node-c; do
+  for service in node-a node-b node-c; do
     echo "--- logs: $service ---"
     "${COMPOSE[@]}" logs --no-color --tail 120 "$service" || true
   done
@@ -198,8 +197,8 @@ wait_for_payload() {
 cleanup
 
 "${COMPOSE[@]}" build >/dev/null
-"${COMPOSE[@]}" up -d relay node-a node-b node-c >/dev/null
-for service in relay node-a node-b node-c; do
+"${COMPOSE[@]}" up -d node-a node-b node-c >/dev/null
+for service in node-a node-b node-c; do
   wait_for_service "$service"
 done
 
@@ -221,22 +220,22 @@ fi
   --node-name alice \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
+  --fips-peer-endpoint "$BOB_NPUB=10.203.0.11:51820" \
   --fips-peer-endpoint "$CHARLIE_NPUB=10.203.0.12:51820" \
   --endpoint "10.203.0.10:51820" \
   --listen-port 51820 \
-  --fips-advertise-endpoint true \
-  --relay "$RELAY_URL" >/dev/null
+  --fips-advertise-endpoint true >/dev/null
 
 "${COMPOSE[@]}" exec -T node-b nvpn set \
   --network-id "$NETWORK_ID" \
   --node-name bob \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
+  --fips-peer-endpoint "$ALICE_NPUB=10.203.0.10:51820" \
   --fips-peer-endpoint "$CHARLIE_NPUB=10.203.0.12:51820" \
   --endpoint "10.203.0.11:51820" \
   --listen-port 51820 \
-  --fips-advertise-endpoint true \
-  --relay "$RELAY_URL" >/dev/null
+  --fips-advertise-endpoint true >/dev/null
 
 "${COMPOSE[@]}" exec -T node-c nvpn set \
   --network-id "$NETWORK_ID" \
@@ -245,8 +244,7 @@ fi
   --fips-peer-endpoint "$BOB_NPUB=10.203.0.11:51820" \
   --endpoint "10.203.0.12:51820" \
   --listen-port 51820 \
-  --fips-advertise-endpoint true \
-  --relay "$RELAY_URL" >/dev/null
+  --fips-advertise-endpoint true >/dev/null
 
 for node in node-a node-b node-c; do
   replace_peer_aliases "$node"

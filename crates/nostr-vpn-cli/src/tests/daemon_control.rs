@@ -565,7 +565,7 @@ fn daemon_pid_scan_ignores_exiting_processes_for_config() {
 fn daemon_pid_scan_ignores_shell_wrappers_that_mention_nvpn_daemon() {
     let config_path = Path::new("/root/.config/nvpn/config.toml");
     let ps = "2433278 bash -c set -e; nohup /root/nostr-vpn-current/target/debug/nvpn daemon --config /root/.config/nvpn/config.toml --iface utun100 >/root/.config/nvpn/launch.out 2>&1 </dev/null & sleep 5\n\
-2433301 /root/nostr-vpn-current/target/debug/nvpn daemon --config /root/.config/nvpn/config.toml --iface utun100 --announce-interval-secs 20\n";
+2433301 /root/nostr-vpn-current/target/debug/nvpn daemon --config /root/.config/nvpn/config.toml --iface utun100 --mesh-refresh-interval-secs 20\n";
 
     let pids = daemon_pids_from_ps_output(ps, config_path);
 
@@ -601,7 +601,7 @@ fn windows_service_bin_path_runs_hidden_service_daemon_with_same_config() {
     assert!(command.contains(" --config "));
     assert!(command.contains("\"C:\\Users\\sirius\\AppData\\Roaming\\nvpn\\config.toml\""));
     assert!(command.contains(" --iface \"nvpn\""));
-    assert!(command.contains(" --announce-interval-secs 20"));
+    assert!(command.contains(" --mesh-refresh-interval-secs 20"));
 }
 
 #[test]
@@ -676,14 +676,9 @@ fn daemon_reload_config_uses_reloaded_network_id() {
     let reloaded_network_id = app.effective_network_id();
     assert_ne!(initial_network_id, reloaded_network_id);
 
-    let reload = build_daemon_reload_config(
-        app,
-        reloaded_network_id.clone(),
-        &["wss://relay.example.com".to_string()],
-    );
+    let reload = build_daemon_reload_config(app, reloaded_network_id.clone());
 
     assert_eq!(reload.network_id, reloaded_network_id);
-    assert_eq!(reload.relays, vec!["wss://relay.example.com".to_string()]);
 }
 
 #[test]

@@ -27,7 +27,7 @@ and packages it into the debug APK.
 just android-install
 ```
 
-The first cut includes native state, invite, roster, relay, routing, diagnostics,
+The first cut includes native state, invite, roster, routing, diagnostics,
 deep-link, and VPN permission surfaces. Android app-core startup is mobile-aware
 and does not require the desktop `nvpn` CLI. The packet tunnel service is present
 but the Android data-plane loop still needs to be wired to FIPS endpoint delivery.

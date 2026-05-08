@@ -29,7 +29,7 @@ function Invoke-Checked {
   }
 }
 
-$CargoArgs = @("build", "-p", "nostr-vpn-app-core", "-p", "nostr-vpn-cli", "-p", "nostr-vpn-relay")
+$CargoArgs = @("build", "-p", "nostr-vpn-app-core", "-p", "nostr-vpn-cli", "-p", "nostr-vpn-reflector")
 if ($Configuration -eq "Release") {
   $CargoArgs += "--release"
 }

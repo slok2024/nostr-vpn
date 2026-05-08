@@ -22,6 +22,7 @@ pub(crate) struct NetworkInvite {
     admins: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     participants: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     relays: Vec<String>,
 }
 

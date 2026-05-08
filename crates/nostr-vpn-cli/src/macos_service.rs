@@ -66,7 +66,7 @@ pub(super) fn macos_install_service(
     executable: &Path,
     config_path: &Path,
     iface: &str,
-    announce_interval_secs: u64,
+    mesh_refresh_interval_secs: u64,
     log_path: &Path,
     force: bool,
 ) -> Result<()> {
@@ -87,7 +87,7 @@ pub(super) fn macos_install_service(
         executable,
         config_path,
         iface,
-        announce_interval_secs,
+        mesh_refresh_interval_secs,
         log_path,
     );
 
@@ -171,13 +171,13 @@ pub(super) fn macos_service_plist_content(
     executable: &Path,
     config_path: &Path,
     iface: &str,
-    announce_interval_secs: u64,
+    mesh_refresh_interval_secs: u64,
     log_path: &Path,
 ) -> String {
     let exec = xml_escape(&executable.display().to_string());
     let config = xml_escape(&config_path.display().to_string());
     let iface = xml_escape(iface);
-    let interval = announce_interval_secs.to_string();
+    let interval = mesh_refresh_interval_secs.to_string();
     let log = xml_escape(&log_path.display().to_string());
 
     format!(
@@ -196,7 +196,7 @@ pub(super) fn macos_service_plist_content(
     <string>{config}</string>
     <string>--iface</string>
     <string>{iface}</string>
-    <string>--announce-interval-secs</string>
+    <string>--mesh-refresh-interval-secs</string>
     <string>{interval}</string>
   </array>
   <key>RunAtLoad</key>

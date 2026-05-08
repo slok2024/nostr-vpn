@@ -387,7 +387,6 @@ pub(crate) async fn update_active_network_roster(
                 "changed": changed,
                 "published_recipients": published,
                 "published": args.publish,
-                "relays": Vec::<String>::new(),
             }))?
         );
     } else {
@@ -416,7 +415,7 @@ pub(crate) struct NetworkInvite {
     pub(crate) admins: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) participants: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) relays: Vec<String>,
 }
 

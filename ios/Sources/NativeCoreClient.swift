@@ -125,14 +125,6 @@ enum NativeActions {
         ["type": "stop_lan_pairing"]
     }
 
-    static func addRelay(_ relay: String) -> [String: Any] {
-        ["type": "add_relay", "relay": relay]
-    }
-
-    static func removeRelay(_ relay: String) -> [String: Any] {
-        ["type": "remove_relay", "relay": relay]
-    }
-
     static func addNetwork(_ name: String) -> [String: Any] {
         ["type": "add_network", "name": name]
     }

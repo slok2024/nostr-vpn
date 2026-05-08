@@ -26,8 +26,6 @@ public static class NativeActions
     public static string AddAdmin(string networkId, string npub) => AppCoreClient.Action(new { type = "add_admin", networkId, npub });
     public static string RemoveAdmin(string networkId, string npub) => AppCoreClient.Action(new { type = "remove_admin", networkId, npub });
     public static string SetParticipantAlias(string npub, string alias) => AppCoreClient.Action(new { type = "set_participant_alias", npub, alias });
-    public static string AddRelay(string relay) => AppCoreClient.Action(new { type = "add_relay", relay });
-    public static string RemoveRelay(string relay) => AppCoreClient.Action(new { type = "remove_relay", relay });
     public static string UpdateSettings(SettingsPatch patch) => AppCoreClient.Action(new { type = "update_settings", patch });
 }
 

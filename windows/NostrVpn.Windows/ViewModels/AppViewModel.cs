@@ -35,7 +35,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     private string _networkNameInput = "";
     private string _networkNameDraft = "";
     private string _networkMeshIdDraft = "";
-    private string _relayInput = "";
     private string _nodeName = "";
     private string _endpoint = "";
     private string _tunnelIp = "";
@@ -76,7 +75,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         SaveNetworkMeshIdCommand = new AsyncRelayCommand(_ => SaveActiveNetworkMeshIdAsync(), _ => !ActionInFlight && ActiveNetwork?.LocalIsAdmin == true && !string.IsNullOrWhiteSpace(NetworkMeshIdDraft));
         CopyNetworkIdCommand = new RelayCommand(_ => CopyText(ActiveNetwork?.NetworkId ?? ""), _ => !string.IsNullOrWhiteSpace(ActiveNetwork?.NetworkId));
         RequestNetworkJoinCommand = new AsyncRelayCommand(_ => RequestActiveNetworkJoinAsync(), _ => !ActionInFlight && CanRequestActiveNetworkJoin);
-        AddRelayCommand = new AsyncRelayCommand(_ => AddRelayAsync(), _ => !ActionInFlight && !string.IsNullOrWhiteSpace(RelayInput));
         InstallServiceCommand = new AsyncRelayCommand(_ => DispatchAsync(NativeActions.InstallSystemService(), "Installing service"), _ => !ActionInFlight && State.ServiceSupported);
         EnableServiceCommand = new AsyncRelayCommand(_ => DispatchAsync(NativeActions.EnableSystemService(), "Enabling service"), _ => !ActionInFlight && State.ServiceEnablementSupported);
         DisableServiceCommand = new AsyncRelayCommand(_ => DispatchAsync(NativeActions.DisableSystemService(), "Disabling service"), _ => !ActionInFlight && State.ServiceEnablementSupported);
@@ -164,7 +162,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
             }
         }
     }
-    public string RelayInput { get => _relayInput; set => SetField(ref _relayInput, value); }
     public string NodeName { get => _nodeName; set => SetField(ref _nodeName, value); }
     public string Endpoint { get => _endpoint; set => SetField(ref _endpoint, value); }
     public string TunnelIp { get => _tunnelIp; set => SetField(ref _tunnelIp, value); }
@@ -251,7 +248,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public ICommand SaveNetworkMeshIdCommand { get; }
     public ICommand CopyNetworkIdCommand { get; }
     public ICommand RequestNetworkJoinCommand { get; }
-    public ICommand AddRelayCommand { get; }
     public ICommand InstallServiceCommand { get; }
     public ICommand EnableServiceCommand { get; }
     public ICommand DisableServiceCommand { get; }
@@ -346,11 +342,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
                 ? NativeActions.RemoveAdmin(network.Id, participant.Npub)
                 : NativeActions.AddAdmin(network.Id, participant.Npub),
             participant.IsAdmin ? "Removing admin" : "Adding admin");
-    }
-
-    public Task RemoveRelayAsync(string relay)
-    {
-        return DispatchAsync(NativeActions.RemoveRelay(relay), "Removing relay");
     }
 
     public Task ActivateNetworkAsync(string networkId)
@@ -523,11 +514,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     private Task AddNetworkAsync()
     {
         return DispatchAsync(NativeActions.AddNetwork(NetworkNameInput.Trim()), "Adding network");
-    }
-
-    private Task AddRelayAsync()
-    {
-        return DispatchAsync(NativeActions.AddRelay(RelayInput.Trim()), "Adding relay");
     }
 
     private Task SaveNodeAsync()

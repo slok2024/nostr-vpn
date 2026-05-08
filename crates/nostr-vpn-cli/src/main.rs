@@ -40,12 +40,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use nostr_vpn_core::config::{
-    AppConfig, DEFAULT_RELAYS, derive_mesh_tunnel_ip, exit_node_default_routes,
-    maybe_autoconfigure_node, normalize_advertised_route, normalize_nostr_pubkey,
-    normalize_runtime_network_id,
+    AppConfig, derive_mesh_tunnel_ip, exit_node_default_routes, maybe_autoconfigure_node,
+    normalize_advertised_route, normalize_nostr_pubkey, normalize_runtime_network_id,
 };
 use nostr_vpn_core::control::PeerAnnouncement;
-use nostr_vpn_core::crypto::generate_keypair;
 use nostr_vpn_core::data_plane::MeshPeerStatus;
 use nostr_vpn_core::diagnostics::{
     HealthIssue, HealthSeverity, NetworkSummary, PortMappingStatus, ProbeState,
@@ -83,7 +81,7 @@ pub(crate) use crate::config_bootstrap::default_cli_install_path;
 pub(crate) use crate::config_bootstrap::windows_service_install_config_path;
 pub(crate) use crate::config_bootstrap::{
     apply_config_file, apply_participants_override, default_config_path, default_tunnel_iface,
-    init_config, install_cli, load_or_default_config, print_version, resolve_relays, uninstall_cli,
+    init_config, install_cli, load_or_default_config, print_version, uninstall_cli,
 };
 pub(crate) use crate::daemon_runtime::*;
 use crate::diagnostics::{
@@ -195,11 +193,6 @@ enum Command {
         #[arg(long = "participant")]
         participants: Vec<String>,
     },
-    /// Generate a boringtun-compatible keypair.
-    Keygen {
-        #[arg(long)]
-        json: bool,
-    },
     /// Show the running CLI version.
     Version(VersionArgs),
     /// Install `nvpn` into a platform-appropriate default PATH location.
@@ -310,8 +303,8 @@ struct ServiceInstallArgs {
     config: Option<PathBuf>,
     #[arg(long, default_value_t = default_tunnel_iface())]
     iface: String,
-    #[arg(long, default_value_t = 20)]
-    announce_interval_secs: u64,
+    #[arg(long, alias = "announce-interval-secs", default_value_t = 20)]
+    mesh_refresh_interval_secs: u64,
     #[arg(long)]
     force: bool,
 }
@@ -344,12 +337,10 @@ struct ConnectArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long, hide = true)]
-    relay: Vec<String>,
     #[arg(long, default_value_t = default_tunnel_iface())]
     iface: String,
-    #[arg(long, default_value_t = 20)]
-    announce_interval_secs: u64,
+    #[arg(long, alias = "announce-interval-secs", default_value_t = 20)]
+    mesh_refresh_interval_secs: u64,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -360,12 +351,10 @@ struct DaemonArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long, hide = true)]
-    relay: Vec<String>,
     #[arg(long, default_value_t = default_tunnel_iface())]
     iface: String,
-    #[arg(long, default_value_t = 20)]
-    announce_interval_secs: u64,
+    #[arg(long, alias = "announce-interval-secs", default_value_t = 20)]
+    mesh_refresh_interval_secs: u64,
     #[arg(long, hide = true, default_value_t = false)]
     service: bool,
 }
@@ -378,12 +367,10 @@ struct StartArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long, hide = true)]
-    relay: Vec<String>,
     #[arg(long, default_value_t = default_tunnel_iface())]
     iface: String,
-    #[arg(long, default_value_t = 20)]
-    announce_interval_secs: u64,
+    #[arg(long, alias = "announce-interval-secs", default_value_t = 20)]
+    mesh_refresh_interval_secs: u64,
     #[arg(long)]
     daemon: bool,
     #[arg(long, conflicts_with = "no_connect")]
@@ -428,8 +415,6 @@ struct StatusArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long, hide = true)]
-    relay: Vec<String>,
     #[arg(long, hide = true, default_value_t = 2)]
     discover_secs: u64,
     #[arg(long)]
@@ -454,8 +439,6 @@ struct SetArgs {
     tunnel_ip: Option<String>,
     #[arg(long)]
     listen_port: Option<u16>,
-    #[arg(long = "relay", hide = true)]
-    relays: Vec<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
     #[arg(long)]
@@ -501,8 +484,6 @@ struct UpdateRosterArgs {
     participants: Vec<String>,
     #[arg(long)]
     publish: bool,
-    #[arg(long = "relay", hide = true)]
-    relays: Vec<String>,
     #[arg(long)]
     json: bool,
 }
@@ -516,8 +497,6 @@ struct PingArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long, hide = true)]
-    relay: Vec<String>,
     #[arg(long, hide = true, default_value_t = 2)]
     discover_secs: u64,
     #[arg(long, default_value_t = 3)]
@@ -534,8 +513,6 @@ struct DoctorArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long, hide = true)]
-    relay: Vec<String>,
     #[arg(long, default_value_t = 4)]
     timeout_secs: u64,
     #[arg(long)]
@@ -552,8 +529,6 @@ struct IpArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long, hide = true)]
-    relay: Vec<String>,
     #[arg(long, hide = true, default_value_t = 2)]
     discover_secs: u64,
     #[arg(long)]
@@ -571,8 +546,6 @@ struct WhoisArgs {
     network_id: Option<String>,
     #[arg(long = "participant")]
     participants: Vec<String>,
-    #[arg(long, hide = true)]
-    relay: Vec<String>,
     #[arg(long, hide = true, default_value_t = 2)]
     discover_secs: u64,
     #[arg(long)]
@@ -678,15 +651,6 @@ async fn run_command(command: Command) -> Result<()> {
         } => {
             let path = config.unwrap_or_else(default_config_path);
             init_config(&path, force, participants)?;
-        }
-        Command::Keygen { json } => {
-            let pair = generate_keypair();
-            if json {
-                println!("{}", serde_json::to_string_pretty(&pair)?);
-            } else {
-                println!("private_key={}", pair.private_key);
-                println!("public_key={}", pair.public_key);
-            }
         }
         Command::Version(args) => {
             print_version(args)?;
@@ -794,7 +758,6 @@ async fn run_command(command: Command) -> Result<()> {
                         "advertise_exit_node": app.node.advertise_exit_node,
                         "advertised_routes": app.node.advertised_routes,
                         "effective_advertised_routes": runtime_effective_advertised_routes(&app),
-                        "relays": Vec::<String>::new(),
                         "daemon": daemon_status_json_value(&daemon),
                         "expected_peer_count": expected_peers,
                         "peer_count": peer_count,
@@ -901,11 +864,6 @@ async fn run_command(command: Command) -> Result<()> {
             }
             if !args.fips_peer_endpoints.is_empty() {
                 app.fips_peer_endpoints = parse_fips_peer_endpoint_args(&args.fips_peer_endpoints)?;
-            }
-            if !args.relays.is_empty() {
-                return Err(anyhow!(
-                    "relay configuration is no longer supported for the private mesh"
-                ));
             }
             apply_participants_override(&mut app, args.participants)?;
             app.ensure_defaults();
@@ -1349,7 +1307,6 @@ struct DaemonReloadConfig {
     network_id: String,
     expected_peers: usize,
     own_pubkey: Option<String>,
-    relays: Vec<String>,
 }
 
 fn load_config_with_overrides(
@@ -1368,21 +1325,15 @@ fn load_config_with_overrides(
     Ok((app, network_id))
 }
 
-fn build_daemon_reload_config(
-    app: AppConfig,
-    network_id: String,
-    relay_args: &[String],
-) -> DaemonReloadConfig {
+fn build_daemon_reload_config(app: AppConfig, network_id: String) -> DaemonReloadConfig {
     let expected_peers = expected_peer_count(&app);
     let own_pubkey = app.own_nostr_pubkey_hex().ok();
-    let relays = resolve_relays(relay_args, &app);
 
     DaemonReloadConfig {
         app,
         network_id,
         expected_peers,
         own_pubkey,
-        relays,
     }
 }
 
@@ -2114,7 +2065,6 @@ async fn refresh_fips_tunnel_config(
     runtime: &mut crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
     network_id: &str,
-    relays: &[String],
     own_pubkey: Option<&str>,
     endpoint_cache: Option<&crate::fips_private_mesh::FipsEndpointCacheState>,
     public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
@@ -2123,7 +2073,6 @@ async fn refresh_fips_tunnel_config(
         app,
         network_id,
         runtime.iface().to_string(),
-        relays,
         own_pubkey,
         endpoint_cache,
         public_signal_endpoint,
@@ -2136,7 +2085,6 @@ fn fips_tunnel_config_from_app(
     app: &AppConfig,
     network_id: &str,
     iface: impl Into<String>,
-    relays: &[String],
     own_pubkey: Option<&str>,
     endpoint_cache: Option<&crate::fips_private_mesh::FipsEndpointCacheState>,
     public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
@@ -2153,7 +2101,6 @@ fn fips_tunnel_config_from_app(
             app,
             network_id,
             iface,
-            relays,
             own_pubkey,
             cached_peer_endpoints,
         )?;
@@ -2183,7 +2130,6 @@ async fn sync_fips_private_runtime(
     app: &AppConfig,
     network_id: &str,
     iface: &str,
-    relays: &[String],
     own_pubkey: Option<&str>,
     endpoint_cache: Option<&crate::fips_private_mesh::FipsEndpointCacheState>,
     public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
@@ -2205,7 +2151,6 @@ async fn sync_fips_private_runtime(
         app,
         network_id,
         config_iface,
-        relays,
         own_pubkey,
         endpoint_cache,
         public_signal_endpoint,
@@ -2475,9 +2420,8 @@ async fn start_session(args: StartArgs) -> Result<()> {
         config: Some(config_path.clone()),
         network_id: args.network_id,
         participants: args.participants,
-        relay: args.relay,
         iface: args.iface,
-        announce_interval_secs: args.announce_interval_secs,
+        mesh_refresh_interval_secs: args.mesh_refresh_interval_secs,
     };
 
     if args.daemon {

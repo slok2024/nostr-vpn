@@ -23,9 +23,9 @@ native shells while keeping product truth in Rust.
 
 | Area | Core responsibility | Native responsibility |
 | --- | --- | --- |
-| State projection | `UiState`, networks, participants, relays, diagnostics, service status, mobile capability flags | Render state with platform controls and local presentation state |
+| State projection | `UiState`, networks, participants, diagnostics, service status, mobile capability flags | Render state with platform controls and local presentation state |
 | Actions | Existing product commands as typed Rust actions | Dispatch actions, disable conflicting controls while actions run |
-| Long-running runtime | Daemon/VPN lifecycle, config persistence, relay status, peer status, LAN pairing, join requests | Keep app alive enough for platform lifecycle and show system-level affordances |
+| Long-running runtime | Daemon/VPN lifecycle, config persistence, FIPS peer status, LAN pairing, join requests | Keep app alive enough for platform lifecycle and show system-level affordances |
 | Formatting | Shared user-facing derived labels that encode policy, like mesh readiness, join request status, exit-node availability, service repair recommendation | Platform typography, layout, control affordances |
 | Platform effects | Declare requested effect and update state after completion | Clipboard, startup registration, tray/status item, camera QR scan, update installer, mobile VPN permission prompts |
 | Errors | Stable action errors and recoverable service repair hints | Dialog/toast/sheet presentation |
@@ -61,7 +61,7 @@ Legend:
 | Outbound join request status | `outboundJoinRequest` | Request state and requested-at text | Required | Required | Required | Required | Required | Includes imported-from inviter and connected state. |
 | Request join action | `request_network_join` | Action by network ID | Required | Required | Required | Required | Required | Deep links can also trigger this in test/debug flows. |
 | Accept join action | `accept_join_request` | Action by network ID + requester npub | Required | Required | Required | Required | Required | Must persist acceptance even if VPN start fails. |
-| Invite generation | `activeNetworkInvite` | Core-generated invite string | Required | Required | Required | Required | Required | Include mesh ID, inviter npub, admins, participants, relays. |
+| Invite generation | `activeNetworkInvite` | Core-generated invite string | Required | Required | Required | Required | Required | Include mesh ID, inviter npub, admins, and participants. |
 | Invite copy | `copyInvite` | Invite string in state | Required | Required | Required | Required | Required | Native share sheet can supplement copy on mobile. |
 | Invite QR generation | `qrcode` in `InviteShareSection` | Prefer core QR bitmap/SVG helper or native QR library | Required | Required | Required | Required | Required | Must match current invite payload exactly. |
 | Invite paste/import | `import_network_invite` | Action with parsed invite result | Required | Required | Required | Required | Required | Current auto-import after 250ms should be reconsidered for native UX but behavior must be covered. |
@@ -75,7 +75,7 @@ Legend:
 | Participant admin toggle | `add_admin`, `remove_admin` | Admin mutation actions | Required | Required | Required | Required | Required | Active network currently exposes toggle; saved network mainly shows admin state. |
 | Participant remove | `remove_participant` | Remove participant action | Required | Required | Required | Required | Required | Admin-gated, icon button on native shells. |
 | Participant status badges | `participantBadgeClass`, badge text helpers | Shared derived labels | Required | Required | Required | Required | Required | FIPS reachable/pending/offline plus mesh seen/unseen. |
-| Participant traffic/path details | `participantTrafficText`, fields | tx/rx, relay path, runtime endpoint, routes | Required | Required | Required | Required | Required | Keep fallback and advertised route visibility. |
+| Participant traffic/path details | `participantTrafficText`, fields | tx/rx, FIPS path, runtime endpoint, routes | Required | Required | Required | Required | Required | Keep fallback and advertised route visibility. |
 | LAN pairing start/stop | `start_lan_pairing`, `stop_lan_pairing` | Core-owned multicast pairing runtime | Required | Required | Required | Required | Required | Mobile multicast may need platform permissions/capabilities. |
 | LAN pairing countdown | local deadline from state | `lanPairingActive`, remaining seconds | Required | Required | Required | Required | Required | UI ticks once per second without forcing backend refresh. |
 | Nearby LAN peer list | `lanPeers` | Core pairing snapshot | Required | Required | Required | Required | Required | Filter peers already in current network. |
@@ -95,8 +95,6 @@ Legend:
 | Health warnings | `health` | Health issue list with severity | Required | Required | Required | Required | Required | Keep empty state and severity mapping. |
 | Network diagnostics | `NetworkSummary` | Interface, local IPs, gateway, captive portal | Required | Required | Required | Required | Required | Mobile may have reduced details if OS restricts APIs. |
 | Port mapping status | `PortMappingStatus` | UPnP/NAT-PMP/PCP state | Required | Required | Required | Required | Required | Show active protocol and external endpoint. |
-| FIPS relay list | `relays`, `add_relay`, `remove_relay` | Relay config + status | Required | Required | Required | Required | Required | At least one relay required. |
-| Relay state badges | `RelayView` | Up/down/checking/unknown status | Required | Required | Required | Required | Required | Keep status text. |
 | Session options | `autoconnect` | Settings patch | Required | Required | Required | Required | Required | Text should be platform neutral. |
 | Background service panel | `ServiceActionPanel.svelte` | Service status, service repair recommendation, actions | Desktop | Desktop | Desktop | N/A | N/A | Mobile should not show desktop service install/repair UI. |
 | Install/reinstall service | `install_system_service` | Desktop service action | Required | Required | Required | N/A | N/A | May require admin/UAC/sudo/polkit flow. |
@@ -142,7 +140,7 @@ Status legend:
 
 | Feature group | Legacy source | macOS status | Native macOS coverage | Remaining parity work |
 | --- | --- | --- | --- | --- |
-| Typed Rust core boundary | `nostr-vpn-app-core`, legacy commands | Ready | `FfiApp.state()`, `refresh()`, and typed `NativeAppAction` dispatch are used directly from Swift through UniFFI. Native state now projects service, diagnostics, exit-node, relays, MagicDNS, join requests, and participant details. | Keep action/state additions typed; avoid reintroducing JSON bridge helpers. |
+| Typed Rust core boundary | `nostr-vpn-app-core`, legacy commands | Ready | `FfiApp.state()`, `refresh()`, and typed `NativeAppAction` dispatch are used directly from Swift through UniFFI. Native state now projects service, diagnostics, exit-node, MagicDNS, join requests, and participant details. | Keep action/state additions typed; avoid reintroducing JSON bridge helpers. |
 | Initial state load | `get_state`, `AppBootstrap.svelte` | Ready | `AppManager` constructs `FfiApp`, reads initial state synchronously, and starts the refresh loop on window appearance. | Add boot-ready automation event only if native e2e harness needs it. |
 | Periodic refresh | `tick` interval | Ready | `AppManager.start()` refreshes every 1500ms. | Later replace polling with a core update stream if added. |
 | Action lock/error recovery | `runAction`, action flags | Ready | `AppManager` serializes typed actions, shows in-flight status, and projects core errors into the shell. | Add per-control progress text if native e2e tests require it. |
@@ -161,7 +159,7 @@ Status legend:
 | Manual add participant | `add_participant` | Ready | Admin can add participant npub with optional alias. | None. |
 | Participant alias editing | `set_participant_alias` | Ready | Alias edits dispatch typed Rust action and show MagicDNS suffix/name. | Add debounce if explicit save feels too heavy. |
 | Participant admin/remove actions | `add_admin`, `remove_admin`, `remove_participant` | Ready | Admin toggle and remove icon dispatch typed core actions with local-admin gating. | Add destructive confirmation if needed. |
-| Participant traffic/path details | Participant runtime fields | Ready | `NativeParticipantState` now mirrors traffic, routes, exit-node capability, tunnel IP, transport, presence, and last-signal details. | None. |
+| Participant traffic/path details | Participant runtime fields | Ready | `NativeParticipantState` now mirrors traffic, routes, exit-node capability, tunnel IP, FIPS transport, presence, and last-seen details. | None. |
 | LAN pairing | `start_lan_pairing`, `stop_lan_pairing`, `lanPeers` | Ready | Native UI exposes LAN pair start/stop and nearby-peer rows; app-core owns the multicast runtime, countdown, stale-peer pruning, and invite metadata decoding. | None. |
 | Saved networks list | `SavedNetworksPanel.svelte` | Ready | Sidebar and saved-networks disclosure support add, activate, rename, delete, mesh edit, participant preview, and participant removal. | Add inactive invite/import and join-request detail expansion if needed. |
 | Activate saved network | `set_network_enabled` | Ready | Inactive network rows dispatch typed activation and daemon reload handling from Rust. | None. |
@@ -171,7 +169,6 @@ Status legend:
 | Advanced route advertisement | `advertisedRoutes` | Deferred | Native shells hide the CIDR string editor; Rust still normalizes and validates config values. | Reintroduce only behind an advanced affordance if needed. |
 | Exit node search/select | `exitNode` | Ready | Searchable native candidate list supports no-exit selection and offered-exit peers. | None. |
 | Diagnostics panel | `AdvancedPanels.svelte` | Ready | Native diagnostics disclosure renders health issues, interface/IP/gateway, captive portal, and port-mapping state; opens when health count increases. | None. |
-| Relay list/status | Relay panel | Ready | Shows relay URLs, status text, summary badges, add, remove, and disables removal of the last relay. | None. |
 | Session options | `autoconnect` | Ready | Native system panel includes autoconnect, launch-on-startup with LaunchAgent registration, and menu-bar-on-close settings toggles. | None. |
 | Device settings | `SystemPanel.svelte` | Ready | Native system panel includes name, endpoint, tunnel IP, listen port, MagicDNS suffix/status, app/config/version fields, CLI controls, service controls, and updater controls. | None. |
 | MagicDNS | `magicDnsStatus`, `magicDnsSuffix` | Ready | Native state projects MagicDNS status/name/suffix; UI exposes suffix editor and participant DNS labels. | None. |
@@ -201,7 +198,7 @@ and Linux native shells.
 | Device roster | Partial | Shows participant identity, tunnel IP, status, admin/exit badges, npub copy, and add-device form. | Add inline alias/admin/remove management parity. |
 | Invite share/import | Ready | Renders invite QR through the shared Rust QR matrix, copies invite text, imports pasted invites, decodes QR image files, and shows LAN pairing rows. | Add live camera scanning if a native Windows camera API is selected. |
 | Exit Nodes | Ready | Direct route, exit-node candidate selection, exit-node offer toggle, and offer-exit toggle dispatch typed core actions. | Add search/filter polish like macOS. |
-| Settings/service/updater | Partial | Device settings, autoconnect/startup/tray toggles, service/CLI actions, relay editing, and hashtree update check are present. | Add richer service settlement/repair UX and auto-update preferences. |
+| Settings/service/updater | Partial | Device settings, autoconnect/startup/tray toggles, service/CLI actions, diagnostics, and hashtree update check are present. | Add richer service settlement/repair UX and auto-update preferences. |
 | Tray/status area | Ready | Uses native `System.Windows.Forms.NotifyIcon` with open, VPN toggle, exit toggle, this-device copy, network devices, exit-node selection, refresh, and quit. | Add single-instance tray activation routing for already-running deep links. |
 | Deep links/startup | Partial | Registers `nvpn://` under HKCU, handles startup invite URLs, and writes HKCU Run startup entries. | Route deep links into an already-running instance. |
 | Build/run harness | Ready | `scripts/windows-build.ps1` builds Rust DLL/CLI plus WPF and `just run-windows` runs it on Windows. Verified in the Windows 11 Parallels VM with `dotnet build`, Rust build, and an app-window screenshot. | Add packaged installer/MSIX/NSIS target. |
@@ -220,7 +217,7 @@ current native shell contract.
 | Device roster | Partial | Shows local/peer identity, tunnel IP, reachability, admin/exit badges, npub copy, join requests, and manual add-device. | Add alias/admin/remove controls and richer traffic/path detail parity. |
 | Invite share/import | Partial | Renders invite QR through Rust, copies/imports invite text, handles `nvpn://` deep links, and exposes LAN pairing rows. | Add Android share sheet, camera live scan, and image picker QR import UI. |
 | Exit Nodes | Partial | Direct/exit-node selection, offer-exit toggle dispatch core actions. | Add search/filter polish and mobile-specific route constraints. |
-| Settings/diagnostics/relays | Partial | Device settings, saved network activation, join-request toggle, relays, runtime detail, MagicDNS, app version, and health rows are visible. | Add destructive actions, richer diagnostics, and mobile storage/keystore policy. |
+| Settings/diagnostics | Partial | Device settings, saved network activation, join-request toggle, runtime detail, MagicDNS, app version, and health rows are visible. | Add destructive actions, richer diagnostics, and mobile storage/keystore policy. |
 | VPN runtime | Partial | Android `VpnService` permission surface and service declaration are present; app-core reports mobile VPN state without desktop CLI dependency. | Wire the packet tunnel data-plane loop to FIPS endpoint delivery before calling the mobile VPN path complete. |
 
 ## iOS App Parity Status
@@ -237,7 +234,7 @@ native shell contract.
 | Device roster | Partial | Shows local/peer identity, tunnel IP, reachability, admin/exit badges, npub copy, join requests, and manual add-device. | Add alias/admin/remove controls and richer traffic/path detail parity. |
 | Invite share/import | Partial | Renders invite QR through Rust, supports invite copy/share, imports pasted/deep-linked invites, includes the shared QR image decode bridge, and exposes LAN pairing rows. | Add image picker, live camera QR scanning, and smoother import confirmation. |
 | Exit Nodes | Partial | Direct/exit-node selection, offer-exit toggle dispatch core actions. | Add search/filter polish and mobile-specific route constraints. |
-| Settings/diagnostics/relays | Partial | Device settings, saved network activation, join-request toggle, relays, runtime detail, MagicDNS, app version, and health rows are visible. | Add destructive actions, richer diagnostics, and iOS storage/keychain policy. |
+| Settings/diagnostics | Partial | Device settings, saved network activation, join-request toggle, runtime detail, MagicDNS, app version, and health rows are visible. | Add destructive actions, richer diagnostics, and iOS storage/keychain policy. |
 | VPN runtime | Partial | A NetworkExtension Packet Tunnel target and manager wrapper are present; app-core reports mobile VPN state without desktop CLI dependency. | Wire the packet tunnel packet loop to FIPS endpoint delivery before calling the iOS VPN path complete. |
 
 ## Linux App Parity Status
@@ -250,7 +247,7 @@ flow like the Swift app rather than the removed Svelte UI.
 | --- | --- | --- | --- |
 | Typed Rust core boundary | Ready | `linux/src/main.rs` uses `FfiApp.state()`, `refresh()`, and typed `NativeAppAction` directly from Rust. | Keep additions typed and shared with macOS. |
 | Initial state and refresh | Ready | The GTK shell reads initial state synchronously and refreshes through `FfiApp.refresh()` on a two-second timer plus the toolbar refresh button. | Add a boot-ready automation hook if native e2e needs it. |
-| Main status hero | Ready | Matches the macOS hierarchy: active network title, admin badge, mesh/VPN/daemon/relay badges, identity copy, tunnel IP, exit indication, and connect/disconnect control. | Add richer service-repair prompt text if core exposes a shared helper. |
+| Main status hero | Ready | Matches the macOS hierarchy: active network title, admin badge, mesh/VPN/daemon/FIPS badges, identity copy, tunnel IP, exit indication, and connect/disconnect control. | Add richer service-repair prompt text if core exposes a shared helper. |
 | Device roster | Ready | Shows participant name, admin/exit badges, tunnel IP, npub copy, reachability, admin toggle, remove action, and a Manage Devices disclosure. | Add destructive confirmations if needed. |
 | Participant alias editing | Ready | Manage Devices includes per-participant alias save, admin toggle, and remove controls. | Add debounce if explicit save feels too heavy. |
 | Join requests | Ready | Inbound request rows show requester info, npub copy, and admin-gated accept action. | None. |
@@ -261,7 +258,6 @@ flow like the Swift app rather than the removed Svelte UI.
 | Saved networks | Ready | Saved Networks disclosure lists inactive networks with counts, activate action, and delete action guarded by the last-network rule. | Expand inactive profiles if Linux needs the full macOS saved-network detail surface. |
 | Device/system settings | Ready | Name, tunnel IP, endpoint, listen port, MagicDNS suffix, autoconnect, startup desktop-entry registration, and tray preferences dispatch typed settings patches. | None. |
 | CLI and service controls | Ready | Shows CLI/service status badges and install/reinstall/uninstall plus enable/disable service actions when supported; service actions show settlement progress and stale-version repair state. | Add a richer polkit prompt only if the CLI stops being launched through an already-elevated context. |
-| Relay list/status | Ready | Advanced panel shows relay summary counts, relay rows with status text, add/remove, and disables removing the last relay. | None. |
 | Diagnostics | Ready | Advanced diagnostics shows interface/IP/gateway/mapping metrics, identity/config/runtime fields, MagicDNS, and health issue rows. | Auto-open diagnostics on new health issues if users need parity with macOS. |
 | Tray/status menu | Ready | Native StatusNotifierItem + DBusMenu implementation exposes open, VPN toggle, exit toggle, this-device copy, network devices, exit-node selection, refresh, and quit; close-to-tray and autostart-hidden launch are wired. | Verify with installed desktop environments beyond the Docker Fluxbox harness. |
 | Deep links and single-instance | Ready | GApplication routes startup and already-running `nvpn://` URLs into the existing GTK app; the desktop entry registers `x-scheme-handler/nvpn`; invite and debug automation links dispatch typed core actions. | Add installed-package smoke coverage once Linux packaging tests exist. |
@@ -273,8 +269,8 @@ flow like the Swift app rather than the removed Svelte UI.
 | Phase | Deliverable | Exit criteria |
 | --- | --- | --- |
 | 0. Contract extraction | Move backend state, settings patches, action handlers, derived labels, invite parsing, mesh ID validation, and tray projections into a native-ready Rust app core | `crates/nostr-vpn-app-core` exposes typed UniFFI state/actions and the macOS shell consumes `FfiApp` directly; remaining legacy behavior is tracked as explicit native parity work. |
-| 1. Desktop minimum | macOS, Windows, and Linux render the main status, active network, invite import/share, participant management, exit-node, diagnostics, relays, service panel, system settings, deep links, and tray/menu actions | Desktop smoke tests can import invites, request/accept join, toggle VPN, and exercise tray actions. macOS and Linux cover the native shell surface; Windows now has the WPF baseline and needs remaining parity hardening. |
-| 2. Mobile minimum | Android and iPhone render the same state/action surface with native VPN permission/control, invite QR scan/share, LAN pairing, saved networks, exit-node, diagnostics, relays, and deep links | Android emulator/device and iPhone simulator/device smoke tests can import invites and start supported VPN flows |
+| 1. Desktop minimum | macOS, Windows, and Linux render the main status, active network, invite import/share, participant management, exit-node, diagnostics, service panel, system settings, deep links, and tray/menu actions | Desktop smoke tests can import invites, request/accept join, toggle VPN, and exercise tray actions. macOS and Linux cover the native shell surface; Windows now has the WPF baseline and needs remaining parity hardening. |
+| 2. Mobile minimum | Android and iPhone render the same state/action surface with native VPN permission/control, invite QR scan/share, LAN pairing, saved networks, exit-node, diagnostics, and deep links | Android emulator/device and iPhone simulator/device smoke tests can import invites and start supported VPN flows |
 | 3. Desktop niceties | Hashtree updater, CLI install/uninstall, startup registration, close-to-tray, service repair prompts, single-instance conflict handling | Legacy desktop e2e scenarios have native replacements |
 | 4. Polish/parity hardening | Platform screenshots, accessibility pass, empty/error states, fixture preview coverage | All rows above are either implemented or explicitly marked removed/deferred in this file |
 

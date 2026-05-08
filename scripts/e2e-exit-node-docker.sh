@@ -5,7 +5,6 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_NAME="nostr-vpn-e2e-exit-node"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.exit-node-e2e.yml")
 
-RELAY_URL="ws://198.51.100.2:8080"
 REFLECTOR_ADDR="198.51.100.3:3478"
 CONFIG_PATH="/root/.config/nvpn/config.toml"
 PUBLIC_INTERNET_TARGET="${NVPN_EXIT_NODE_E2E_PUBLIC_IP:-198.51.100.100}"
@@ -27,7 +26,7 @@ dump_debug() {
   set +e
   echo "exit-node docker e2e failed, collecting debug output..."
   "${COMPOSE[@]}" ps || true
-  for service in relay reflector internet-target nat-b node-a node-b; do
+  for service in reflector internet-target nat-b node-a node-b; do
     echo "--- logs: $service ---"
     "${COMPOSE[@]}" logs --no-color --tail 120 "$service" || true
   done
@@ -115,9 +114,9 @@ ping_until_success() {
 cleanup
 
 "${COMPOSE[@]}" build >/dev/null
-"${COMPOSE[@]}" up -d relay reflector internet-target node-a nat-b >/dev/null
+"${COMPOSE[@]}" up -d reflector internet-target node-a nat-b >/dev/null
 
-for service in relay reflector internet-target node-a nat-b; do
+for service in reflector internet-target node-a nat-b; do
   wait_for_service "$service"
 done
 
@@ -144,11 +143,17 @@ fi
 
 "${COMPOSE[@]}" exec -T node-a nvpn set \
   --participant "$BOB_NPUB" \
-  --relay "$RELAY_URL" \
+  --endpoint "198.51.100.10:51820" \
+  --listen-port 51820 \
+  --fips-advertise-endpoint true \
+  --fips-peer-endpoint "$BOB_NPUB=198.51.100.11:51820" \
   --advertise-exit-node >/dev/null
 "${COMPOSE[@]}" exec -T node-b nvpn set \
   --participant "$ALICE_NPUB" \
-  --relay "$RELAY_URL" \
+  --endpoint "198.51.100.11:51820" \
+  --listen-port 51820 \
+  --fips-advertise-endpoint true \
+  --fips-peer-endpoint "$ALICE_NPUB=198.51.100.10:51820" \
   --exit-node "$ALICE_NPUB" >/dev/null
 
 for node in node-a node-b; do
@@ -198,6 +203,10 @@ grep -q '"running":true' <<<"$ALICE_COMPACT"
 grep -q '"running":true' <<<"$BOB_COMPACT"
 grep -q '"mesh_ready":true' <<<"$ALICE_COMPACT"
 grep -q '"mesh_ready":true' <<<"$BOB_COMPACT"
+if grep -q 'FIPS route refresh failed' <<<"$ALICE_STATUS$BOB_STATUS"; then
+  echo "exit-node docker e2e failed: daemon reported FIPS route refresh failure" >&2
+  exit 1
+fi
 grep -q '"endpoint":"fips"' <<<"$ALICE_COMPACT"
 grep -q '"endpoint":"fips"' <<<"$BOB_COMPACT"
 grep -q '"effective_advertised_routes":\["0.0.0.0/0","::/0"\]' <<<"$ALICE_COMPACT"

@@ -15,7 +15,7 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 use nostr_vpn_app_core::{
     FfiApp, NativeAppAction, NativeAppState, NativeNetworkState, NativeParticipantState,
-    NativeRelayState, SettingsPatch,
+    SettingsPatch,
 };
 
 const APP_ID: &str = "to.iris.nvpn";
@@ -41,7 +41,6 @@ struct Drafts {
     invite: String,
     participant_npub: String,
     participant_alias: String,
-    relay: String,
     network_name: String,
     mesh_id: String,
     new_network_name: String,
@@ -1901,61 +1900,9 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     let advanced = gtk::Expander::new(Some("Advanced"));
     let advanced_body = gtk::Box::new(gtk::Orientation::Vertical, 14);
     advanced_body.set_margin_top(10);
-    build_relays(app, &advanced_body, state);
     build_diagnostics(&advanced_body, state);
     advanced.set_child(Some(&advanced_body));
     page.append(&advanced);
-}
-
-fn build_relays(app: &AppRef, parent: &gtk::Box, state: &NativeAppState) {
-    let relays = card();
-    section_header(&relays, "Discovery Relays", "");
-
-    let summary = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    summary.append(&badge(&format!("{} up", state.relay_summary.up), "ok"));
-    summary.append(&badge(&format!("{} down", state.relay_summary.down), "bad"));
-    summary.append(&badge(
-        &format!("{} checking", state.relay_summary.checking),
-        "muted",
-    ));
-    summary.append(&badge(
-        &format!("{} unknown", state.relay_summary.unknown),
-        "muted",
-    ));
-    relays.append(&summary);
-
-    let add_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let input = entry("wss://relay.example", &app.borrow().drafts.relay);
-    {
-        let app = app.clone();
-        input.connect_changed(move |entry| {
-            app.borrow_mut().drafts.relay = entry.text().to_string();
-        });
-    }
-    let add = icon_text_button("Add", "list-add-symbolic");
-    {
-        let app = app.clone();
-        add.connect_clicked(move |_| {
-            let relay = app.borrow().drafts.relay.trim().to_string();
-            if relay.is_empty() {
-                return;
-            }
-            app.borrow_mut().drafts.relay.clear();
-            dispatch(&app, NativeAppAction::AddRelay { relay });
-        });
-    }
-    add_row.append(&input);
-    add_row.append(&add);
-    relays.append(&add_row);
-
-    if state.relays.is_empty() {
-        empty_row(&relays, "No relays configured");
-    } else {
-        for relay in &state.relays {
-            relay_row(app, &relays, relay, state.relays.len() > 1);
-        }
-    }
-    parent.append(&relays);
 }
 
 fn build_diagnostics(parent: &gtk::Box, state: &NativeAppState) {
@@ -2258,46 +2205,6 @@ fn device_row(
         row.append(&remove);
     }
 
-    parent.append(&row);
-}
-
-fn relay_row(app: &AppRef, parent: &gtk::Box, relay: &NativeRelayState, can_remove: bool) {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.set_valign(gtk::Align::Center);
-    let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    text.set_hexpand(true);
-    let title = gtk::Label::new(Some(&relay.url));
-    title.set_xalign(0.0);
-    title.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-    title.add_css_class("heading");
-    text.append(&title);
-    let subtitle = gtk::Label::new(Some(&non_empty_or(&relay.status_text, &relay.state)));
-    subtitle.add_css_class("caption");
-    subtitle.add_css_class("dim-label");
-    subtitle.set_xalign(0.0);
-    text.append(&subtitle);
-    row.append(&text);
-    row.append(&badge(
-        &relay.state,
-        if relay.state == "up" { "ok" } else { "muted" },
-    ));
-
-    let remove = gtk::Button::from_icon_name("edit-delete-symbolic");
-    remove.set_tooltip_text(Some("Remove relay"));
-    remove.set_sensitive(can_remove);
-    {
-        let app = app.clone();
-        let relay = relay.url.clone();
-        remove.connect_clicked(move |_| {
-            dispatch(
-                &app,
-                NativeAppAction::RemoveRelay {
-                    relay: relay.clone(),
-                },
-            );
-        });
-    }
-    row.append(&remove);
     parent.append(&row);
 }
 

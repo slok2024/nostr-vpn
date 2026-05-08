@@ -10,7 +10,6 @@ struct RootView: View {
     @State private var tunnelIp = ""
     @State private var listenPort = ""
     @State private var magicDnsSuffix = ""
-    @State private var relayInput = ""
     @State private var participantInput = ""
     @State private var participantAliasInput = ""
     @State private var networkNameInput = ""
@@ -712,7 +711,6 @@ struct RootView: View {
                 isExpanded: $advancedSettingsExpanded
             ) {
                 VStack(alignment: .leading, spacing: 14) {
-                    relaySection
                     diagnosticsSection
                 }
                 .padding(.top, 8)
@@ -912,48 +910,6 @@ struct RootView: View {
         }
     }
 
-    private var relaySection: some View {
-        surface {
-            sectionHeader("Discovery Relays", systemImage: "antenna.radiowaves.left.and.right")
-            HStack {
-                badge("\(state.relaySummary.up) up", style: .ok)
-                badge("\(state.relaySummary.down) down", style: .bad)
-                badge("\(state.relaySummary.unknown) unknown", style: .muted)
-            }
-            ForEach(state.relays, id: \.url) { relay in
-                HStack {
-                    Image(systemName: relay.state == "up" ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(relay.state == "up" ? .green : .secondary)
-                    Text(relay.url)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
-                    Spacer()
-                    Text(relay.statusText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Button(role: .destructive) {
-                        manager.removeRelay(relay.url)
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(state.relays.count <= 1 || manager.actionInFlight)
-                }
-            }
-            HStack {
-                TextField("Relay URL", text: $relayInput)
-                    .onSubmit(addRelay)
-                Button {
-                    addRelay()
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .disabled(relayInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || manager.actionInFlight)
-            }
-        }
-    }
-
     private var diagnosticsSection: some View {
         disclosureSection(
             title: "Diagnostics",
@@ -1120,11 +1076,6 @@ struct RootView: View {
     private func addNetwork() {
         manager.addNetwork(networkNameInput)
         networkNameInput = ""
-    }
-
-    private func addRelay() {
-        manager.addRelay(relayInput)
-        relayInput = ""
     }
 
     private func syncDrafts() {

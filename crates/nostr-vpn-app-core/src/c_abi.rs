@@ -53,7 +53,11 @@ pub extern "C" fn nostr_vpn_app_new(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn nostr_vpn_app_free(handle: *mut NvpnAppHandle) {
+/// # Safety
+///
+/// `handle` must be a pointer returned by `nostr_vpn_app_new` and must not be
+/// freed more than once.
+pub unsafe extern "C" fn nostr_vpn_app_free(handle: *mut NvpnAppHandle) {
     if handle.is_null() {
         return;
     }
@@ -129,7 +133,8 @@ pub extern "C" fn nostr_vpn_decode_qr_image_json(path: *const c_char) -> *mut c_
 
 #[unsafe(no_mangle)]
 pub extern "C" fn nostr_vpn_mobile_tunnel_config_json(data_dir: *const c_char) -> *mut c_char {
-    json_raw_string(tunnel_config_json(&c_string_lossy(data_dir)))
+    let config_json = tunnel_config_json(&c_string_lossy(data_dir));
+    json_raw_string(&config_json)
 }
 
 #[unsafe(no_mangle)]
@@ -144,7 +149,11 @@ pub extern "C" fn nostr_vpn_mobile_tunnel_new(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn nostr_vpn_mobile_tunnel_free(handle: *mut NvpnMobileTunnelHandle) {
+/// # Safety
+///
+/// `handle` must be a pointer returned by `nostr_vpn_mobile_tunnel_new` and
+/// must not be freed more than once.
+pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_free(handle: *mut NvpnMobileTunnelHandle) {
     if handle.is_null() {
         return;
     }
@@ -154,7 +163,11 @@ pub extern "C" fn nostr_vpn_mobile_tunnel_free(handle: *mut NvpnMobileTunnelHand
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn nostr_vpn_mobile_tunnel_send_packet(
+/// # Safety
+///
+/// `handle` must be a live mobile tunnel handle. `packet` must point to `len`
+/// readable bytes for the duration of this call.
+pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_send_packet(
     handle: *const NvpnMobileTunnelHandle,
     packet: *const u8,
     len: usize,
@@ -168,7 +181,11 @@ pub extern "C" fn nostr_vpn_mobile_tunnel_send_packet(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn nostr_vpn_mobile_tunnel_next_packet(
+/// # Safety
+///
+/// `handle` must be a live mobile tunnel handle. `out` must point to
+/// `capacity` writable bytes for the duration of this call.
+pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_next_packet(
     handle: *const NvpnMobileTunnelHandle,
     out: *mut u8,
     capacity: usize,
@@ -189,7 +206,11 @@ pub extern "C" fn nostr_vpn_mobile_tunnel_next_packet(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn nostr_vpn_string_free(value: *mut c_char) {
+/// # Safety
+///
+/// `value` must be a pointer returned by this library and must not be freed
+/// more than once.
+pub unsafe extern "C" fn nostr_vpn_string_free(value: *mut c_char) {
     if value.is_null() {
         return;
     }
@@ -475,16 +496,16 @@ fn jni_raw_string(env: JNIEnv<'_>, value: String) -> jstring {
 
 fn json_string(value: &impl Serialize) -> *mut c_char {
     match serde_json::to_string(value) {
-        Ok(json) => into_c_string(json),
-        Err(error) => into_c_string(format!(r#"{{"error":"{error}"}}"#)),
+        Ok(json) => into_c_string(&json),
+        Err(error) => into_c_string(&format!(r#"{{"error":"{error}"}}"#)),
     }
 }
 
-fn json_raw_string(value: String) -> *mut c_char {
+fn json_raw_string(value: &str) -> *mut c_char {
     into_c_string(value)
 }
 
-fn into_c_string(value: String) -> *mut c_char {
+fn into_c_string(value: &str) -> *mut c_char {
     match CString::new(value.replace('\0', "")) {
         Ok(value) => value.into_raw(),
         Err(_) => ptr::null_mut(),
@@ -569,7 +590,9 @@ mod tests {
                 .is_some_and(|error| error.contains("invalid native action JSON"))
         );
 
-        nostr_vpn_app_free(handle);
+        unsafe {
+            nostr_vpn_app_free(handle);
+        }
     }
 
     #[test]
@@ -581,7 +604,7 @@ mod tests {
         assert!(width > 0);
         assert_eq!(
             value["cells"].as_array().expect("cells").len(),
-            (width * width) as usize
+            usize::try_from(width * width).expect("matrix cell count fits usize")
         );
         assert_eq!(value["error"], "");
     }
@@ -602,7 +625,9 @@ mod tests {
         let text = unsafe { CStr::from_ptr(value) }
             .to_string_lossy()
             .into_owned();
-        nostr_vpn_string_free(value);
+        unsafe {
+            nostr_vpn_string_free(value);
+        }
         text
     }
 }

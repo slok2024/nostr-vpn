@@ -8,9 +8,7 @@ authors.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-base64.workspace = true
 nostr-sdk.workspace = true
-rand_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -22,15 +20,8 @@ uuid.workspace = true
 hex.workspace = true
 hickory-proto.workspace = true
 hostname.workspace = true
-x25519-dalek.workspace = true
-
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-boringtun.workspace = true
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "windows")))'.dependencies]
 webrtc-stun.workspace = true
 
 [dev-dependencies]
-axum.workspace = true
-futures.workspace = true
-tokio-tungstenite.workspace = true

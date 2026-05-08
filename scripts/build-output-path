@@ -66,6 +66,6 @@ case "$(uname -s)" in
     print_one "$ROOT/windows/NostrVpn.Windows/bin/Debug/net8.0-windows/NostrVpn.Windows.exe"
     ;;
   *)
-    print_many "$ROOT/target/debug/nvpn" "$ROOT/target/debug/nostr-vpn-relay" "$ROOT/target/debug/nvpn-reflector"
+    print_many "$ROOT/target/debug/nvpn" "$ROOT/target/debug/nvpn-reflector"
     ;;
 esac

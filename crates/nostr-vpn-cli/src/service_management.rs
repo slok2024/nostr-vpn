@@ -51,7 +51,7 @@ fn service_install(args: ServiceInstallArgs) -> Result<()> {
             &executable,
             &config_path,
             &args.iface,
-            args.announce_interval_secs.max(1),
+            args.mesh_refresh_interval_secs.max(1),
             &log_path,
             args.force,
         )
@@ -63,7 +63,7 @@ fn service_install(args: ServiceInstallArgs) -> Result<()> {
             &executable,
             &config_path,
             &args.iface,
-            args.announce_interval_secs.max(1),
+            args.mesh_refresh_interval_secs.max(1),
             &log_path,
             args.force,
         )
@@ -75,7 +75,7 @@ fn service_install(args: ServiceInstallArgs) -> Result<()> {
             &executable,
             &config_path,
             &args.iface,
-            args.announce_interval_secs.max(1),
+            args.mesh_refresh_interval_secs.max(1),
             args.force,
         )
     }
@@ -87,7 +87,7 @@ fn service_install(args: ServiceInstallArgs) -> Result<()> {
             config_path,
             log_path,
             args.iface,
-            args.announce_interval_secs,
+            args.mesh_refresh_interval_secs,
             args.force,
         );
         Err(anyhow!(
@@ -309,7 +309,7 @@ fn linux_install_service(
     executable: &Path,
     config_path: &Path,
     iface: &str,
-    announce_interval_secs: u64,
+    mesh_refresh_interval_secs: u64,
     log_path: &Path,
     force: bool,
 ) -> Result<()> {
@@ -336,7 +336,7 @@ fn linux_install_service(
         executable,
         config_path,
         iface,
-        announce_interval_secs,
+        mesh_refresh_interval_secs,
         log_path,
     );
     let temp = unit_path.with_extension(format!("tmp-{}", std::process::id()));
@@ -490,7 +490,7 @@ pub(crate) fn linux_service_unit_content(
     executable: &Path,
     config_path: &Path,
     iface: &str,
-    announce_interval_secs: u64,
+    mesh_refresh_interval_secs: u64,
     log_path: &Path,
 ) -> String {
     let exec = systemd_quote(&executable.display().to_string());
@@ -498,7 +498,7 @@ pub(crate) fn linux_service_unit_content(
     let iface = systemd_quote(iface);
     let log = log_path.display().to_string();
     format!(
-        "[Unit]\nDescription=Nostr VPN daemon\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart={exec} daemon --service --config {config} --iface {iface} --announce-interval-secs {announce_interval_secs}\nRestart=always\nRestartSec=3\nStandardOutput=append:{log}\nStandardError=append:{log}\n\n[Install]\nWantedBy=multi-user.target\n"
+        "[Unit]\nDescription=Nostr VPN daemon\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart={exec} daemon --service --config {config} --iface {iface} --mesh-refresh-interval-secs {mesh_refresh_interval_secs}\nRestart=always\nRestartSec=3\nStandardOutput=append:{log}\nStandardError=append:{log}\n\n[Install]\nWantedBy=multi-user.target\n"
     )
 }
 
@@ -596,7 +596,7 @@ fn windows_install_service(
     executable: &Path,
     config_path: &Path,
     iface: &str,
-    announce_interval_secs: u64,
+    mesh_refresh_interval_secs: u64,
     force: bool,
 ) -> Result<()> {
     stop_daemon(StopArgs {
@@ -618,7 +618,7 @@ fn windows_install_service(
         executable,
         config_path,
         iface,
-        announce_interval_secs.max(1),
+        mesh_refresh_interval_secs.max(1),
     );
     run_sc_checked(
         &[
@@ -963,7 +963,7 @@ pub(crate) fn windows_service_bin_path(
     executable: &Path,
     config_path: &Path,
     iface: &str,
-    announce_interval_secs: u64,
+    mesh_refresh_interval_secs: u64,
 ) -> String {
     [
         windows_command_line_quote(&executable.display().to_string()),
@@ -973,8 +973,8 @@ pub(crate) fn windows_service_bin_path(
         windows_command_line_quote(&config_path.display().to_string()),
         "--iface".to_string(),
         windows_command_line_quote(iface),
-        "--announce-interval-secs".to_string(),
-        announce_interval_secs.max(1).to_string(),
+        "--mesh-refresh-interval-secs".to_string(),
+        mesh_refresh_interval_secs.max(1).to_string(),
     ]
     .join(" ")
 }

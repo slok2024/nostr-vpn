@@ -29,7 +29,7 @@ just ios-run
 ```
 
 The first native cut includes the SwiftUI state/action shell, invite QR,
-invite copy/share/import, roster, routing, relays, settings, diagnostics, deep
+invite copy/share/import, roster, routing, settings, diagnostics, deep
 links, app icon, and a Packet Tunnel extension shell. The packet data-plane loop
 still needs to be wired to FIPS endpoint delivery before the iOS VPN runtime is
 complete.

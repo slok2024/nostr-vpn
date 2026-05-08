@@ -46,7 +46,6 @@ import org.nostrvpn.app.core.LanPeerState
 import org.nostrvpn.app.core.NativeActions
 import org.nostrvpn.app.core.NetworkState
 import org.nostrvpn.app.core.ParticipantState
-import org.nostrvpn.app.core.RelayState
 
 @Composable
 internal fun Hero(state: AppState, dispatch: (JSONObject) -> Unit) {
@@ -296,44 +295,6 @@ internal fun NetworksCard(state: AppState, network: NetworkState?, dispatch: (JS
                 Text("Add")
             }
         }
-    }
-}
-
-@Composable
-internal fun RelaysCard(relays: List<RelayState>, dispatch: (JSONObject) -> Unit) {
-    var relay by remember { mutableStateOf("") }
-    AppCard {
-        Text("FIPS Relays", style = MaterialTheme.typography.titleMedium)
-        relays.forEach { item ->
-            RelayRow(item) { dispatch(NativeActions.removeRelay(item.url)) }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = relay,
-                onValueChange = { relay = it },
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                label = { Text("Relay URL") },
-            )
-            Spacer(Modifier.width(8.dp))
-            Button(enabled = relay.isNotBlank(), onClick = {
-                dispatch(NativeActions.addRelay(relay.trim()))
-                relay = ""
-            }) {
-                Text("Add")
-            }
-        }
-    }
-}
-
-@Composable
-internal fun RelayRow(relay: RelayState, remove: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-        Column(Modifier.weight(1f)) {
-            Text(relay.url, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
-            Text(relay.statusText, color = Muted, style = MaterialTheme.typography.bodySmall)
-        }
-        TextButton(onClick = remove) { Text("Remove") }
     }
 }
 

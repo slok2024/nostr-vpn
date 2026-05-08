@@ -32,7 +32,6 @@ struct AppState: Decodable {
     var lanPairingRemainingSecs: UInt64 = 0
     var configPath = ""
     var networks: [NetworkState] = []
-    var relays: [RelayState] = []
     var lanPeers: [LanPeerState] = []
     var health: [HealthIssue] = []
 
@@ -47,7 +46,7 @@ struct AppState: Decodable {
         case connectedPeerCount, expectedPeerCount, meshReady, exitNode, advertiseExitNode
         case advertisedRoutes, magicDnsSuffix, magicDnsStatus, autoconnect
         case lanPairingActive, lanPairingRemainingSecs, configPath
-        case networks, relays, lanPeers, health
+        case networks, lanPeers, health
     }
 
     init() {}
@@ -85,7 +84,6 @@ struct AppState: Decodable {
         lanPairingRemainingSecs = container.uint64(.lanPairingRemainingSecs)
         configPath = container.string(.configPath)
         networks = container.array(.networks)
-        relays = container.array(.relays)
         lanPeers = container.array(.lanPeers)
         health = container.array(.health)
     }
@@ -208,13 +206,6 @@ struct InboundJoinRequest: Decodable, Identifiable {
     var requesterNpub = ""
     var requesterNodeName = ""
     var requestedAtText = ""
-}
-
-struct RelayState: Decodable, Identifiable {
-    var id: String { url }
-    var url = ""
-    var state = ""
-    var statusText = ""
 }
 
 struct LanPeerState: Decodable, Identifiable {

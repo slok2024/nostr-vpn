@@ -6,7 +6,6 @@ PROJECT_NAME="nostr-vpn-e2e-roster-admin"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.e2e.yml")
 
 NETWORK_ID="docker-roster-admin"
-RELAY_URL="ws://10.203.0.2:8080"
 
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -21,7 +20,7 @@ dump_debug() {
   set +e
   echo "roster/admin docker e2e failed, collecting debug output..."
   "${COMPOSE[@]}" ps || true
-  for service in relay node-a node-b node-c; do
+  for service in node-a node-b node-c; do
     echo "--- logs: $service ---"
     "${COMPOSE[@]}" logs --no-color --tail 120 "$service" || true
   done
@@ -235,8 +234,15 @@ wait_for_config_array_lacks() {
 config_peer_alias() {
   local service="$1"
   local participant="$2"
-  "${COMPOSE[@]}" exec -T "$service" sh -lc \
-    "grep -m1 '^$participant = ' /root/.config/nvpn/config.toml | cut -d '\"' -f 2"
+  "${COMPOSE[@]}" exec -T -e PARTICIPANT="$participant" "$service" sh -lc '
+    perl -0ne '"'"'
+      my $participant = $ENV{PARTICIPANT};
+      if (/\[peer_aliases\]\s*\n(.*?)(?:^\[|\z)/ms) {
+        my $block = $1;
+        print $1 if $block =~ /^\Q$participant\E\s*=\s*"([^"]*)"/m;
+      }
+    '"'"' /root/.config/nvpn/config.toml
+  '
 }
 
 wait_for_peer_alias() {
@@ -330,17 +336,27 @@ set_peer_alias() {
     "$service" sh -lc '
 cfg=/root/.config/nvpn/config.toml
 tmp=$(mktemp)
-perl -0pe '"'"'
-  my $participant = $ENV{PARTICIPANT};
-  my $alias = $ENV{ALIAS_VALUE};
+	perl -0pe '"'"'
+	  my $participant = $ENV{PARTICIPANT};
+	  my $alias = $ENV{ALIAS_VALUE};
+	  my $entry = "$participant = \"$alias\"";
 
-  if (/^\Q$participant\E\s*=/m) {
-    s/^\Q$participant\E\s*=.*$/$participant = "$alias"/m;
-  } elsif (/^\[peer_aliases\]\s*$/m) {
-    s/^\[peer_aliases\]\s*$/[peer_aliases]\n$participant = "$alias"/m;
-  } else {
-    $_ .= "\n[peer_aliases]\n$participant = \"$alias\"\n";
-  }
+	  if (/^\[peer_aliases\]\s*$/m) {
+	    s{
+	      (^\[peer_aliases\]\s*\n)
+	      (.*?)
+	      (?=^\[|\z)
+	    }{
+	      my ($header, $body) = ($1, $2);
+	      if ($body =~ s/^\Q$participant\E\s*=.*$/$entry/m) {
+	        $header . $body;
+	      } else {
+	        $header . $entry . "\n" . $body;
+	      }
+	    }xmse;
+	  } else {
+	    $_ .= "\n[peer_aliases]\n$entry\n";
+	  }
 
   s/^shared_roster_updated_at\s*=.*$/shared_roster_updated_at = $ENV{SHARED_AT}/m;
   s/^shared_roster_signed_by\s*=.*$/shared_roster_signed_by = "$ENV{SHARED_BY}"/m;
@@ -377,8 +393,8 @@ ping_until_failure() {
 cleanup
 
 "${COMPOSE[@]}" build >/dev/null
-"${COMPOSE[@]}" up -d relay node-a node-b node-c >/dev/null
-for service in relay node-a node-b node-c; do
+"${COMPOSE[@]}" up -d node-a node-b node-c >/dev/null
+for service in node-a node-b node-c; do
   wait_for_service "$service"
 done
 
@@ -401,13 +417,21 @@ B_ADMIN="$(toml_array "$BOB_NPUB")"
   --network-id "$NETWORK_ID" \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
-  --relay "$RELAY_URL" >/dev/null
+  --endpoint "10.203.0.10:51820" \
+  --listen-port 51820 \
+  --fips-advertise-endpoint true \
+  --fips-peer-endpoint "$BOB_NPUB=10.203.0.11:51820" \
+  --fips-peer-endpoint "$CAROL_NPUB=10.203.0.12:51820" >/dev/null
 
 "${COMPOSE[@]}" exec -T node-b nvpn set \
   --network-id "$NETWORK_ID" \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
-  --relay "$RELAY_URL" >/dev/null
+  --endpoint "10.203.0.11:51820" \
+  --listen-port 51820 \
+  --fips-advertise-endpoint true \
+  --fips-peer-endpoint "$ALICE_NPUB=10.203.0.10:51820" \
+  --fips-peer-endpoint "$CAROL_NPUB=10.203.0.12:51820" >/dev/null
 
 ALICE_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-a nvpn ip | tr -d '\r')"
 BOB_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-b nvpn ip | tr -d '\r')"
@@ -447,7 +471,11 @@ wait_for_config_array_contains node-b admins "$BOB_NPUB" \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
   --participant "$CAROL_NPUB" \
-  --relay "$RELAY_URL" >/dev/null
+  --endpoint "10.203.0.12:51820" \
+  --listen-port 51820 \
+  --fips-advertise-endpoint true \
+  --fips-peer-endpoint "$ALICE_NPUB=10.203.0.10:51820" \
+  --fips-peer-endpoint "$BOB_NPUB=10.203.0.11:51820" >/dev/null
 
 CAROL_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-c nvpn ip | tr -d '\r')"
 
