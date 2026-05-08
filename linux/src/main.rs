@@ -51,6 +51,16 @@ struct Drafts {
     magic_dns_suffix: String,
     advertised_routes: String,
     exit_search: String,
+    wireguard_exit_interface: String,
+    wireguard_exit_address: String,
+    wireguard_exit_private_key: String,
+    wireguard_exit_peer_public_key: String,
+    wireguard_exit_peer_preshared_key: String,
+    wireguard_exit_endpoint: String,
+    wireguard_exit_allowed_ips: String,
+    wireguard_exit_dns: String,
+    wireguard_exit_mtu: String,
+    wireguard_exit_keepalive: String,
 }
 
 impl Drafts {
@@ -61,6 +71,17 @@ impl Drafts {
         self.listen_port = state.listen_port.to_string();
         self.magic_dns_suffix = state.magic_dns_suffix.clone();
         self.advertised_routes = state.advertised_routes.join(", ");
+        self.wireguard_exit_interface = state.wireguard_exit_interface.clone();
+        self.wireguard_exit_address = state.wireguard_exit_address.clone();
+        self.wireguard_exit_private_key = state.wireguard_exit_private_key.clone();
+        self.wireguard_exit_peer_public_key = state.wireguard_exit_peer_public_key.clone();
+        self.wireguard_exit_peer_preshared_key = state.wireguard_exit_peer_preshared_key.clone();
+        self.wireguard_exit_endpoint = state.wireguard_exit_endpoint.clone();
+        self.wireguard_exit_allowed_ips = state.wireguard_exit_allowed_ips.clone();
+        self.wireguard_exit_dns = state.wireguard_exit_dns.clone();
+        self.wireguard_exit_mtu = state.wireguard_exit_mtu.to_string();
+        self.wireguard_exit_keepalive =
+            state.wireguard_exit_persistent_keepalive_secs.to_string();
         if let Some(network) = active_network(state) {
             self.network_name = display_network_name(network);
             self.mesh_id = network.network_id.clone();
@@ -1448,6 +1469,35 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
             },
         },
     );
+    switch_row(
+        app,
+        &offer,
+        "Use WireGuard upstream",
+        state.wireguard_exit_enabled,
+        |enabled| NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                wireguard_exit_enabled: Some(enabled),
+                ..SettingsPatch::default()
+            },
+        },
+    );
+    setting_entry(app, &offer, "Interface", "wireguard_exit_interface");
+    setting_entry(app, &offer, "Address", "wireguard_exit_address");
+    setting_entry(app, &offer, "Endpoint", "wireguard_exit_endpoint");
+    setting_entry(app, &offer, "Peer Key", "wireguard_exit_peer_public_key");
+    setting_entry(app, &offer, "Private Key", "wireguard_exit_private_key");
+    setting_entry(app, &offer, "Preshared Key", "wireguard_exit_peer_preshared_key");
+    setting_entry(app, &offer, "Allowed IPs", "wireguard_exit_allowed_ips");
+    setting_entry(app, &offer, "DNS", "wireguard_exit_dns");
+    setting_entry(app, &offer, "MTU", "wireguard_exit_mtu");
+    setting_entry(app, &offer, "Keepalive", "wireguard_exit_keepalive");
+    let save_wg = icon_text_button("Save WireGuard", "");
+    save_wg.set_halign(gtk::Align::Start);
+    {
+        let app = app.clone();
+        save_wg.connect_clicked(move |_| save_wireguard_exit_settings(&app));
+    }
+    offer.append(&save_wg);
     page.append(&offer);
 }
 
@@ -1987,10 +2037,30 @@ fn setting_entry(app: &AppRef, parent: &gtk::Box, title: &str, key: &'static str
             "tunnel_ip" => model.drafts.tunnel_ip.clone(),
             "listen_port" => model.drafts.listen_port.clone(),
             "magic_dns_suffix" => model.drafts.magic_dns_suffix.clone(),
+            "wireguard_exit_interface" => model.drafts.wireguard_exit_interface.clone(),
+            "wireguard_exit_address" => model.drafts.wireguard_exit_address.clone(),
+            "wireguard_exit_private_key" => model.drafts.wireguard_exit_private_key.clone(),
+            "wireguard_exit_peer_public_key" => {
+                model.drafts.wireguard_exit_peer_public_key.clone()
+            }
+            "wireguard_exit_peer_preshared_key" => {
+                model.drafts.wireguard_exit_peer_preshared_key.clone()
+            }
+            "wireguard_exit_endpoint" => model.drafts.wireguard_exit_endpoint.clone(),
+            "wireguard_exit_allowed_ips" => model.drafts.wireguard_exit_allowed_ips.clone(),
+            "wireguard_exit_dns" => model.drafts.wireguard_exit_dns.clone(),
+            "wireguard_exit_mtu" => model.drafts.wireguard_exit_mtu.clone(),
+            "wireguard_exit_keepalive" => model.drafts.wireguard_exit_keepalive.clone(),
             _ => String::new(),
         }
     };
     let input = entry(title, &current);
+    if matches!(
+        key,
+        "wireguard_exit_private_key" | "wireguard_exit_peer_preshared_key"
+    ) {
+        input.set_visibility(false);
+    }
     {
         let app = app.clone();
         input.connect_changed(move |entry| {
@@ -2002,6 +2072,20 @@ fn setting_entry(app: &AppRef, parent: &gtk::Box, title: &str, key: &'static str
                 "tunnel_ip" => model.drafts.tunnel_ip = value,
                 "listen_port" => model.drafts.listen_port = value,
                 "magic_dns_suffix" => model.drafts.magic_dns_suffix = value,
+                "wireguard_exit_interface" => model.drafts.wireguard_exit_interface = value,
+                "wireguard_exit_address" => model.drafts.wireguard_exit_address = value,
+                "wireguard_exit_private_key" => model.drafts.wireguard_exit_private_key = value,
+                "wireguard_exit_peer_public_key" => {
+                    model.drafts.wireguard_exit_peer_public_key = value;
+                }
+                "wireguard_exit_peer_preshared_key" => {
+                    model.drafts.wireguard_exit_peer_preshared_key = value;
+                }
+                "wireguard_exit_endpoint" => model.drafts.wireguard_exit_endpoint = value,
+                "wireguard_exit_allowed_ips" => model.drafts.wireguard_exit_allowed_ips = value,
+                "wireguard_exit_dns" => model.drafts.wireguard_exit_dns = value,
+                "wireguard_exit_mtu" => model.drafts.wireguard_exit_mtu = value,
+                "wireguard_exit_keepalive" => model.drafts.wireguard_exit_keepalive = value,
                 _ => {}
             }
         });
@@ -2022,6 +2106,32 @@ fn save_device_settings(app: &AppRef) {
                 tunnel_ip: Some(drafts.tunnel_ip),
                 listen_port,
                 magic_dns_suffix: Some(drafts.magic_dns_suffix),
+                ..SettingsPatch::default()
+            },
+        },
+    );
+}
+
+fn save_wireguard_exit_settings(app: &AppRef) {
+    let drafts = app.borrow().drafts.clone();
+    let mtu = drafts.wireguard_exit_mtu.trim().parse::<u16>().ok();
+    let keepalive = drafts.wireguard_exit_keepalive.trim().parse::<u16>().ok();
+    dispatch(
+        app,
+        NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                wireguard_exit_interface: Some(drafts.wireguard_exit_interface),
+                wireguard_exit_address: Some(drafts.wireguard_exit_address),
+                wireguard_exit_private_key: Some(drafts.wireguard_exit_private_key),
+                wireguard_exit_peer_public_key: Some(drafts.wireguard_exit_peer_public_key),
+                wireguard_exit_peer_preshared_key: Some(
+                    drafts.wireguard_exit_peer_preshared_key,
+                ),
+                wireguard_exit_endpoint: Some(drafts.wireguard_exit_endpoint),
+                wireguard_exit_allowed_ips: Some(drafts.wireguard_exit_allowed_ips),
+                wireguard_exit_dns: Some(drafts.wireguard_exit_dns),
+                wireguard_exit_mtu: mtu,
+                wireguard_exit_persistent_keepalive_secs: keepalive,
                 ..SettingsPatch::default()
             },
         },

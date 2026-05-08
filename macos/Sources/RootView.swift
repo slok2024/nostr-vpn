@@ -10,6 +10,16 @@ struct RootView: View {
     @State private var tunnelIp = ""
     @State private var listenPort = ""
     @State private var magicDnsSuffix = ""
+    @State private var wireguardExitInterface = ""
+    @State private var wireguardExitAddress = ""
+    @State private var wireguardExitPrivateKey = ""
+    @State private var wireguardExitPeerPublicKey = ""
+    @State private var wireguardExitPeerPresharedKey = ""
+    @State private var wireguardExitEndpoint = ""
+    @State private var wireguardExitAllowedIps = ""
+    @State private var wireguardExitDns = ""
+    @State private var wireguardExitMtu = ""
+    @State private var wireguardExitKeepalive = ""
     @State private var participantInput = ""
     @State private var participantAliasInput = ""
     @State private var networkNameInput = ""
@@ -666,6 +676,69 @@ struct RootView: View {
                     set: { manager.setAdvertiseExitNode($0) }
                 ))
                 .disabled(manager.actionInFlight)
+
+                Divider()
+
+                Toggle("Use WireGuard upstream", isOn: Binding(
+                    get: { state.wireguardExitEnabled },
+                    set: { manager.setWireGuardExitEnabled($0) }
+                ))
+                .disabled(manager.actionInFlight)
+
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                    GridRow {
+                        label("Interface")
+                        TextField("Interface", text: $wireguardExitInterface)
+                        label("Address")
+                        TextField("Address", text: $wireguardExitAddress)
+                    }
+                    GridRow {
+                        label("Endpoint")
+                        TextField("Endpoint", text: $wireguardExitEndpoint)
+                        label("Allowed IPs")
+                        TextField("Allowed IPs", text: $wireguardExitAllowedIps)
+                    }
+                    GridRow {
+                        label("Peer Key")
+                        TextField("Peer Key", text: $wireguardExitPeerPublicKey)
+                    }
+                    GridRow {
+                        label("Private Key")
+                        SecureField("Private Key", text: $wireguardExitPrivateKey)
+                    }
+                    GridRow {
+                        label("Preshared")
+                        SecureField("Preshared", text: $wireguardExitPeerPresharedKey)
+                    }
+                    GridRow {
+                        label("DNS")
+                        TextField("DNS", text: $wireguardExitDns)
+                        label("MTU")
+                        TextField("MTU", text: $wireguardExitMtu)
+                    }
+                    GridRow {
+                        label("Keepalive")
+                        TextField("Keepalive", text: $wireguardExitKeepalive)
+                    }
+                }
+
+                Button {
+                    manager.saveWireGuardExitSettings(
+                        interface: wireguardExitInterface,
+                        address: wireguardExitAddress,
+                        privateKey: wireguardExitPrivateKey,
+                        peerPublicKey: wireguardExitPeerPublicKey,
+                        peerPresharedKey: wireguardExitPeerPresharedKey,
+                        endpoint: wireguardExitEndpoint,
+                        allowedIps: wireguardExitAllowedIps,
+                        dns: wireguardExitDns,
+                        mtu: wireguardExitMtu,
+                        keepalive: wireguardExitKeepalive
+                    )
+                } label: {
+                    Label("Save WireGuard", systemImage: "checkmark")
+                }
+                .disabled(manager.actionInFlight)
             }
         }
     }
@@ -1088,6 +1161,16 @@ struct RootView: View {
         tunnelIp = state.tunnelIp
         listenPort = String(state.listenPort)
         magicDnsSuffix = state.magicDnsSuffix
+        wireguardExitInterface = state.wireguardExitInterface
+        wireguardExitAddress = state.wireguardExitAddress
+        wireguardExitPrivateKey = state.wireguardExitPrivateKey
+        wireguardExitPeerPublicKey = state.wireguardExitPeerPublicKey
+        wireguardExitPeerPresharedKey = state.wireguardExitPeerPresharedKey
+        wireguardExitEndpoint = state.wireguardExitEndpoint
+        wireguardExitAllowedIps = state.wireguardExitAllowedIps
+        wireguardExitDns = state.wireguardExitDns
+        wireguardExitMtu = String(state.wireguardExitMtu)
+        wireguardExitKeepalive = String(state.wireguardExitPersistentKeepaliveSecs)
 
         for network in state.networks {
             networkNameDrafts[network.id] = network.name

@@ -15,7 +15,7 @@ RUN cargo build --release -p nostr-vpn-cli -p nostr-vpn-reflector
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates dnsutils iproute2 iptables iputils-ping libdbus-1-3 netcat-openbsd procps \
+    && apt-get install -y --no-install-recommends ca-certificates dnsutils iproute2 iptables iputils-ping libdbus-1-3 netcat-openbsd procps wireguard-tools \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/nostr-vpn/target/release/nvpn /usr/local/bin/nvpn

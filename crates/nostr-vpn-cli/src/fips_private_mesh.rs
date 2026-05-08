@@ -7,7 +7,8 @@ use fips_endpoint::{
 };
 use nostr_sdk::prelude::{PublicKey, ToBech32};
 use nostr_vpn_core::config::{
-    AppConfig, derive_mesh_tunnel_ip, exit_node_default_routes, normalize_nostr_pubkey,
+    AppConfig, WireGuardExitConfig, derive_mesh_tunnel_ip, exit_node_default_routes,
+    normalize_nostr_pubkey,
 };
 use nostr_vpn_core::data_plane::{MeshPeerStatus, PrivatePacket};
 use nostr_vpn_core::fips_control::{
@@ -919,6 +920,7 @@ pub(crate) struct FipsPrivateTunnelConfig {
     endpoint_peers: Vec<FipsEndpointPeerTransportConfig>,
     pub(crate) route_targets: Vec<String>,
     pub(crate) local_advertised_routes: Vec<String>,
+    pub(crate) wireguard_exit: WireGuardExitConfig,
     #[cfg(target_os = "linux")]
     pub(crate) control_plane_bypass_hosts: Vec<Ipv4Addr>,
 }
@@ -1006,6 +1008,7 @@ impl FipsPrivateTunnelConfig {
             endpoint_peers,
             route_targets,
             local_advertised_routes: app.effective_advertised_routes(),
+            wireguard_exit: app.wireguard_exit.clone(),
             #[cfg(target_os = "linux")]
             control_plane_bypass_hosts: crate::control_plane_bypass_ipv4_hosts(app),
         })
@@ -1296,6 +1299,7 @@ impl FipsPrivateTunnelRuntime {
         self.reconcile_linux_exit_node_forwarding(
             &config.local_address,
             &config.local_advertised_routes,
+            &config.wireguard_exit,
         );
         Ok(())
     }
@@ -1358,7 +1362,12 @@ impl FipsPrivateTunnelRuntime {
     }
 
     #[cfg(target_os = "linux")]
-    fn reconcile_linux_exit_node_forwarding(&mut self, local_address: &str, routes: &[String]) {
+    fn reconcile_linux_exit_node_forwarding(
+        &mut self,
+        local_address: &str,
+        routes: &[String],
+        wireguard_exit: &WireGuardExitConfig,
+    ) {
         let mut route_families = crate::linux_exit_node_default_route_families(routes);
         if !route_families.ipv4 && !route_families.ipv6 {
             self.reconcile_linux_exit_node_forwarding_cleanup();
@@ -1376,13 +1385,39 @@ impl FipsPrivateTunnelRuntime {
             None
         };
 
-        let ipv4_outbound_iface = if route_families.ipv4 {
-            match crate::linux_default_route() {
-                Ok(route) => Some(route.dev),
+        let wireguard_exit_iface = if route_families.ipv4 && wireguard_exit.enabled {
+            let Some(source_cidr) = ipv4_tunnel_source_cidr.as_deref() else {
+                self.reconcile_linux_exit_node_forwarding_cleanup();
+                return;
+            };
+            match crate::validate_linux_wireguard_exit_config(wireguard_exit) {
+                Ok(iface) => {
+                    if !crate::linux_wireguard_exit_ipv6_default(wireguard_exit) {
+                        route_families.ipv6 = false;
+                    }
+                    Some((iface, source_cidr.to_string()))
+                }
                 Err(error) => {
-                    eprintln!("fips: failed to resolve default IPv4 route device: {error}");
+                    eprintln!("fips: WireGuard exit upstream is not ready: {error}");
                     self.reconcile_linux_exit_node_forwarding_cleanup();
                     return;
+                }
+            }
+        } else {
+            None
+        };
+
+        let ipv4_outbound_iface = if route_families.ipv4 {
+            if let Some((iface, _)) = wireguard_exit_iface.as_ref() {
+                Some(iface.clone())
+            } else {
+                match crate::linux_default_route() {
+                    Ok(route) => Some(route.dev),
+                    Err(error) => {
+                        eprintln!("fips: failed to resolve default IPv4 route device: {error}");
+                        self.reconcile_linux_exit_node_forwarding_cleanup();
+                        return;
+                    }
                 }
             }
         } else {
@@ -1413,10 +1448,28 @@ impl FipsPrivateTunnelRuntime {
             && self.exit_node_runtime.ipv6_outbound_iface == ipv6_outbound_iface
             && self.exit_node_runtime.ipv4_tunnel_source_cidr == ipv4_tunnel_source_cidr;
         if already_configured {
+            if let Some((_, source_cidr)) = wireguard_exit_iface.as_ref()
+                && let Err(error) =
+                    self.apply_linux_wireguard_exit_upstream(wireguard_exit, source_cidr)
+            {
+                eprintln!("fips: failed to refresh WireGuard exit upstream: {error}");
+                self.reconcile_linux_exit_node_forwarding_cleanup();
+            } else if wireguard_exit_iface.is_none() {
+                self.cleanup_linux_wireguard_exit_upstream();
+            }
             return;
         }
 
         self.reconcile_linux_exit_node_forwarding_cleanup();
+
+        if let Some((_, source_cidr)) = wireguard_exit_iface.as_ref()
+            && let Err(error) =
+                self.apply_linux_wireguard_exit_upstream(wireguard_exit, source_cidr)
+        {
+            eprintln!("fips: failed to configure WireGuard exit upstream: {error}");
+            self.reconcile_linux_exit_node_forwarding_cleanup();
+            return;
+        }
 
         self.exit_node_runtime.ipv4_outbound_iface = ipv4_outbound_iface.clone();
         self.exit_node_runtime.ipv6_outbound_iface = ipv6_outbound_iface.clone();
@@ -1536,6 +1589,34 @@ impl FipsPrivateTunnelRuntime {
     }
 
     #[cfg(target_os = "linux")]
+    fn apply_linux_wireguard_exit_upstream(
+        &mut self,
+        config: &WireGuardExitConfig,
+        source_cidr: &str,
+    ) -> Result<()> {
+        let mut preserve_created_interface = false;
+        if let Some(runtime) = self.exit_node_runtime.wireguard_exit.as_ref()
+            && (runtime.interface != config.interface || runtime.source_cidr != source_cidr)
+        {
+            self.cleanup_linux_wireguard_exit_upstream();
+        } else if let Some(runtime) = self.exit_node_runtime.wireguard_exit.as_ref() {
+            preserve_created_interface = runtime.created_interface;
+        }
+        let mut runtime = crate::apply_linux_wireguard_exit_upstream(config, source_cidr)?;
+        runtime.created_interface |= preserve_created_interface;
+        self.exit_node_runtime.wireguard_exit = Some(runtime);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn cleanup_linux_wireguard_exit_upstream(&mut self) {
+        let Some(runtime) = self.exit_node_runtime.wireguard_exit.take() else {
+            return;
+        };
+        crate::cleanup_linux_wireguard_exit_upstream(&runtime);
+    }
+
+    #[cfg(target_os = "linux")]
     fn reconcile_linux_exit_node_forwarding_cleanup(&mut self) {
         if let (Some(outbound_iface), Some(tunnel_source_cidr)) = (
             self.exit_node_runtime.ipv4_outbound_iface.as_deref(),
@@ -1614,6 +1695,7 @@ impl FipsPrivateTunnelRuntime {
             eprintln!("fips: failed to restore IPv6 forwarding state: {error}");
         }
 
+        self.cleanup_linux_wireguard_exit_upstream();
         self.exit_node_runtime = crate::LinuxExitNodeRuntime::default();
     }
 

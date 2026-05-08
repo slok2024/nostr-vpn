@@ -78,3 +78,26 @@ fn clap_set_supports_route_advertisement_flags() {
         "missing --exit-node on set command"
     );
 }
+
+#[test]
+fn clap_set_supports_wireguard_exit_flags() {
+    let command = Cli::command();
+    let set = command
+        .get_subcommands()
+        .find(|subcommand| subcommand.get_name() == "set")
+        .expect("set subcommand exists");
+    for flag in [
+        "wireguard-exit-enabled",
+        "wireguard-exit-address",
+        "wireguard-exit-private-key",
+        "wireguard-exit-peer-public-key",
+        "wireguard-exit-endpoint",
+        "wireguard-exit-allowed-ips",
+    ] {
+        assert!(
+            set.get_arguments()
+                .any(|argument| argument.get_long() == Some(flag)),
+            "missing --{flag} on set command"
+        );
+    }
+}

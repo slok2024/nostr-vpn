@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn update_settings_action_round_trips() {
-        let encoded = r#"{"type":"update_settings","patch":{"nodeName":"office","listenPort":51821,"advertiseExitNode":true}}"#;
+        let encoded = r#"{"type":"update_settings","patch":{"nodeName":"office","listenPort":51821,"advertiseExitNode":true,"wireguardExitEnabled":true,"wireguardExitEndpoint":"198.51.100.20:51830"}}"#;
 
         let action = serde_json::from_str::<NativeAppAction>(encoded).expect("parse action");
         match action {
@@ -116,6 +116,11 @@ mod tests {
                 assert_eq!(patch.node_name.as_deref(), Some("office"));
                 assert_eq!(patch.listen_port, Some(51821));
                 assert_eq!(patch.advertise_exit_node, Some(true));
+                assert_eq!(patch.wireguard_exit_enabled, Some(true));
+                assert_eq!(
+                    patch.wireguard_exit_endpoint.as_deref(),
+                    Some("198.51.100.20:51830")
+                );
             }
             other => panic!("unexpected action: {other:?}"),
         }

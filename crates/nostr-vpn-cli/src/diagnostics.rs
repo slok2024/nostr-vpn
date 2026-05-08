@@ -372,6 +372,20 @@ fn sanitized_config_json(app: &AppConfig) -> serde_json::Value {
             "advertisedRoutes": app.node.advertised_routes,
             "advertiseExitNode": app.node.advertise_exit_node,
         },
+        "wireguardExit": {
+            "enabled": app.wireguard_exit.enabled,
+            "configured": app.wireguard_exit.configured(),
+            "interface": &app.wireguard_exit.interface,
+            "address": &app.wireguard_exit.address,
+            "endpoint": &app.wireguard_exit.endpoint,
+            "allowedIps": &app.wireguard_exit.allowed_ips,
+            "dns": &app.wireguard_exit.dns,
+            "mtu": app.wireguard_exit.mtu,
+            "persistentKeepaliveSecs": app.wireguard_exit.persistent_keepalive_secs,
+            "privateKeySet": !app.wireguard_exit.private_key.trim().is_empty(),
+            "peerPresharedKeySet": !app.wireguard_exit.peer_preshared_key.trim().is_empty(),
+            "peerPublicKeySet": !app.wireguard_exit.peer_public_key.trim().is_empty(),
+        },
         "networks": app.networks,
     })
 }

@@ -90,6 +90,8 @@ pub struct AppConfig {
     pub close_to_tray_on_close: bool,
     #[serde(default = "default_magic_dns_suffix")]
     pub magic_dns_suffix: String,
+    #[serde(default, skip_serializing_if = "WireGuardExitConfig::is_default")]
+    pub wireguard_exit: WireGuardExitConfig,
     #[serde(default = "default_peer_aliases")]
     pub peer_aliases: HashMap<String, String>,
     #[serde(default)]
@@ -98,6 +100,144 @@ pub struct AppConfig {
     pub nostr: NostrConfig,
     #[serde(default)]
     pub node: NodeConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WireGuardExitConfig {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub enabled: bool,
+    #[serde(
+        default = "default_wireguard_exit_interface",
+        skip_serializing_if = "wireguard_exit_interface_is_default"
+    )]
+    pub interface: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub address: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub private_key: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub peer_public_key: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub peer_preshared_key: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub endpoint: String,
+    #[serde(
+        default = "default_wireguard_exit_allowed_ips",
+        skip_serializing_if = "wireguard_exit_allowed_ips_is_default"
+    )]
+    pub allowed_ips: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dns: Vec<String>,
+    #[serde(
+        default = "default_wireguard_exit_mtu",
+        skip_serializing_if = "wireguard_exit_mtu_is_default"
+    )]
+    pub mtu: u16,
+    #[serde(
+        default = "default_wireguard_exit_persistent_keepalive_secs",
+        skip_serializing_if = "wireguard_exit_persistent_keepalive_secs_is_default"
+    )]
+    pub persistent_keepalive_secs: u16,
+}
+
+impl Default for WireGuardExitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interface: default_wireguard_exit_interface(),
+            address: String::new(),
+            private_key: String::new(),
+            peer_public_key: String::new(),
+            peer_preshared_key: String::new(),
+            endpoint: String::new(),
+            allowed_ips: default_wireguard_exit_allowed_ips(),
+            dns: Vec::new(),
+            mtu: default_wireguard_exit_mtu(),
+            persistent_keepalive_secs: default_wireguard_exit_persistent_keepalive_secs(),
+        }
+    }
+}
+
+impl WireGuardExitConfig {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn configured(&self) -> bool {
+        !self.address.trim().is_empty()
+            && !self.private_key.trim().is_empty()
+            && !self.peer_public_key.trim().is_empty()
+            && !self.endpoint.trim().is_empty()
+    }
+}
+
+fn default_wireguard_exit_interface() -> String {
+    "nvpn-wg-exit".to_string()
+}
+
+fn default_wireguard_exit_allowed_ips() -> Vec<String> {
+    vec!["0.0.0.0/0".to_string()]
+}
+
+fn default_wireguard_exit_mtu() -> u16 {
+    1420
+}
+
+fn default_wireguard_exit_persistent_keepalive_secs() -> u16 {
+    25
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn wireguard_exit_interface_is_default(value: &str) -> bool {
+    value == default_wireguard_exit_interface()
+}
+
+fn wireguard_exit_allowed_ips_is_default(value: &[String]) -> bool {
+    value == default_wireguard_exit_allowed_ips().as_slice()
+}
+
+fn wireguard_exit_mtu_is_default(value: &u16) -> bool {
+    *value == default_wireguard_exit_mtu()
+}
+
+fn wireguard_exit_persistent_keepalive_secs_is_default(value: &u16) -> bool {
+    *value == default_wireguard_exit_persistent_keepalive_secs()
+}
+
+fn normalize_wireguard_exit_config(config: &mut WireGuardExitConfig) {
+    config.interface = config.interface.trim().to_string();
+    if config.interface.is_empty() {
+        config.interface = default_wireguard_exit_interface();
+    }
+    config.address = config.address.trim().to_string();
+    config.private_key = config.private_key.trim().to_string();
+    config.peer_public_key = config.peer_public_key.trim().to_string();
+    config.peer_preshared_key = config.peer_preshared_key.trim().to_string();
+    config.endpoint = config.endpoint.trim().to_string();
+    config.allowed_ips = config
+        .allowed_ips
+        .iter()
+        .filter_map(|route| normalize_advertised_route(route))
+        .collect();
+    config.allowed_ips.sort();
+    config.allowed_ips.dedup();
+    if config.allowed_ips.is_empty() {
+        config.allowed_ips = default_wireguard_exit_allowed_ips();
+    }
+    config.dns = config
+        .dns
+        .iter()
+        .map(|server| server.trim().to_string())
+        .filter(|server| !server.is_empty())
+        .collect();
+    config.dns.sort();
+    config.dns.dedup();
+    if config.mtu == 0 {
+        config.mtu = default_wireguard_exit_mtu();
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +347,7 @@ impl Default for AppConfig {
             exit_node: String::new(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
             magic_dns_suffix: default_magic_dns_suffix(),
+            wireguard_exit: WireGuardExitConfig::default(),
             peer_aliases: default_peer_aliases(),
             nat: NatConfig::default(),
             nostr: NostrConfig::default(),
@@ -306,6 +447,7 @@ impl AppConfig {
         }
 
         self.magic_dns_suffix = normalize_magic_dns_suffix(&self.magic_dns_suffix);
+        normalize_wireguard_exit_config(&mut self.wireguard_exit);
 
         if self.node.id.trim().is_empty() {
             self.node.id = default_node_id();
@@ -1422,6 +1564,35 @@ mod tests {
             public_key_hex
         );
         assert_eq!(config.nostr.secret_key, "not-a-secret-key");
+    }
+
+    #[test]
+    fn wireguard_exit_defaults_and_normalization_are_stable() {
+        let mut config = AppConfig::default();
+        config.wireguard_exit.enabled = true;
+        config.wireguard_exit.interface = "  ".to_string();
+        config.wireguard_exit.address = " 10.200.0.2/32 ".to_string();
+        config.wireguard_exit.private_key = " private ".to_string();
+        config.wireguard_exit.peer_public_key = " peer ".to_string();
+        config.wireguard_exit.endpoint = " 198.51.100.20:51830 ".to_string();
+        config.wireguard_exit.allowed_ips = vec![
+            "0.0.0.0/0".to_string(),
+            "bad-route".to_string(),
+            "0.0.0.0/0".to_string(),
+        ];
+        config.wireguard_exit.dns = vec![" 9.9.9.9 ".to_string(), "9.9.9.9".to_string()];
+
+        config.ensure_defaults();
+
+        assert!(config.wireguard_exit.enabled);
+        assert_eq!(config.wireguard_exit.interface, "nvpn-wg-exit");
+        assert_eq!(config.wireguard_exit.address, "10.200.0.2/32");
+        assert_eq!(config.wireguard_exit.private_key, "private");
+        assert_eq!(config.wireguard_exit.peer_public_key, "peer");
+        assert_eq!(config.wireguard_exit.endpoint, "198.51.100.20:51830");
+        assert_eq!(config.wireguard_exit.allowed_ips, vec!["0.0.0.0/0"]);
+        assert_eq!(config.wireguard_exit.dns, vec!["9.9.9.9"]);
+        assert!(config.wireguard_exit.configured());
     }
 
     #[test]

@@ -13,6 +13,8 @@ mod service_management;
 mod session_runtime;
 #[cfg(any(target_os = "windows", test))]
 mod windows_tunnel;
+#[cfg(target_os = "linux")]
+mod wireguard_exit;
 
 use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "windows")]
@@ -114,6 +116,8 @@ pub(crate) use crate::service_management::{
 #[cfg(any(target_os = "macos", test))]
 pub(crate) use crate::service_management::{xml_escape, xml_unescape};
 pub(crate) use crate::session_runtime::*;
+#[cfg(target_os = "linux")]
+pub(crate) use crate::wireguard_exit::*;
 const DAEMON_CONTROL_STOP_REQUEST: &str = "stop";
 const DAEMON_CONTROL_RELOAD_REQUEST: &str = "reload";
 const DAEMON_CONTROL_PAUSE_REQUEST: &str = "pause";
@@ -447,6 +451,28 @@ struct SetArgs {
     advertise_routes: Option<String>,
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     advertise_exit_node: Option<bool>,
+    #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+    wireguard_exit_enabled: Option<bool>,
+    #[arg(long)]
+    wireguard_exit_interface: Option<String>,
+    #[arg(long)]
+    wireguard_exit_address: Option<String>,
+    #[arg(long)]
+    wireguard_exit_private_key: Option<String>,
+    #[arg(long)]
+    wireguard_exit_peer_public_key: Option<String>,
+    #[arg(long)]
+    wireguard_exit_peer_preshared_key: Option<String>,
+    #[arg(long)]
+    wireguard_exit_endpoint: Option<String>,
+    #[arg(long)]
+    wireguard_exit_allowed_ips: Option<String>,
+    #[arg(long)]
+    wireguard_exit_dns: Option<String>,
+    #[arg(long)]
+    wireguard_exit_mtu: Option<u16>,
+    #[arg(long)]
+    wireguard_exit_keepalive: Option<u16>,
     #[arg(long)]
     autoconnect: Option<bool>,
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
@@ -758,6 +784,7 @@ async fn run_command(command: Command) -> Result<()> {
                         "advertise_exit_node": app.node.advertise_exit_node,
                         "advertised_routes": app.node.advertised_routes,
                         "effective_advertised_routes": runtime_effective_advertised_routes(&app),
+                        "wireguard_exit": wireguard_exit_status_json(&app),
                         "daemon": daemon_status_json_value(&daemon),
                         "expected_peer_count": expected_peers,
                         "peer_count": peer_count,
@@ -787,6 +814,23 @@ async fn run_command(command: Command) -> Result<()> {
                     println!("exit_node: {}", app.exit_node);
                 }
                 println!("advertise_exit_node: {}", app.node.advertise_exit_node);
+                println!(
+                    "wireguard_exit: {}",
+                    if app.wireguard_exit.enabled {
+                        if app.wireguard_exit.configured() {
+                            "enabled"
+                        } else {
+                            "enabled (incomplete)"
+                        }
+                    } else {
+                        "disabled"
+                    }
+                );
+                if app.wireguard_exit.enabled {
+                    println!("wireguard_exit_interface: {}", app.wireguard_exit.interface);
+                    println!("wireguard_exit_address: {}", app.wireguard_exit.address);
+                    println!("wireguard_exit_endpoint: {}", app.wireguard_exit.endpoint);
+                }
                 let effective_routes = runtime_effective_advertised_routes(&app);
                 if effective_routes.is_empty() {
                     println!("advertised_routes: none");
@@ -855,6 +899,39 @@ async fn run_command(command: Command) -> Result<()> {
             }
             if let Some(value) = args.advertise_exit_node {
                 app.node.advertise_exit_node = value;
+            }
+            if let Some(value) = args.wireguard_exit_enabled {
+                app.wireguard_exit.enabled = value;
+            }
+            if let Some(value) = args.wireguard_exit_interface {
+                app.wireguard_exit.interface = value;
+            }
+            if let Some(value) = args.wireguard_exit_address {
+                app.wireguard_exit.address = value;
+            }
+            if let Some(value) = args.wireguard_exit_private_key {
+                app.wireguard_exit.private_key = value;
+            }
+            if let Some(value) = args.wireguard_exit_peer_public_key {
+                app.wireguard_exit.peer_public_key = value;
+            }
+            if let Some(value) = args.wireguard_exit_peer_preshared_key {
+                app.wireguard_exit.peer_preshared_key = value;
+            }
+            if let Some(value) = args.wireguard_exit_endpoint {
+                app.wireguard_exit.endpoint = value;
+            }
+            if let Some(value) = args.wireguard_exit_allowed_ips {
+                app.wireguard_exit.allowed_ips = parse_advertised_routes_arg(&value)?;
+            }
+            if let Some(value) = args.wireguard_exit_dns {
+                app.wireguard_exit.dns = parse_csv_arg(&value);
+            }
+            if let Some(value) = args.wireguard_exit_mtu {
+                app.wireguard_exit.mtu = value;
+            }
+            if let Some(value) = args.wireguard_exit_keepalive {
+                app.wireguard_exit.persistent_keepalive_secs = value;
             }
             if let Some(value) = args.autoconnect {
                 app.autoconnect = value;
@@ -1087,6 +1164,20 @@ fn runtime_effective_advertised_routes(app: &AppConfig) -> Vec<String> {
         routes.retain(|route| !is_default_exit_node_route(route));
     }
     routes
+}
+
+fn wireguard_exit_status_json(app: &AppConfig) -> serde_json::Value {
+    json!({
+        "enabled": app.wireguard_exit.enabled,
+        "configured": app.wireguard_exit.configured(),
+        "interface": &app.wireguard_exit.interface,
+        "address": &app.wireguard_exit.address,
+        "endpoint": &app.wireguard_exit.endpoint,
+        "allowed_ips": &app.wireguard_exit.allowed_ips,
+        "dns": &app.wireguard_exit.dns,
+        "mtu": app.wireguard_exit.mtu,
+        "persistent_keepalive_secs": app.wireguard_exit.persistent_keepalive_secs,
+    })
 }
 
 fn runtime_local_tunnel_ip(app: &AppConfig, network_id: &str) -> String {
@@ -1463,6 +1554,17 @@ struct LinuxExitNodeRuntime {
     ipv4_tunnel_source_cidr: Option<String>,
     ipv4_forward_was_enabled: Option<bool>,
     ipv6_forward_was_enabled: Option<bool>,
+    wireguard_exit: Option<LinuxWireGuardExitRuntime>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LinuxWireGuardExitRuntime {
+    interface: String,
+    source_cidr: String,
+    table: u32,
+    priority: u32,
+    created_interface: bool,
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -2959,6 +3061,18 @@ fn parse_advertised_routes_arg(value: &str) -> Result<Vec<String>> {
     }
 
     Ok(routes)
+}
+
+fn parse_csv_arg(value: &str) -> Vec<String> {
+    let mut values = value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    values
 }
 
 fn parse_fips_peer_endpoint_args(values: &[String]) -> Result<HashMap<String, Vec<String>>> {

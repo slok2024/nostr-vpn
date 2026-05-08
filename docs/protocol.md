@@ -86,7 +86,7 @@ The discovered endpoint is input to FIPS configuration. It is not a WireGuard en
 
 Route targets come from the active network roster and local node settings. FIPS receives the route map and carries private mesh traffic for the selected peers.
 
-Exit-node behavior is still represented in config and UI state, but WireGuard exit-node support is no longer part of the main nostr-vpn mesh runtime. Any WireGuard exit work should live as a separate component instead of reintroducing the legacy data plane.
+Exit-node behavior is represented in config and UI state. A node can optionally use a local WireGuard upstream while offering FIPS exit-node service, but peers still see only the normal FIPS exit-node route advertisement. WireGuard is not a mesh data plane and nostr-vpn does not announce or signal WireGuard peers through its old relay model.
 
 ## Canonical Source
 

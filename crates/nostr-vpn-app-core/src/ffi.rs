@@ -327,6 +327,25 @@ impl NativeAppRuntime {
             advertise_exit_node: self.config.node.advertise_exit_node,
             advertised_routes: self.config.node.advertised_routes.clone(),
             effective_advertised_routes: self.config.effective_advertised_routes(),
+            wireguard_exit_enabled: self.config.wireguard_exit.enabled,
+            wireguard_exit_configured: self.config.wireguard_exit.configured(),
+            wireguard_exit_interface: self.config.wireguard_exit.interface.clone(),
+            wireguard_exit_address: self.config.wireguard_exit.address.clone(),
+            wireguard_exit_private_key: self.config.wireguard_exit.private_key.clone(),
+            wireguard_exit_peer_public_key: self.config.wireguard_exit.peer_public_key.clone(),
+            wireguard_exit_peer_preshared_key: self
+                .config
+                .wireguard_exit
+                .peer_preshared_key
+                .clone(),
+            wireguard_exit_endpoint: self.config.wireguard_exit.endpoint.clone(),
+            wireguard_exit_allowed_ips: self.config.wireguard_exit.allowed_ips.join(", "),
+            wireguard_exit_dns: self.config.wireguard_exit.dns.join(", "),
+            wireguard_exit_mtu: self.config.wireguard_exit.mtu,
+            wireguard_exit_persistent_keepalive_secs: self
+                .config
+                .wireguard_exit
+                .persistent_keepalive_secs,
             magic_dns_suffix: self.config.magic_dns_suffix.clone(),
             magic_dns_status: self.magic_dns_status(),
             autoconnect: self.config.autoconnect,
@@ -748,6 +767,39 @@ impl NativeAppRuntime {
         }
         if let Some(value) = patch.advertised_routes {
             self.config.node.advertised_routes = parse_advertised_routes(&value);
+        }
+        if let Some(value) = patch.wireguard_exit_enabled {
+            self.config.wireguard_exit.enabled = value;
+        }
+        if let Some(value) = patch.wireguard_exit_interface {
+            self.config.wireguard_exit.interface = value.trim().to_string();
+        }
+        if let Some(value) = patch.wireguard_exit_address {
+            self.config.wireguard_exit.address = value.trim().to_string();
+        }
+        if let Some(value) = patch.wireguard_exit_private_key {
+            self.config.wireguard_exit.private_key = value.trim().to_string();
+        }
+        if let Some(value) = patch.wireguard_exit_peer_public_key {
+            self.config.wireguard_exit.peer_public_key = value.trim().to_string();
+        }
+        if let Some(value) = patch.wireguard_exit_peer_preshared_key {
+            self.config.wireguard_exit.peer_preshared_key = value.trim().to_string();
+        }
+        if let Some(value) = patch.wireguard_exit_endpoint {
+            self.config.wireguard_exit.endpoint = value.trim().to_string();
+        }
+        if let Some(value) = patch.wireguard_exit_allowed_ips {
+            self.config.wireguard_exit.allowed_ips = parse_advertised_routes(&value);
+        }
+        if let Some(value) = patch.wireguard_exit_dns {
+            self.config.wireguard_exit.dns = parse_csv_values(&value);
+        }
+        if let Some(value) = patch.wireguard_exit_mtu {
+            self.config.wireguard_exit.mtu = value;
+        }
+        if let Some(value) = patch.wireguard_exit_persistent_keepalive_secs {
+            self.config.wireguard_exit.persistent_keepalive_secs = value;
         }
         if let Some(value) = patch.magic_dns_suffix {
             self.config.magic_dns_suffix = value.trim().trim_matches('.').to_ascii_lowercase();
@@ -1633,6 +1685,18 @@ fn parse_advertised_routes(input: &str) -> Vec<String> {
     routes.sort();
     routes.dedup();
     routes
+}
+
+fn parse_csv_values(input: &str) -> Vec<String> {
+    let mut values = input
+        .split([',', '\n', ' ', '\t'])
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    values
 }
 
 fn short_pubkey(pubkey_hex: &str) -> String {

@@ -41,6 +41,16 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     private string _listenPort = "";
     private string _magicDnsSuffix = "";
     private string _advertisedRoutes = "";
+    private string _wireguardExitInterface = "";
+    private string _wireguardExitAddress = "";
+    private string _wireguardExitPrivateKey = "";
+    private string _wireguardExitPeerPublicKey = "";
+    private string _wireguardExitPeerPresharedKey = "";
+    private string _wireguardExitEndpoint = "";
+    private string _wireguardExitAllowedIps = "";
+    private string _wireguardExitDns = "";
+    private string _wireguardExitMtu = "";
+    private string _wireguardExitKeepalive = "";
     private string _updateStatus = "";
     private bool _updateChecking;
     private bool _updateAvailable;
@@ -70,6 +80,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         ToggleLanPairingCommand = new AsyncRelayCommand(_ => DispatchAsync(State.LanPairingActive ? NativeActions.StopLanPairing() : NativeActions.StartLanPairing(), "Pairing"));
         AddParticipantCommand = new AsyncRelayCommand(_ => AddParticipantAsync(), _ => !ActionInFlight && ActiveNetwork?.LocalIsAdmin == true && !string.IsNullOrWhiteSpace(ParticipantInput));
         SaveNodeCommand = new AsyncRelayCommand(_ => SaveNodeAsync(), _ => !ActionInFlight);
+        SaveWireGuardExitCommand = new AsyncRelayCommand(_ => SaveWireGuardExitAsync(), _ => !ActionInFlight);
         AddNetworkCommand = new AsyncRelayCommand(_ => AddNetworkAsync(), _ => !ActionInFlight && !string.IsNullOrWhiteSpace(NetworkNameInput));
         SaveNetworkNameCommand = new AsyncRelayCommand(_ => RenameActiveNetworkAsync(), _ => !ActionInFlight && ActiveNetwork?.LocalIsAdmin == true && !string.IsNullOrWhiteSpace(NetworkNameDraft));
         SaveNetworkMeshIdCommand = new AsyncRelayCommand(_ => SaveActiveNetworkMeshIdAsync(), _ => !ActionInFlight && ActiveNetwork?.LocalIsAdmin == true && !string.IsNullOrWhiteSpace(NetworkMeshIdDraft));
@@ -168,6 +179,16 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public string ListenPort { get => _listenPort; set => SetField(ref _listenPort, value); }
     public string MagicDnsSuffix { get => _magicDnsSuffix; set => SetField(ref _magicDnsSuffix, value); }
     public string AdvertisedRoutes { get => _advertisedRoutes; set => SetField(ref _advertisedRoutes, value); }
+    public string WireguardExitInterface { get => _wireguardExitInterface; set => SetField(ref _wireguardExitInterface, value); }
+    public string WireguardExitAddress { get => _wireguardExitAddress; set => SetField(ref _wireguardExitAddress, value); }
+    public string WireguardExitPrivateKey { get => _wireguardExitPrivateKey; set => SetField(ref _wireguardExitPrivateKey, value); }
+    public string WireguardExitPeerPublicKey { get => _wireguardExitPeerPublicKey; set => SetField(ref _wireguardExitPeerPublicKey, value); }
+    public string WireguardExitPeerPresharedKey { get => _wireguardExitPeerPresharedKey; set => SetField(ref _wireguardExitPeerPresharedKey, value); }
+    public string WireguardExitEndpoint { get => _wireguardExitEndpoint; set => SetField(ref _wireguardExitEndpoint, value); }
+    public string WireguardExitAllowedIps { get => _wireguardExitAllowedIps; set => SetField(ref _wireguardExitAllowedIps, value); }
+    public string WireguardExitDns { get => _wireguardExitDns; set => SetField(ref _wireguardExitDns, value); }
+    public string WireguardExitMtu { get => _wireguardExitMtu; set => SetField(ref _wireguardExitMtu, value); }
+    public string WireguardExitKeepalive { get => _wireguardExitKeepalive; set => SetField(ref _wireguardExitKeepalive, value); }
 
     public bool UpdateChecking
     {
@@ -243,6 +264,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public ICommand ToggleLanPairingCommand { get; }
     public ICommand AddParticipantCommand { get; }
     public ICommand SaveNodeCommand { get; }
+    public ICommand SaveWireGuardExitCommand { get; }
     public ICommand AddNetworkCommand { get; }
     public ICommand SaveNetworkNameCommand { get; }
     public ICommand SaveNetworkMeshIdCommand { get; }
@@ -283,6 +305,13 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         return DispatchAsync(
             NativeActions.UpdateSettings(new SettingsPatch { AdvertiseExitNode = enabled }),
             "Saving routing");
+    }
+
+    public Task SetWireGuardExitEnabledAsync(bool enabled)
+    {
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch { WireguardExitEnabled = enabled }),
+            "Saving WireGuard");
     }
 
     public Task SetExitNodeAsync(string npub)
@@ -529,6 +558,25 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         }), "Saving device");
     }
 
+    private Task SaveWireGuardExitAsync()
+    {
+        ushort? mtu = ushort.TryParse(WireguardExitMtu.Trim(), out var parsedMtu) ? parsedMtu : null;
+        ushort? keepalive = ushort.TryParse(WireguardExitKeepalive.Trim(), out var parsedKeepalive) ? parsedKeepalive : null;
+        return DispatchAsync(NativeActions.UpdateSettings(new SettingsPatch
+        {
+            WireguardExitInterface = WireguardExitInterface,
+            WireguardExitAddress = WireguardExitAddress,
+            WireguardExitPrivateKey = WireguardExitPrivateKey,
+            WireguardExitPeerPublicKey = WireguardExitPeerPublicKey,
+            WireguardExitPeerPresharedKey = WireguardExitPeerPresharedKey,
+            WireguardExitEndpoint = WireguardExitEndpoint,
+            WireguardExitAllowedIps = WireguardExitAllowedIps,
+            WireguardExitDns = WireguardExitDns,
+            WireguardExitMtu = mtu,
+            WireguardExitPersistentKeepaliveSecs = keepalive,
+        }), "Saving WireGuard");
+    }
+
     private void ApplyState(NativeAppState state, bool syncDrafts)
     {
         State = state;
@@ -548,6 +596,16 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         TunnelIp = state.TunnelIp;
         ListenPort = state.ListenPort.ToString();
         MagicDnsSuffix = state.MagicDnsSuffix;
+        WireguardExitInterface = state.WireguardExitInterface;
+        WireguardExitAddress = state.WireguardExitAddress;
+        WireguardExitPrivateKey = state.WireguardExitPrivateKey;
+        WireguardExitPeerPublicKey = state.WireguardExitPeerPublicKey;
+        WireguardExitPeerPresharedKey = state.WireguardExitPeerPresharedKey;
+        WireguardExitEndpoint = state.WireguardExitEndpoint;
+        WireguardExitAllowedIps = state.WireguardExitAllowedIps;
+        WireguardExitDns = state.WireguardExitDns;
+        WireguardExitMtu = state.WireguardExitMtu.ToString();
+        WireguardExitKeepalive = state.WireguardExitPersistentKeepaliveSecs.ToString();
         NetworkNameDraft = active?.Name ?? "";
         NetworkMeshIdDraft = active?.NetworkId ?? "";
     }

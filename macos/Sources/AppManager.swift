@@ -272,6 +272,36 @@ final class AppManager: ObservableObject {
         dispatch(.updateSettings(patch: settingsPatch(advertiseExitNode: enabled)), status: "Saving routing")
     }
 
+    func setWireGuardExitEnabled(_ enabled: Bool) {
+        dispatch(.updateSettings(patch: settingsPatch(wireguardExitEnabled: enabled)), status: "Saving WireGuard")
+    }
+
+    func saveWireGuardExitSettings(
+        interface: String,
+        address: String,
+        privateKey: String,
+        peerPublicKey: String,
+        peerPresharedKey: String,
+        endpoint: String,
+        allowedIps: String,
+        dns: String,
+        mtu: String,
+        keepalive: String
+    ) {
+        dispatch(.updateSettings(patch: settingsPatch(
+            wireguardExitInterface: interface,
+            wireguardExitAddress: address,
+            wireguardExitPrivateKey: privateKey,
+            wireguardExitPeerPublicKey: peerPublicKey,
+            wireguardExitPeerPresharedKey: peerPresharedKey,
+            wireguardExitEndpoint: endpoint,
+            wireguardExitAllowedIps: allowedIps,
+            wireguardExitDns: dns,
+            wireguardExitMtu: UInt16(mtu.trimmingCharacters(in: .whitespacesAndNewlines)),
+            wireguardExitPersistentKeepaliveSecs: UInt16(keepalive.trimmingCharacters(in: .whitespacesAndNewlines))
+        )), status: "Saving WireGuard")
+    }
+
     func setAutoconnect(_ enabled: Bool) {
         dispatch(.updateSettings(patch: settingsPatch(autoconnect: enabled)), status: "Saving VPN option")
     }
@@ -946,6 +976,17 @@ func settingsPatch(
     exitNode: String? = nil,
     advertiseExitNode: Bool? = nil,
     advertisedRoutes: String? = nil,
+    wireguardExitEnabled: Bool? = nil,
+    wireguardExitInterface: String? = nil,
+    wireguardExitAddress: String? = nil,
+    wireguardExitPrivateKey: String? = nil,
+    wireguardExitPeerPublicKey: String? = nil,
+    wireguardExitPeerPresharedKey: String? = nil,
+    wireguardExitEndpoint: String? = nil,
+    wireguardExitAllowedIps: String? = nil,
+    wireguardExitDns: String? = nil,
+    wireguardExitMtu: UInt16? = nil,
+    wireguardExitPersistentKeepaliveSecs: UInt16? = nil,
     magicDnsSuffix: String? = nil,
     autoconnect: Bool? = nil,
     launchOnStartup: Bool? = nil,
@@ -959,6 +1000,17 @@ func settingsPatch(
         exitNode: exitNode,
         advertiseExitNode: advertiseExitNode,
         advertisedRoutes: advertisedRoutes,
+        wireguardExitEnabled: wireguardExitEnabled,
+        wireguardExitInterface: wireguardExitInterface,
+        wireguardExitAddress: wireguardExitAddress,
+        wireguardExitPrivateKey: wireguardExitPrivateKey,
+        wireguardExitPeerPublicKey: wireguardExitPeerPublicKey,
+        wireguardExitPeerPresharedKey: wireguardExitPeerPresharedKey,
+        wireguardExitEndpoint: wireguardExitEndpoint,
+        wireguardExitAllowedIps: wireguardExitAllowedIps,
+        wireguardExitDns: wireguardExitDns,
+        wireguardExitMtu: wireguardExitMtu,
+        wireguardExitPersistentKeepaliveSecs: wireguardExitPersistentKeepaliveSecs,
         magicDnsSuffix: magicDnsSuffix,
         autoconnect: autoconnect,
         launchOnStartup: launchOnStartup,

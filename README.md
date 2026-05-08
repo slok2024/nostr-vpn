@@ -274,6 +274,21 @@ nvpn set --advertise-exit-node true
 nvpn set --exit-node npub1...peer
 ```
 
+Use a WireGuard upstream for the local device when it is offering exit-node service:
+
+```bash
+nvpn set \
+  --advertise-exit-node true \
+  --wireguard-exit-enabled true \
+  --wireguard-exit-address 10.200.0.2/32 \
+  --wireguard-exit-private-key "$WG_PRIVATE_KEY" \
+  --wireguard-exit-peer-public-key "$WG_SERVER_PUBLIC_KEY" \
+  --wireguard-exit-endpoint 198.51.100.20:51830 \
+  --wireguard-exit-allowed-ips 0.0.0.0/0
+```
+
+Members still see this as the same FIPS exit node; WireGuard is only the provider's outbound leg.
+
 Clear exit-node selection:
 
 ```bash
@@ -343,6 +358,8 @@ Docker e2e scripts under [`scripts/`](scripts):
   Verifies daemon mode across separate Docker NATs, public endpoint discovery, handshake success, and ping.
 - `./scripts/e2e-exit-node-docker.sh`
   Verifies exit-node advertisement, selection, tunnel traffic to the chosen exit node, and default-route traffic crossing the exit path to an external target. Set `NVPN_EXIT_NODE_E2E_PUBLIC_IP=9.9.9.9` (or another reachable public IP) to also prove a real internet hop routes through the tunnel.
+- `./scripts/e2e-wireguard-exit-node-docker.sh`
+  Verifies that a FIPS exit-node provider can route forwarded member traffic through its WireGuard upstream without moving the provider host default route.
 These flows are Linux-oriented because they require real tunnel devices and container networking privileges.
 
 ## Desktop update end-to-end coverage

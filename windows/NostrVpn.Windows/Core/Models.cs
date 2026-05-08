@@ -40,6 +40,18 @@ public sealed class NativeAppState
     public bool AdvertiseExitNode { get; set; }
     public List<string> AdvertisedRoutes { get; set; } = [];
     public List<string> EffectiveAdvertisedRoutes { get; set; } = [];
+    public bool WireguardExitEnabled { get; set; }
+    public bool WireguardExitConfigured { get; set; }
+    public string WireguardExitInterface { get; set; } = "";
+    public string WireguardExitAddress { get; set; } = "";
+    public string WireguardExitPrivateKey { get; set; } = "";
+    public string WireguardExitPeerPublicKey { get; set; } = "";
+    public string WireguardExitPeerPresharedKey { get; set; } = "";
+    public string WireguardExitEndpoint { get; set; } = "";
+    public string WireguardExitAllowedIps { get; set; } = "";
+    public string WireguardExitDns { get; set; } = "";
+    public ushort WireguardExitMtu { get; set; }
+    public ushort WireguardExitPersistentKeepaliveSecs { get; set; }
     public string MagicDnsSuffix { get; set; } = "";
     public string MagicDnsStatus { get; set; } = "";
     public bool Autoconnect { get; set; }

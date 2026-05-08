@@ -21,6 +21,25 @@ services:
       internet:
         ipv4_address: 198.51.100.100
 
+  wireguard-upstream:
+    build:
+      context: .
+      dockerfile: Dockerfile.e2e
+      additional_contexts:
+        fips: ../fips
+    entrypoint: ["sleep", "infinity"]
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.forwarding=1
+      - net.ipv4.conf.default.forwarding=1
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      internet:
+        ipv4_address: 198.51.100.20
+
   node-a:
     build:
       context: .

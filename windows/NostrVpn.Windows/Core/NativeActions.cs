@@ -38,6 +38,17 @@ public sealed class SettingsPatch
     public string? ExitNode { get; set; }
     public bool? AdvertiseExitNode { get; set; }
     public string? AdvertisedRoutes { get; set; }
+    public bool? WireguardExitEnabled { get; set; }
+    public string? WireguardExitInterface { get; set; }
+    public string? WireguardExitAddress { get; set; }
+    public string? WireguardExitPrivateKey { get; set; }
+    public string? WireguardExitPeerPublicKey { get; set; }
+    public string? WireguardExitPeerPresharedKey { get; set; }
+    public string? WireguardExitEndpoint { get; set; }
+    public string? WireguardExitAllowedIps { get; set; }
+    public string? WireguardExitDns { get; set; }
+    public ushort? WireguardExitMtu { get; set; }
+    public ushort? WireguardExitPersistentKeepaliveSecs { get; set; }
     public string? MagicDnsSuffix { get; set; }
     public bool? Autoconnect { get; set; }
     public bool? LaunchOnStartup { get; set; }
