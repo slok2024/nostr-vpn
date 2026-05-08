@@ -1,6 +1,7 @@
 package org.nostrvpn.app
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +26,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
@@ -49,6 +51,7 @@ import org.json.JSONObject
 import org.nostrvpn.app.core.AppState
 import org.nostrvpn.app.core.NativeActions
 import org.nostrvpn.app.core.NetworkState
+import org.nostrvpn.app.core.ParticipantState
 import org.nostrvpn.app.core.activeNetwork
 
 private enum class Page(val title: String) {
@@ -85,6 +88,19 @@ internal fun NostrVpnApp(
     val network = state.activeNetwork
     Scaffold(
         containerColor = Color(0xFFF6F7F8),
+        topBar = {
+            MobileTopBar(
+                title = page.title,
+                state = state,
+                network = network,
+                dispatch = dispatch,
+                onAddDevice = if (page == Page.Devices) {
+                    { showAddDevice = true }
+                } else {
+                    null
+                },
+            )
+        },
         bottomBar = {
             NavigationBar(containerColor = Color.White) {
                 Page.entries.forEach { item ->
@@ -105,12 +121,11 @@ internal fun NostrVpnApp(
             contentPadding = PaddingValues(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item { Hero(state, network, dispatch) }
             if (state.error.isNotBlank()) {
                 item { Notice(state.error) }
             }
             when (page) {
-                Page.Devices -> devicesPage(state, network, dispatch) { showAddDevice = true }
+                Page.Devices -> devicesPage(state, network, dispatch)
                 Page.ExitNodes -> exitNodesPage(state, network, dispatch)
                 Page.Settings -> settingsPage(state, network, dispatch)
             }
@@ -123,6 +138,69 @@ internal fun NostrVpnApp(
             qrJson = qrJson,
             dispatch = dispatch,
             onDismiss = { showAddDevice = false },
+        )
+    }
+}
+
+@Composable
+private fun MobileTopBar(
+    title: String,
+    state: AppState,
+    network: NetworkState?,
+    dispatch: (JSONObject) -> Unit,
+    onAddDevice: (() -> Unit)?,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.White)
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text(networkTitle(network), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (onAddDevice != null) {
+            FilledIconButton(onClick = onAddDevice) {
+                PlusIcon()
+            }
+            Spacer(Modifier.width(10.dp))
+        }
+        Switch(
+            checked = state.vpnEnabled,
+            enabled = state.vpnControlSupported,
+            onCheckedChange = { enabled ->
+                dispatch(
+                    if (enabled) {
+                        NativeActions.connectVpn()
+                    } else {
+                        NativeActions.disconnectVpn()
+                    },
+                )
+            },
+        )
+    }
+}
+
+@Composable
+private fun PlusIcon() {
+    Canvas(Modifier.size(18.dp)) {
+        val strokeWidth = 2.6.dp.toPx()
+        val center = size.width / 2f
+        drawLine(
+            Color.White,
+            Offset(center, 2.dp.toPx()),
+            Offset(center, size.height - 2.dp.toPx()),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            Color.White,
+            Offset(2.dp.toPx(), center),
+            Offset(size.width - 2.dp.toPx(), center),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round,
         )
     }
 }
@@ -177,30 +255,14 @@ private fun androidx.compose.foundation.lazy.LazyListScope.devicesPage(
     state: AppState,
     network: NetworkState?,
     dispatch: (JSONObject) -> Unit,
-    onAddDevice: () -> Unit,
 ) {
-    item {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "Devices",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
-            FilledIconButton(onClick = onAddDevice) {
-                Text("+")
-            }
-        }
-    }
     if (network == null) {
         item { EmptyCard("No network") }
         return
     }
-    items(network.participants, key = { it.pubkeyHex.ifBlank { it.npub } }) { participant ->
-        ParticipantRow(participant, isSelf = participant.npub == state.ownNpub && state.ownNpub.isNotBlank())
+    item { DeviceListHeader(state, network) }
+    items(sortedParticipants(network.participants, state), key = { it.pubkeyHex.ifBlank { it.npub } }) { participant ->
+        ParticipantRow(state, participant)
     }
     items(network.inboundJoinRequests, key = { it.requesterNpub }) { request ->
         AppCard {
@@ -222,6 +284,42 @@ private fun androidx.compose.foundation.lazy.LazyListScope.devicesPage(
             }
         }
     }
+}
+
+@Composable
+private fun DeviceListHeader(
+    state: AppState,
+    network: NetworkState,
+) {
+    Column {
+        Text(networkTitle(network), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(deviceCountText(state), color = Muted, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+private fun sortedParticipants(participants: List<ParticipantState>, state: AppState): List<ParticipantState> =
+    participants.sortedWith(
+        compareByDescending<ParticipantState> { it.isSelf(state) }
+            .thenByDescending { it.reachable }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.deviceName(state) },
+    )
+
+private fun ParticipantState.isSelf(state: AppState): Boolean =
+    (state.ownNpub.isNotBlank() && npub == state.ownNpub) || meshState == "local"
+
+private fun ParticipantState.deviceName(state: AppState): String {
+    if (isSelf(state) && state.nodeName.isNotBlank()) return state.nodeName
+    if (magicDnsName.isNotBlank()) return magicDnsName
+    if (alias.isNotBlank()) return alias
+    if (magicDnsAlias.isNotBlank()) return magicDnsAlias
+    if (npub.length <= 19) return npub.ifBlank { "Device" }
+    return "${npub.take(12)}...${npub.takeLast(6)}"
+}
+
+private fun deviceCountText(state: AppState): String {
+    if (state.expectedPeerCount == 0L) return "This device"
+    val word = if (state.expectedPeerCount == 1L) "device" else "devices"
+    return "${state.connectedPeerCount} online - ${state.expectedPeerCount} $word"
 }
 
 @Composable

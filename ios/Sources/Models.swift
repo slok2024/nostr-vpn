@@ -152,6 +152,7 @@ struct ParticipantState: Decodable, Identifiable {
     var fipsBytesSent: UInt64 = 0
     var fipsBytesRecv: UInt64 = 0
     var state = ""
+    var meshState = ""
     var statusText = ""
     var lastSeenText = ""
 
@@ -166,7 +167,7 @@ struct ParticipantState: Decodable, Identifiable {
         case isAdmin, reachable, offersExitNode
         case fipsEndpointNpub, fipsTransportAddr, fipsTransportType, fipsSrttMs
         case fipsPacketsSent, fipsPacketsRecv, fipsBytesSent, fipsBytesRecv
-        case state, statusText, lastSeenText, lastSignalText
+        case state, meshState, statusText, lastSeenText, lastSignalText
     }
 
     init() {}
@@ -191,6 +192,7 @@ struct ParticipantState: Decodable, Identifiable {
         fipsBytesSent = container.uint64(.fipsBytesSent)
         fipsBytesRecv = container.uint64(.fipsBytesRecv)
         state = container.string(.state)
+        meshState = container.string(.meshState)
         statusText = container.string(.statusText)
         lastSeenText = container.string(.lastSeenText, default: container.string(.lastSignalText))
     }

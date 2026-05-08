@@ -23,7 +23,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -47,69 +46,20 @@ import org.nostrvpn.app.core.NativeActions
 import org.nostrvpn.app.core.NetworkState
 import org.nostrvpn.app.core.ParticipantState
 
-@Composable
-internal fun Hero(state: AppState, network: NetworkState?, dispatch: (JSONObject) -> Unit) {
-    AppCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(if (state.vpnActive) Ok else Color(0xFF9CA3AF)),
-            )
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    networkTitle(network),
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(state.vpnStatus, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    peerSummary(state),
-                    color = Muted,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            Switch(
-                checked = state.vpnEnabled,
-                enabled = state.vpnControlSupported,
-                onCheckedChange = { enabled ->
-                    dispatch(
-                        if (enabled) {
-                            NativeActions.connectVpn()
-                        } else {
-                            NativeActions.disconnectVpn()
-                        },
-                    )
-                },
-            )
-        }
-    }
-}
-
-private fun networkTitle(network: NetworkState?): String =
+internal fun networkTitle(network: NetworkState?): String =
     network?.name?.ifBlank { "Private network" } ?: "Private network"
 
-private fun peerSummary(state: AppState): String {
-    if (state.expectedPeerCount == 0L) {
-        return "No peers yet"
-    }
-    return "${state.connectedPeerCount} of ${state.expectedPeerCount} connected"
-}
-
 @Composable
-internal fun ParticipantRow(participant: ParticipantState, isSelf: Boolean = false) {
+internal fun ParticipantRow(state: AppState, participant: ParticipantState) {
+    val isSelf = participant.isSelf(state)
     AppCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Dot(selected = participant.reachable)
+            Dot(selected = if (isSelf) state.vpnActive else participant.reachable)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        participant.magicDnsName.ifBlank { participant.alias },
+                        participant.displayName(state),
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -118,8 +68,8 @@ internal fun ParticipantRow(participant: ParticipantState, isSelf: Boolean = fal
                     if (participant.isAdmin) Pill("Admin", Color(0xFFF5F3FF), Accent)
                     if (participant.offersExitNode) Pill("Exit", Color(0xFFFFF7ED), Color(0xFFA16207))
                 }
-                Text(participant.tunnelIp, color = Muted, maxLines = 1)
-                Text(participant.statusText, color = Muted, style = MaterialTheme.typography.bodySmall)
+                Text(participant.subtitle(isSelf), color = Muted, maxLines = 1)
+                Text(participant.statusLabel(state), color = Muted, style = MaterialTheme.typography.bodySmall)
             }
             CopyButton(participant.npub)
         }
@@ -420,3 +370,40 @@ internal fun Pill(text: String, background: Color, foreground: Color) {
 internal val Accent = Color(0xFF7C3AED)
 internal val Ok = Color(0xFF16A34A)
 internal val Muted = Color(0xFF68717C)
+
+private fun ParticipantState.isSelf(state: AppState): Boolean =
+    (state.ownNpub.isNotBlank() && npub == state.ownNpub) || meshState == "local"
+
+private fun ParticipantState.displayName(state: AppState): String {
+    if (isSelf(state) && state.nodeName.isNotBlank()) return state.nodeName
+    if (magicDnsName.isNotBlank()) return magicDnsName
+    if (alias.isNotBlank()) return alias
+    if (magicDnsAlias.isNotBlank()) return magicDnsAlias
+    return npub.shortNpub()
+}
+
+private fun ParticipantState.subtitle(isSelf: Boolean): String {
+    val ip = tunnelIp.substringBefore("/")
+    return if (isSelf) {
+        if (ip.isBlank()) "This device" else "This device - $ip"
+    } else {
+        ip
+    }
+}
+
+private fun ParticipantState.statusLabel(appState: AppState): String {
+    if (isSelf(appState)) return if (appState.vpnEnabled) "Self" else "Off"
+    if (statusText.isNotBlank()) return statusText
+    return when (state) {
+        "local", "online", "present" -> "Online"
+        "pending" -> "Connecting"
+        "offline", "absent", "off" -> "Offline"
+        else -> "Unknown"
+    }
+}
+
+private fun String.shortNpub(): String {
+    if (isBlank()) return "Device"
+    if (length <= 19) return this
+    return "${take(12)}...${takeLast(6)}"
+}

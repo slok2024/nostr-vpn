@@ -34,12 +34,12 @@ private struct DevicesPage: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
-                HeroCard(model: model)
                 if !model.state.error.isEmpty || !model.statusMessage.isEmpty {
                     NoticeCard(text: model.state.error.isEmpty ? model.statusMessage : model.state.error)
                 }
                 if let network = model.activeNetwork {
-                    ForEach(network.participants) { participant in
+                    DeviceListHeader(state: model.state, network: network)
+                    ForEach(sortedParticipants(network.participants, state: model.state)) { participant in
                         ParticipantRow(model: model, participant: participant)
                     }
                     ForEach(network.inboundJoinRequests) { request in
@@ -62,12 +62,16 @@ private struct DevicesPage: View {
         .background(AppColors.background)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    addDevicePresented = true
-                } label: {
-                    Image(systemName: "plus")
+                HStack(spacing: 12) {
+                    Button {
+                        addDevicePresented = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("Add device")
+
+                    ToolbarVpnSwitch(model: model)
                 }
-                .accessibilityLabel("Add device")
             }
         }
         .sheet(isPresented: $addDevicePresented) {
@@ -85,6 +89,65 @@ private struct DevicesPage: View {
         }
     }
 
+}
+
+private struct ToolbarVpnSwitch: View {
+    @ObservedObject var model: AppModel
+
+    private var enabled: Bool {
+        !model.actionInFlight && model.state.vpnControlSupported
+    }
+
+    var body: some View {
+        Button {
+            model.toggleVpn()
+        } label: {
+            ZStack(alignment: model.state.vpnEnabled ? .trailing : .leading) {
+                Capsule()
+                    .fill(model.state.vpnEnabled ? AppColors.accent : Color.gray.opacity(0.24))
+                    .frame(width: 48, height: 28)
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 24, height: 24)
+                    .shadow(color: .black.opacity(0.22), radius: 1, y: 1)
+                    .padding(2)
+            }
+            .frame(width: 48, height: 28)
+            .contentShape(Capsule())
+            .opacity(enabled ? 1 : 0.55)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .accessibilityLabel(model.state.vpnEnabled ? "Turn VPN off" : "Turn VPN on")
+        .accessibilityValue(model.state.vpnEnabled ? "On" : "Off")
+    }
+}
+
+private struct DeviceListHeader: View {
+    let state: AppState
+    let network: NetworkState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(network.displayName)
+                .font(.headline)
+                .lineLimit(1)
+            Text(deviceCountText)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 2)
+    }
+
+    private var deviceCountText: String {
+        if state.expectedPeerCount == 0 {
+            return "This device"
+        }
+        let word = state.expectedPeerCount == 1 ? "device" : "devices"
+        return "\(state.connectedPeerCount) online - \(state.expectedPeerCount) \(word)"
+    }
 }
 
 private struct AddDeviceSheet: View {
@@ -197,62 +260,6 @@ private struct SettingsPage: View {
     }
 }
 
-private struct HeroCard: View {
-    @ObservedObject var model: AppModel
-
-    var body: some View {
-        AppCard {
-            HStack(spacing: 14) {
-                Circle()
-                    .fill(model.state.vpnActive ? AppColors.ok : Color.gray.opacity(0.35))
-                    .frame(width: 12, height: 12)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(heroNetworkTitle)
-                        .font(.title2.bold())
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .layoutPriority(1)
-                    Text(model.state.vpnStatus)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Text(peerSummary)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { model.state.vpnEnabled },
-                        set: { isEnabled in
-                            if isEnabled != model.state.vpnEnabled {
-                                model.toggleVpn()
-                            }
-                        }
-                    )
-                )
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .disabled(model.actionInFlight || !model.state.vpnControlSupported)
-            }
-        }
-    }
-
-    private var peerSummary: String {
-        if model.state.expectedPeerCount == 0 {
-            return "No peers yet"
-        }
-        return "\(model.state.connectedPeerCount) of \(model.state.expectedPeerCount) connected"
-    }
-
-    private var heroNetworkTitle: String {
-        if let networkName = model.activeNetwork?.displayName, !networkName.isEmpty {
-            return networkName
-        }
-        return "Private network"
-    }
-}
-
 private struct ParticipantRow: View {
     @ObservedObject var model: AppModel
     let participant: ParticipantState
@@ -261,26 +268,26 @@ private struct ParticipantRow: View {
         AppCard {
             HStack(spacing: 12) {
                 Circle()
-                    .fill(participant.reachable ? AppColors.ok : Color.gray.opacity(0.35))
+                    .fill(connectivityTint(participant, state: model.state))
                     .frame(width: 12, height: 12)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                        Text(participant.displayName)
+                        Text(deviceName(participant, state: model.state))
                             .font(.headline)
                             .lineLimit(1)
                         if participant.isAdmin {
                             Pill("Admin", tint: AppColors.accent)
                         }
-                        if participant.npub == model.state.ownNpub && !model.state.ownNpub.isEmpty {
+                        if isSelf(participant, state: model.state) {
                             Pill("Self", tint: AppColors.ok)
                         }
                         if participant.offersExitNode {
                             Pill("Exit", tint: .orange)
                         }
                     }
-                    Text(cleanIp(participant.tunnelIp))
+                    Text(deviceSubtitle(participant, state: model.state))
                         .foregroundStyle(.secondary)
-                    Text(participant.statusText)
+                    Text(deviceStatus(participant, state: model.state))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -645,4 +652,86 @@ private enum AppColors {
 
 private func cleanIp(_ value: String) -> String {
     value.split(separator: "/").first.map(String.init) ?? value
+}
+
+private func sortedParticipants(_ participants: [ParticipantState], state: AppState) -> [ParticipantState] {
+    participants.sorted { lhs, rhs in
+        let lhsSelf = isSelf(lhs, state: state)
+        let rhsSelf = isSelf(rhs, state: state)
+        if lhsSelf != rhsSelf {
+            return lhsSelf
+        }
+        if lhs.reachable != rhs.reachable {
+            return lhs.reachable && !rhs.reachable
+        }
+        return deviceName(lhs, state: state).localizedCaseInsensitiveCompare(deviceName(rhs, state: state)) == .orderedAscending
+    }
+}
+
+private func isSelf(_ participant: ParticipantState, state: AppState) -> Bool {
+    (!state.ownNpub.isEmpty && participant.npub == state.ownNpub) || participant.meshState == "local"
+}
+
+private func deviceName(_ participant: ParticipantState, state: AppState) -> String {
+    if isSelf(participant, state: state), !state.nodeName.isEmpty {
+        return state.nodeName
+    }
+    if !participant.magicDnsName.isEmpty {
+        return participant.magicDnsName
+    }
+    if !participant.alias.isEmpty {
+        return participant.alias
+    }
+    if !participant.magicDnsAlias.isEmpty {
+        return participant.magicDnsAlias
+    }
+    return short(participant.npub, prefix: 12, suffix: 6)
+}
+
+private func deviceSubtitle(_ participant: ParticipantState, state: AppState) -> String {
+    let ip = cleanIp(participant.tunnelIp)
+    if isSelf(participant, state: state) {
+        return ip.isEmpty ? "This device" : "This device - \(ip)"
+    }
+    return ip
+}
+
+private func deviceStatus(_ participant: ParticipantState, state: AppState) -> String {
+    if isSelf(participant, state: state) {
+        return state.vpnEnabled ? "Self" : "Off"
+    }
+    if !participant.statusText.isEmpty {
+        return participant.statusText
+    }
+    switch participant.state {
+    case "local", "online", "present":
+        return "Online"
+    case "pending":
+        return "Connecting"
+    case "offline", "absent", "off":
+        return "Offline"
+    default:
+        return "Unknown"
+    }
+}
+
+private func connectivityTint(_ participant: ParticipantState, state: AppState) -> Color {
+    if isSelf(participant, state: state) {
+        return state.vpnActive ? AppColors.ok : Color.gray.opacity(0.35)
+    }
+    switch participant.state {
+    case "local", "online", "present":
+        return AppColors.ok
+    case "pending":
+        return .orange
+    default:
+        return Color.gray.opacity(0.35)
+    }
+}
+
+private func short(_ value: String, prefix: Int, suffix: Int) -> String {
+    guard value.count > prefix + suffix + 1 else {
+        return value.isEmpty ? "Device" : value
+    }
+    return "\(value.prefix(prefix))...\(value.suffix(suffix))"
 }

@@ -71,6 +71,8 @@ data class ParticipantState(
     val fipsPacketsRecv: Long = 0,
     val fipsBytesSent: Long = 0,
     val fipsBytesRecv: Long = 0,
+    val state: String = "",
+    val meshState: String = "",
     val statusText: String = "",
     val lastSeenText: String = "",
 )
@@ -171,6 +173,8 @@ private fun JSONArray?.toParticipantList(): List<ParticipantState> = mapObjects 
         fipsPacketsRecv = item.optLong("fipsPacketsRecv"),
         fipsBytesSent = item.optLong("fipsBytesSent"),
         fipsBytesRecv = item.optLong("fipsBytesRecv"),
+        state = item.optString("state"),
+        meshState = item.optString("meshState"),
         statusText = item.optString("statusText"),
         lastSeenText = item.optString("lastSeenText", item.optString("lastSignalText")),
     )

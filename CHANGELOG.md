@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Android and iOS now show the active network name outside the device rows, keep VPN on/off in the top bar, and list this device as a normal participant row instead of treating the first peer as a hero.
+
 ## 4.0.0 - 2026-05-07
 
 Changes since `0.3.23` on 2026-05-05.
@@ -19,7 +23,7 @@ Changes since `0.3.23` on 2026-05-05.
 
 - macOS now uses a Tailscale-style three-column desktop layout with a toolbar VPN switch, sidebar settings, device detail actions, and daemon-level desired VPN state.
 - Linux and Windows native shells were brought closer to macOS parity, including tray/deep-link/update/service behavior.
-- Mobile apps now use switches for VPN on/off, keep device sharing behind the Devices plus button, and represent the local device in the hero instead of duplicating it in the peer list.
+- Mobile apps now use switches for VPN on/off and keep device sharing behind the Devices plus button.
 
 ### Fixed
 
