@@ -28,7 +28,6 @@ struct RootView: View {
     @State private var selectedDevicePubkeyHex: String?
     @State private var networkNameDrafts: [String: String] = [:]
     @State private var participantAliasDrafts: [String: String] = [:]
-    @State private var manageDevicesExpanded = false
     @State private var savedNetworksExpanded = false
     @State private var advancedSettingsExpanded = false
     @State private var diagnosticsExpanded = false
@@ -275,10 +274,6 @@ struct RootView: View {
                     }
 
                     joinRequestsSection(network)
-
-                    if network.localIsAdmin {
-                        manageDevicesSection(network)
-                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 24)
@@ -335,6 +330,9 @@ struct RootView: View {
             if let participant = selectedParticipant(in: network) {
                 VStack(alignment: .leading, spacing: 22) {
                     deviceDetailHeader(participant, network: network)
+                    if network.localIsAdmin {
+                        deviceAdminSection(participant, network: network)
+                    }
                     deviceAddressesSection(participant)
                     deviceConnectivitySection(participant)
                 }
@@ -370,7 +368,44 @@ struct RootView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            if network.localIsAdmin && !isSelf(participant) {
+        }
+    }
+
+    private func deviceAdminSection(_ participant: NativeParticipantState, network: NativeNetworkState) -> some View {
+        surface {
+            sectionHeader("Admin Actions", systemImage: "person.badge.key")
+
+            HStack(spacing: 8) {
+                TextField("Device ID", text: $participantInput)
+                    .onSubmit(addParticipantToActiveNetwork)
+                TextField("Name", text: $participantAliasInput)
+                    .frame(maxWidth: 160)
+                    .onSubmit(addParticipantToActiveNetwork)
+                Button {
+                    addParticipantToActiveNetwork()
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
+                .disabled(participantInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || manager.actionInFlight)
+            }
+
+            if !isSelf(participant) {
+                Divider()
+
+                HStack(spacing: 8) {
+                    label("Name")
+                    TextField("Name", text: participantAliasBinding(participant))
+                    Button {
+                        manager.setParticipantAlias(
+                            npub: participant.npub,
+                            alias: participantAliasDrafts[participant.pubkeyHex] ?? participant.magicDnsAlias
+                        )
+                    } label: {
+                        Label("Save", systemImage: "checkmark")
+                    }
+                    .disabled(manager.actionInFlight)
+                }
+
                 deviceActionButtons(participant, network: network)
             }
         }
@@ -454,62 +489,6 @@ struct RootView: View {
             }
         }
         .padding(.vertical, 3)
-    }
-
-    private func manageDevicesSection(_ network: NativeNetworkState) -> some View {
-        disclosureSection(
-            title: "Manage Devices",
-            systemImage: "slider.horizontal.3",
-            isExpanded: $manageDevicesExpanded,
-            font: .subheadline.weight(.medium)
-        ) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    TextField("Device ID", text: $participantInput)
-                        .onSubmit(addParticipantToActiveNetwork)
-                    TextField("Name", text: $participantAliasInput)
-                        .frame(maxWidth: 160)
-                        .onSubmit(addParticipantToActiveNetwork)
-                    Button {
-                        addParticipantToActiveNetwork()
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    .disabled(participantInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || manager.actionInFlight)
-                }
-
-                ForEach(network.participants, id: \.pubkeyHex) { participant in
-                    HStack(spacing: 8) {
-                        Text(deviceName(participant))
-                            .frame(width: 150, alignment: .leading)
-                            .lineLimit(1)
-                        TextField("Name", text: participantAliasBinding(participant))
-                        Button {
-                            manager.setParticipantAlias(
-                                npub: participant.npub,
-                                alias: participantAliasDrafts[participant.pubkeyHex] ?? participant.magicDnsAlias
-                            )
-                        } label: {
-                            Image(systemName: "checkmark")
-                        }
-                        .disabled(manager.actionInFlight)
-                        Button {
-                            manager.toggleAdmin(networkId: network.id, participant: participant)
-                        } label: {
-                            Image(systemName: participant.isAdmin ? "star.fill" : "star")
-                        }
-                        .disabled(manager.actionInFlight)
-                        Button(role: .destructive) {
-                            manager.removeParticipant(networkId: network.id, npub: participant.npub)
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .disabled(isSelf(participant) || manager.actionInFlight)
-                    }
-                }
-            }
-            .padding(.top, 8)
-        }
     }
 
     @ViewBuilder
