@@ -71,7 +71,10 @@ struct RootView: View {
     }
 
     private var updateStripe: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.secondary)
             Text(updateStripeText)
                 .font(.callout)
                 .foregroundStyle(.primary)
@@ -80,18 +83,23 @@ struct RootView: View {
             Spacer(minLength: 12)
             Toggle("Install automatically", isOn: $manager.autoInstallUpdates)
                 .toggleStyle(.checkbox)
-                .font(.callout)
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Button {
                 manager.installUpdate()
             } label: {
-                Text(manager.updateInstalling ? "Installing" : "Install")
+                Text(manager.updateInstalling ? "Installing…" : "Install")
             }
+            .controlSize(.small)
             .disabled(!manager.updateInstallEnabled)
         }
         .padding(.leading, 104)
         .padding(.trailing, 18)
-        .frame(minHeight: 42)
-        .background(Color.accentColor.opacity(0.12))
+        .padding(.vertical, 6)
+        .background(Color(nsColor: .underPageBackgroundColor))
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
     }
 
     private var updateStripeText: String {

@@ -2936,9 +2936,13 @@ const CSS: &str = r#"
 }
 
 .nvpn-update-stripe {
-    padding: 10px 16px;
-    background: alpha(#3584e4, 0.12);
+    padding: 6px 16px;
+    background: alpha(@window_fg_color, 0.05);
     box-shadow: inset 0 -1px 0 alpha(@window_fg_color, 0.08);
+}
+
+.nvpn-update-stripe label {
+    font-size: 0.95em;
 }
 
 .nvpn-hero {
