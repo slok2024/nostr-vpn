@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.8 - 2026-05-09
+
+### Changed
+
+- Bumped fips-endpoint to `6ce3bbc` to swap the AEAD from chacha20poly1305 (RustCrypto soft backend, ~600–800 MB/s/core on aarch64 because the chacha20 crate has no NEON path) to ring 0.17 (BoringSSL ChaCha20-Poly1305 with hand-tuned NEON on aarch64 and AVX2/AVX-512 on x86_64). Same wire format — fips-core's 1091 tests including IK + XK handshakes and the 100-node session test all pass byte-for-byte. ring is already transitively in the dep tree via rustls so no compile/link cost added.
+- Bumped fips-endpoint to `9ca1e8b` to expose an additive off-task encrypt/decrypt API on `CipherState` and `NoiseSession` (`encrypt_with_counter[_and_aad]`, `cipher_clone`, `take_send_counter`, `accept_replay`) that lays the groundwork for a future parallel-worker pipelined dispatcher. All additive — zero behavior change on the existing rx/tx paths.
+- Docker e2e bench impact (DURATION=10, identical hardware before/after):
+  - 2-node direct (A↔B): TCP 1-stream 437 → 1097 Mbps (2.51×); TCP 4-stream 439 → 1109 Mbps (2.53×); TCP 8-stream 445 → 1069 Mbps (2.40×); UDP @1000 Mbit offered 599/40% loss → 1000 Mbps lossless; ping under load 0.63 → 0.71 ms.
+  - 3-node forced transit (A → C → B): TCP 1-stream 438 → 1019 Mbps (2.33×); TCP 4-stream 421 → 982 Mbps; TCP 8-stream 443 → 1031 Mbps; UDP @1000 Mbit 475/52% loss → 1000 Mbps lossless; ping-under-load tail 215 → 3.6 ms max (~10× — the relay was crypto-bound, so once AEAD is NEON the queue stops accumulating).
+- Cumulative trajectory from session start: TCP single-stream 1.57 → 1097 Mbps (700×); ping under load 456 → 0.71 ms (640×).
+
+### Added
+
+- `scripts/sync-versions.mjs` propagates the `[workspace.package].version` in `/Cargo.toml` to every other version-bearing file (linux/Cargo.toml, macos/project.yml, ios/project.yml, android/app/build.gradle.kts versionCode + versionName, Windows .csproj). Hooked into `local-release` runVerify and the `macos-build` xcodegen step so platform versions can no longer drift from the workspace silently.
+
+### Fixed
+
+- Service-repair recommendations now compare the installed daemon binary version against the bundled `nvpn` CLI version (queried via `nvpn version --json`) instead of against `app_version`. The new `expected_service_binary_version` field on `NativeAppState` is what `service install --force` would actually deploy, so the comparison is now apples-to-apples and stops false-positive repair prompts when the bundled CLI is at a different version than the app shell.
+- Windows GUI no longer crashes at XAML startup; the `Run.Text` bindings are pinned to OneWay.
+
 ## 4.0.7 - 2026-05-09
 
 ### Fixed
