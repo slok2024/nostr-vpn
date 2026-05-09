@@ -277,6 +277,7 @@ run_macos_xcodeproj() {
     echo "xcodegen is required for macOS project generation" >&2
     exit 1
   fi
+  node "$ROOT/scripts/sync-versions.mjs"
   (cd "$MACOS_DIR" && xcodegen generate --spec project.yml)
   # XcodeGen emits objectVersion 77 on newer Xcode installs even though this
   # project uses classic groups. Xcode 15 runners cannot open that format.
