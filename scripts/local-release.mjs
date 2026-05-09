@@ -311,6 +311,11 @@ function syncRepoToWindowsHost({ host, guestRepo, dryRun }) {
   // Translate the Windows path to a forward-slash form that tar accepts as
   // -C without backslash escaping.
   const guestRepoForward = guestRepo.replace(/\\/g, '/')
+  // Skip the other platforms wholesale — they're not needed to build for
+  // Windows, and shipping them across the SSH tunnel wastes minutes (and
+  // risks the connection timing out on slow links). The cargo workspace
+  // explicitly excludes `linux/`, and `crates/` + `windows/` are the only
+  // things the Windows build touches.
   const tarExcludes = [
     '--exclude=./target',
     '--exclude=./dist',
@@ -319,8 +324,11 @@ function syncRepoToWindowsHost({ host, guestRepo, dryRun }) {
     '--exclude=./node_modules',
     '--exclude=./.env.release.local',
     '--exclude=./.env.zapstore.local',
-    '--exclude=./macos/.build',
-    '--exclude=./linux/target',
+    '--exclude=./ios',
+    '--exclude=./macos',
+    '--exclude=./android',
+    '--exclude=./linux',
+    '--exclude=./umbrel',
   ].join(' ')
 
   // Ensure the destination exists first.
