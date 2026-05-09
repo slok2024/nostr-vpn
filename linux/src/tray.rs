@@ -424,7 +424,7 @@ fn build_menu(state: &NativeAppState) -> MenuNode {
     let mut children = vec![
         toggle_item(
             1,
-            "VPN",
+            "Nostr VPN",
             state.vpn_control_supported,
             state.vpn_enabled,
             TrayCommand::ToggleVpn,

@@ -66,7 +66,7 @@ public sealed class TrayService : IDisposable
         // canonical layout shared across platforms.
         var menu = new ContextMenuStrip();
 
-        var vpnToggle = Item("VPN", async (_, _) => await viewModel.ToggleVpnAsync(),
+        var vpnToggle = Item("Nostr VPN", async (_, _) => await viewModel.ToggleVpnAsync(),
             viewModel.State.VpnControlSupported && !viewModel.ActionInFlight);
         vpnToggle.Checked = viewModel.State.VpnEnabled;
         menu.Items.Add(vpnToggle);

@@ -398,7 +398,7 @@ private struct SubmenuClickPayload<T: Equatable>: AnySubmenuClickPayload {
 /// regardless of macOS version or user accent settings.
 @MainActor
 private final class VpnToggleItemView: NSView {
-    let titleLabel = NSTextField(labelWithString: "VPN")
+    let titleLabel = NSTextField(labelWithString: "Nostr VPN")
     let subtitleLabel = NSTextField(labelWithString: "")
     let toggle: CapsuleSwitch
     private let onToggle: () -> Void
