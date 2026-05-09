@@ -1796,7 +1796,24 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     page.append(&network);
 
     let system = card();
-    section_header(&system, "System", "");
+    {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        row.set_valign(gtk::Align::Center);
+        let title = gtk::Label::new(Some("System"));
+        title.add_css_class("title-3");
+        title.set_xalign(0.0);
+        row.append(&title);
+        let label = system_version_label(state);
+        if !label.is_empty() {
+            let version = gtk::Label::new(Some(&label));
+            version.add_css_class("caption");
+            version.add_css_class("dim-label");
+            version.set_selectable(true);
+            version.set_xalign(0.0);
+            row.append(&version);
+        }
+        system.append(&row);
+    }
     switch_row(app, &system, "Autoconnect", state.autoconnect, |enabled| {
         NativeAppAction::UpdateSettings {
             patch: SettingsPatch {
@@ -2789,6 +2806,18 @@ fn service_repair_recommended(state: &NativeAppState) -> bool {
         && !state.service_binary_version.is_empty()
         && !state.app_version.is_empty()
         && state.service_binary_version != state.app_version
+}
+
+fn system_version_label(state: &NativeAppState) -> String {
+    let app = state.app_version.trim();
+    let daemon = state.daemon_binary_version.trim();
+    match (app.is_empty(), daemon.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => format!("gui v{app}"),
+        (true, false) => format!("daemon v{daemon}"),
+        (false, false) if app == daemon => format!("v{app}"),
+        (false, false) => format!("gui v{app} · daemon v{daemon}"),
+    }
 }
 
 fn copy_text(value: &str) {

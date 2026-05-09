@@ -110,6 +110,18 @@ struct RootView: View {
         return "Update available: \(manager.updateVersion) (you're on \(current))"
     }
 
+    private var systemVersionLabel: String {
+        let app = state.appVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        let daemon = state.daemonBinaryVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch (app.isEmpty, daemon.isEmpty) {
+        case (true, true): return ""
+        case (false, true): return "gui v\(app)"
+        case (true, false): return "daemon v\(daemon)"
+        case (false, false) where app == daemon: return "v\(app)"
+        case (false, false): return "gui v\(app) · daemon v\(daemon)"
+        }
+    }
+
     private var headerIdentity: some View {
         Text(activeNetwork.map(displayName) ?? "Nostr VPN")
             .font(.caption.weight(.semibold))
@@ -926,8 +938,8 @@ struct RootView: View {
         surface {
             HStack(spacing: 8) {
                 sectionHeader("System", systemImage: "gearshape.2")
-                if !state.appVersion.isEmpty {
-                    Text("v\(state.appVersion)")
+                if !systemVersionLabel.isEmpty {
+                    Text(systemVersionLabel)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
