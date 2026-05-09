@@ -24,7 +24,7 @@ base64 = "0.22"
 boringtun = "0.7"
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = { git = "https://github.com/mmalmi/fips.git", rev = "cb900105a38a5fb57ac8c2214168c9f80c11e424" }
+fips-endpoint = { git = "https://github.com/mmalmi/fips.git", rev = "0b96f9c541ec3bea9cd511a9840210099101bd92" }
 futures = "0.3"
 hex = "0.4"
 hickory-proto = "0.25"
@@ -53,3 +53,13 @@ missing_panics_doc = "allow"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+# TEMP: route fips-endpoint through the local ../fips checkout for the
+# process_packet cleanup pass. Local fips changes flow through to the
+# docker bench (which mounts ../fips at /app/fips) without push +
+# rev-bump cycles per iteration. REMOVE before committing perf changes
+# to nvpn master.
+[patch."https://github.com/mmalmi/fips.git"]
+fips-endpoint = { path = "../fips-rehandshake/crates/fips-endpoint" }
+fips-core = { path = "../fips-rehandshake/crates/fips-core" }
+fips-identity = { path = "../fips-rehandshake/crates/fips-identity" }
