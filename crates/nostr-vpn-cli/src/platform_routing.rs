@@ -51,7 +51,6 @@ pub(crate) struct LinuxDefaultRouteSpec {
     pub(crate) dev: String,
 }
 
-
 #[cfg(target_os = "linux")]
 pub(crate) fn linux_default_route_device_from_output(output: &str) -> Option<String> {
     output.lines().find_map(|line| {
