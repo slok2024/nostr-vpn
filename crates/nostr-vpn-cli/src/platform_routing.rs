@@ -1,13 +1,13 @@
 #[cfg(target_os = "linux")]
 use std::fs;
+#[cfg(target_os = "linux")]
+use std::net::IpAddr;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 use std::net::Ipv4Addr;
 #[cfg(any(target_os = "linux", test))]
 use std::net::Ipv6Addr;
 #[cfg(target_os = "linux")]
 use std::net::ToSocketAddrs;
-#[cfg(target_os = "linux")]
-use std::net::IpAddr;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command as ProcessCommand;
 

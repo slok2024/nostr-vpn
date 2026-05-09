@@ -181,9 +181,8 @@ mod tests {
     #[test]
     fn future_version_is_dropped_silently() {
         let mut bytes = Vec::from(FIPS_CONTROL_MAGIC);
-        bytes.extend_from_slice(
-            br#"{"v":99,"frame":{"kind":"ping","network_id":"x","sent_at":1}}"#,
-        );
+        bytes
+            .extend_from_slice(br#"{"v":99,"frame":{"kind":"ping","network_id":"x","sent_at":1}}"#);
 
         assert!(decode_fips_control_frame(&bytes).expect("decode").is_none());
     }

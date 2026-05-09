@@ -1919,10 +1919,7 @@ fn fips_tunnel_config_from_app(
     own_pubkey: Option<&str>,
 ) -> Result<crate::fips_private_mesh::FipsPrivateTunnelConfig> {
     let mut config = crate::fips_private_mesh::FipsPrivateTunnelConfig::from_app(
-        app,
-        network_id,
-        iface,
-        own_pubkey,
+        app, network_id, iface, own_pubkey,
     )?;
     // Daemon no longer pre-discovers a public endpoint. fips-core's
     // build_overlay_advert performs its own STUN observation and advertises

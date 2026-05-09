@@ -529,10 +529,7 @@ fn daemon_runtime_state_tracks_live_endpoint_and_listen_port() {
     // advertised_endpoint now mirrors local_endpoint — fips-core owns
     // public-endpoint discovery and advertising.
     assert_eq!(state.advertised_endpoint, expected_endpoint);
-    assert_eq!(
-        crate::status_endpoint(&config, &daemon),
-        expected_endpoint
-    );
+    assert_eq!(crate::status_endpoint(&config, &daemon), expected_endpoint);
     assert_eq!(crate::status_listen_port(&config, &daemon), 53083);
 }
 
