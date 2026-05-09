@@ -116,6 +116,7 @@ struct NativeAppRuntime {
     service_running: bool,
     service_status_detail: String,
     service_binary_version: String,
+    expected_service_binary_version: String,
     last_service_status_refresh_at: Option<Instant>,
     lan_pairing_worker: Option<LanPairingWorker>,
     lan_pairing_expires_at: Option<SystemTime>,
@@ -200,11 +201,13 @@ impl NativeAppRuntime {
             service_running: false,
             service_status_detail: String::new(),
             service_binary_version: String::new(),
+            expected_service_binary_version: String::new(),
             last_service_status_refresh_at: None,
             lan_pairing_worker: None,
             lan_pairing_expires_at: None,
             lan_peers: HashMap::new(),
         };
+        runtime.refresh_expected_service_binary_version();
         if runtime.mobile_runtime {
             let _ = runtime.refresh_mobile_status();
         } else {
@@ -236,6 +239,7 @@ impl NativeAppRuntime {
             service_running: false,
             service_status_detail: "Service status unavailable during startup failure".to_string(),
             service_binary_version: String::new(),
+            expected_service_binary_version: String::new(),
             last_service_status_refresh_at: None,
             lan_pairing_worker: None,
             lan_pairing_expires_at: None,
@@ -319,6 +323,7 @@ impl NativeAppRuntime {
                 .map(|state| state.binary_version.clone())
                 .unwrap_or_default(),
             service_binary_version: self.service_binary_version.clone(),
+            expected_service_binary_version: self.expected_service_binary_version.clone(),
             own_npub: to_npub(&own_pubkey_hex),
             own_pubkey_hex: own_pubkey_hex.clone(),
             node_id: self.config.node.id.clone(),
@@ -1287,6 +1292,33 @@ impl NativeAppRuntime {
 
     fn invalidate_service_status(&mut self) {
         self.last_service_status_refresh_at = None;
+    }
+
+    /// Cache the version of the bundled `nvpn` CLI — i.e. the version that
+    /// `service install --force` would deploy. Compared against the installed
+    /// daemon binary version to decide whether a repair is actually needed.
+    fn refresh_expected_service_binary_version(&mut self) {
+        #[derive(Deserialize)]
+        struct VersionView {
+            version: String,
+        }
+        let Some(nvpn_bin) = self.nvpn_bin.as_deref() else {
+            self.expected_service_binary_version.clear();
+            return;
+        };
+        let Ok(output) = Command::new(nvpn_bin).args(["version", "--json"]).output() else {
+            return;
+        };
+        if !output.status.success() {
+            return;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Ok(info) = serde_json::from_str::<VersionView>(stdout.trim()) {
+            let trimmed = info.version.trim();
+            if !trimmed.is_empty() {
+                self.expected_service_binary_version = trimmed.to_string();
+            }
+        }
     }
 
     fn magic_dns_status(&self) -> String {

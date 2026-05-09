@@ -183,6 +183,7 @@ pub struct UiState {
     pub app_version: String,
     pub daemon_binary_version: String,
     pub service_binary_version: String,
+    pub expected_service_binary_version: String,
     pub config_path: String,
     pub own_npub: String,
     pub own_pubkey_hex: String,

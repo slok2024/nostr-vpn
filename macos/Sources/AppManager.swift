@@ -691,8 +691,8 @@ final class AppManager: ObservableObject {
     private static func serviceRepairRecommended(in state: NativeAppState) -> Bool {
         state.serviceInstalled
             && !state.serviceBinaryVersion.isEmpty
-            && !state.appVersion.isEmpty
-            && state.serviceBinaryVersion != state.appVersion
+            && !state.expectedServiceBinaryVersion.isEmpty
+            && state.serviceBinaryVersion != state.expectedServiceBinaryVersion
     }
 }
 

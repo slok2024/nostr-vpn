@@ -145,6 +145,7 @@ pub struct NativeAppState {
     pub vpn_status: String,
     pub daemon_binary_version: String,
     pub service_binary_version: String,
+    pub expected_service_binary_version: String,
     pub own_npub: String,
     pub own_pubkey_hex: String,
     pub node_id: String,

@@ -686,6 +686,7 @@ public struct NativeAppState {
     public var vpnStatus: String
     public var daemonBinaryVersion: String
     public var serviceBinaryVersion: String
+    public var expectedServiceBinaryVersion: String
     public var ownNpub: String
     public var ownPubkeyHex: String
     public var nodeId: String
@@ -735,7 +736,7 @@ public struct NativeAppState {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(rev: UInt64, platform: String, mobile: Bool, vpnControlSupported: Bool, cliInstallSupported: Bool, startupSettingsSupported: Bool, trayBehaviorSupported: Bool, runtimeStatusDetail: String, appVersion: String, configPath: String, error: String, cliInstalled: Bool, serviceSupported: Bool, serviceEnablementSupported: Bool, serviceInstalled: Bool, serviceDisabled: Bool, serviceRunning: Bool, serviceStatusDetail: String, daemonRunning: Bool, vpnEnabled: Bool, vpnActive: Bool, vpnStatus: String, daemonBinaryVersion: String, serviceBinaryVersion: String, ownNpub: String, ownPubkeyHex: String, nodeId: String, nodeName: String, selfMagicDnsName: String, endpoint: String, tunnelIp: String, listenPort: UInt32, networkId: String, activeNetworkInvite: String, exitNode: String, exitNodeLeakProtection: Bool, exitNodeActive: Bool, exitNodeBlocked: Bool, exitNodeStatusText: String, advertiseExitNode: Bool, advertisedRoutes: [String], effectiveAdvertisedRoutes: [String], wireguardExitEnabled: Bool, wireguardExitConfigured: Bool, wireguardExitInterface: String, wireguardExitAddress: String, wireguardExitPrivateKey: String, wireguardExitPeerPublicKey: String, wireguardExitPeerPresharedKey: String, wireguardExitEndpoint: String, wireguardExitAllowedIps: String, wireguardExitDns: String, wireguardExitMtu: UInt16, wireguardExitPersistentKeepaliveSecs: UInt16, wireguardExitConfig: String, magicDnsSuffix: String, magicDnsStatus: String, autoconnect: Bool, lanPairingActive: Bool, lanPairingRemainingSecs: UInt64, launchOnStartup: Bool, closeToTrayOnClose: Bool, connectedPeerCount: UInt64, expectedPeerCount: UInt64, meshReady: Bool, health: [NativeHealthIssue], network: NativeNetworkSummary, portMapping: NativePortMappingStatus, networks: [NativeNetworkState], lanPeers: [NativeLanPeerState]) {
+    public init(rev: UInt64, platform: String, mobile: Bool, vpnControlSupported: Bool, cliInstallSupported: Bool, startupSettingsSupported: Bool, trayBehaviorSupported: Bool, runtimeStatusDetail: String, appVersion: String, configPath: String, error: String, cliInstalled: Bool, serviceSupported: Bool, serviceEnablementSupported: Bool, serviceInstalled: Bool, serviceDisabled: Bool, serviceRunning: Bool, serviceStatusDetail: String, daemonRunning: Bool, vpnEnabled: Bool, vpnActive: Bool, vpnStatus: String, daemonBinaryVersion: String, serviceBinaryVersion: String, expectedServiceBinaryVersion: String, ownNpub: String, ownPubkeyHex: String, nodeId: String, nodeName: String, selfMagicDnsName: String, endpoint: String, tunnelIp: String, listenPort: UInt32, networkId: String, activeNetworkInvite: String, exitNode: String, exitNodeLeakProtection: Bool, exitNodeActive: Bool, exitNodeBlocked: Bool, exitNodeStatusText: String, advertiseExitNode: Bool, advertisedRoutes: [String], effectiveAdvertisedRoutes: [String], wireguardExitEnabled: Bool, wireguardExitConfigured: Bool, wireguardExitInterface: String, wireguardExitAddress: String, wireguardExitPrivateKey: String, wireguardExitPeerPublicKey: String, wireguardExitPeerPresharedKey: String, wireguardExitEndpoint: String, wireguardExitAllowedIps: String, wireguardExitDns: String, wireguardExitMtu: UInt16, wireguardExitPersistentKeepaliveSecs: UInt16, wireguardExitConfig: String, magicDnsSuffix: String, magicDnsStatus: String, autoconnect: Bool, lanPairingActive: Bool, lanPairingRemainingSecs: UInt64, launchOnStartup: Bool, closeToTrayOnClose: Bool, connectedPeerCount: UInt64, expectedPeerCount: UInt64, meshReady: Bool, health: [NativeHealthIssue], network: NativeNetworkSummary, portMapping: NativePortMappingStatus, networks: [NativeNetworkState], lanPeers: [NativeLanPeerState]) {
         self.rev = rev
         self.platform = platform
         self.mobile = mobile
@@ -760,6 +761,7 @@ public struct NativeAppState {
         self.vpnStatus = vpnStatus
         self.daemonBinaryVersion = daemonBinaryVersion
         self.serviceBinaryVersion = serviceBinaryVersion
+        self.expectedServiceBinaryVersion = expectedServiceBinaryVersion
         self.ownNpub = ownNpub
         self.ownPubkeyHex = ownPubkeyHex
         self.nodeId = nodeId
@@ -886,6 +888,9 @@ extension NativeAppState: Equatable, Hashable {
             return false
         }
         if lhs.serviceBinaryVersion != rhs.serviceBinaryVersion {
+            return false
+        }
+        if lhs.expectedServiceBinaryVersion != rhs.expectedServiceBinaryVersion {
             return false
         }
         if lhs.ownNpub != rhs.ownNpub {
@@ -1054,6 +1059,7 @@ extension NativeAppState: Equatable, Hashable {
         hasher.combine(vpnStatus)
         hasher.combine(daemonBinaryVersion)
         hasher.combine(serviceBinaryVersion)
+        hasher.combine(expectedServiceBinaryVersion)
         hasher.combine(ownNpub)
         hasher.combine(ownPubkeyHex)
         hasher.combine(nodeId)
@@ -1136,6 +1142,7 @@ public struct FfiConverterTypeNativeAppState: FfiConverterRustBuffer {
                 vpnStatus: FfiConverterString.read(from: &buf),
                 daemonBinaryVersion: FfiConverterString.read(from: &buf),
                 serviceBinaryVersion: FfiConverterString.read(from: &buf),
+                expectedServiceBinaryVersion: FfiConverterString.read(from: &buf),
                 ownNpub: FfiConverterString.read(from: &buf),
                 ownPubkeyHex: FfiConverterString.read(from: &buf),
                 nodeId: FfiConverterString.read(from: &buf),
@@ -1210,6 +1217,7 @@ public struct FfiConverterTypeNativeAppState: FfiConverterRustBuffer {
         FfiConverterString.write(value.vpnStatus, into: &buf)
         FfiConverterString.write(value.daemonBinaryVersion, into: &buf)
         FfiConverterString.write(value.serviceBinaryVersion, into: &buf)
+        FfiConverterString.write(value.expectedServiceBinaryVersion, into: &buf)
         FfiConverterString.write(value.ownNpub, into: &buf)
         FfiConverterString.write(value.ownPubkeyHex, into: &buf)
         FfiConverterString.write(value.nodeId, into: &buf)

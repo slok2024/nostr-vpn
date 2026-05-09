@@ -2804,8 +2804,8 @@ fn first_non_empty(values: &[&str]) -> Option<String> {
 fn service_repair_recommended(state: &NativeAppState) -> bool {
     state.service_installed
         && !state.service_binary_version.is_empty()
-        && !state.app_version.is_empty()
-        && state.service_binary_version != state.app_version
+        && !state.expected_service_binary_version.is_empty()
+        && state.service_binary_version != state.expected_service_binary_version
 }
 
 fn system_version_label(state: &NativeAppState) -> String {
