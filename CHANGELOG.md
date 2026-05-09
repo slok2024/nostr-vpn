@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.9 - 2026-05-09
+
+### Changed
+
+- Bumped fips-endpoint to `0b96f9c`. New commits since 4.0.8:
+  - `0b96f9c` **udp: amortise per-packet sendto via sendmmsg(2) batching.** Per-region timing on the send hot path identified the kernel `sendto(2)` syscall as 52% of send-path CPU (2588 ns/pkt). Per-transport pending-send buffer + `sendmmsg(2)` flush at threshold (8 packets) + end-of-drain flush from the rx_loop amortises that cost across batches. Linux only; non-Linux falls through to per-packet send. **TCP single-stream 1066 → 1548 Mbps (1.45×)** on the 2-node Docker e2e bench, consistent across 1/4/8 streams. UDP @1 Gbit stays lossless at line rate.
+  - `5c8deb3` udp: clippy hygiene under `-D warnings` on Linux.
+  - `156cc4e` udp recv_batch: sample SO_RXQ_OVFL per batch + drop unsafe transmute on the inbound batched path.
+  - `6f3d35b` **session: collapse handle_encrypted_session_msg to a single sessions borrow.** Down from 7 `self.sessions` operations per packet (`get` + `get` + `get_mut` + `remove` + `insert` + `get_mut` + `get_mut`) to one `get_mut` held inside a labeled block, with an `FspFrameOutcome` enum carrying slow-path decisions out for `&mut self` handling. Receive-side CPU drops 17.7% (3706 → 3050 ns/pkt). Throughput unchanged on its own — receive wasn't CPU-bound — but frees headroom for many-peer scaling and lower battery draw. Preserves the auto-rehandshake feature from `a38334b`.
+  - `a38334b` session: auto re-handshake after consecutive AEAD decryption failures. Recovers from stale session state on either side (peer restart with new keys, etc.) without requiring a manual daemon restart.
+- Cumulative bench trajectory from session start: TCP single-stream 1.57 Mbps → **1548 Mbps (~985×)**, with ring (NEON) AEAD + recvmmsg + drain batching + the FSP refactor + sendmmsg batching all stacking. The remaining gap to boringtun-`--threads=1` (3252 Mbps) is dominated by the dual-AEAD architecture (FSP + FMP encrypt per packet, vs WireGuard's single AEAD) plus the MTU difference (nvpn 1150 vs WG 1420).
+
 ## 4.0.8 - 2026-05-09
 
 ### Changed

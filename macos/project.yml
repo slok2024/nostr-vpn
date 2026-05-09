@@ -8,7 +8,7 @@ options:
 settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: to.iris.nvpn.macos
-    MARKETING_VERSION: 4.0.8
+    MARKETING_VERSION: 4.0.9
     CURRENT_PROJECT_VERSION: 1
     VERSIONING_SYSTEM: apple-generic
     CODE_SIGN_STYLE: Automatic
