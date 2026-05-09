@@ -62,6 +62,16 @@ for service in node-a node-b node-c; do
   wait_for_service "$service"
 done
 
+# Force the test to actually exercise the transit path: drop direct UDP
+# between A and B. With Nostr discovery + NAT traversal enabled, A and B
+# would otherwise discover each other on the bridge (10.203.0.0/24) and
+# bypass C entirely. With these iptables rules in place the only way
+# A's tunnel datagrams reach B is via C's spanning-tree forwarding.
+"${COMPOSE[@]}" exec -T node-a iptables -A OUTPUT -p udp -d 10.203.0.11 -j DROP
+"${COMPOSE[@]}" exec -T node-a iptables -A INPUT  -p udp -s 10.203.0.11 -j DROP
+"${COMPOSE[@]}" exec -T node-b iptables -A OUTPUT -p udp -d 10.203.0.10 -j DROP
+"${COMPOSE[@]}" exec -T node-b iptables -A INPUT  -p udp -s 10.203.0.10 -j DROP
+
 "${COMPOSE[@]}" exec -T node-a nvpn init --force >/dev/null
 "${COMPOSE[@]}" exec -T node-b nvpn init --force >/dev/null
 "${COMPOSE[@]}" exec -T node-c nvpn init --force >/dev/null
@@ -111,11 +121,12 @@ C_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-c nvpn ip | tr -d '\r')"
 "${COMPOSE[@]}" exec -d node-b sh -lc "nvpn connect > /tmp/connect.log 2>&1"
 "${COMPOSE[@]}" exec -d node-c sh -lc "nvpn connect > /tmp/connect.log 2>&1"
 
-# Wait until all three peers report mesh: 2/2 peers connected. Fail fast
-# (15s) instead of wandering — if it hasn't converged in that time the
-# transit path is broken and we need the diagnostic dump anyway.
+# Wait until all three peers report mesh: 2/2 peers connected. NAT
+# traversal between A and B routes through public Nostr relays; round-
+# trip latency on the offer/answer DM exchange is the long pole, so
+# allow up to 45s before declaring failure.
 mesh_up=0
-for _ in $(seq 1 15); do
+for _ in $(seq 1 45); do
   a="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
   b="$("${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
   c="$("${COMPOSE[@]}" exec -T node-c sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
