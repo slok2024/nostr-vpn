@@ -81,14 +81,14 @@ public partial class MainWindow : Window
 
     private async void DirectExit_Click(object sender, RoutedEventArgs e)
     {
-        await ViewModel.SetExitNodeAsync("");
+        await ViewModel.SelectDirectExitAsync();
     }
 
     private async void SetExitNode_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: string npub })
         {
-            await ViewModel.SetExitNodeAsync(npub);
+            await ViewModel.SelectPeerExitAsync(npub);
         }
     }
 
@@ -110,10 +110,7 @@ public partial class MainWindow : Window
 
     private async void WireguardExit_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is CheckBox checkBox)
-        {
-            await ViewModel.SetWireGuardExitEnabledAsync(checkBox.IsChecked == true);
-        }
+        await ViewModel.SelectWireGuardUpstreamExitAsync();
     }
 
     private async void Autoconnect_Click(object sender, RoutedEventArgs e)

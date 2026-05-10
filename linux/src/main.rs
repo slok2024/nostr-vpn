@@ -1627,14 +1627,32 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
     }
     exit.append(&search);
 
+    let direct_selected = !state.wireguard_exit_enabled && state.exit_node.is_empty();
     route_choice(
         app,
         &exit,
         "Direct",
         "Use normal internet routing",
-        state.exit_node.is_empty(),
+        direct_selected,
         true,
-        None,
+        ExitChoice::Direct,
+    );
+
+    let wg_subtitle = if !state.wireguard_exit_configured {
+        "No WireGuard config saved yet".to_string()
+    } else if state.wireguard_exit_endpoint.is_empty() {
+        "Configured".to_string()
+    } else {
+        state.wireguard_exit_endpoint.clone()
+    };
+    route_choice(
+        app,
+        &exit,
+        "WireGuard upstream",
+        &wg_subtitle,
+        state.wireguard_exit_enabled,
+        state.wireguard_exit_configured,
+        ExitChoice::WireGuard,
     );
 
     let query = app.borrow().drafts.exit_search.to_ascii_lowercase();
@@ -1648,6 +1666,7 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
                 || participant.npub.to_ascii_lowercase().contains(&query)
         })
     {
+        let peer_selected = !state.wireguard_exit_enabled && state.exit_node == participant.npub;
         route_choice(
             app,
             &exit,
@@ -1658,9 +1677,9 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
                 "Exit not offered".to_string()
             }
             .as_str(),
-            state.exit_node == participant.npub,
+            peer_selected,
             participant.offers_exit_node,
-            Some(participant.npub.clone()),
+            ExitChoice::Peer(participant.npub.clone()),
         );
     }
     page.append(&exit);
@@ -1694,6 +1713,13 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
     build_wireguard_settings_card(app, page, state);
 }
 
+#[derive(Clone)]
+enum ExitChoice {
+    Direct,
+    WireGuard,
+    Peer(String),
+}
+
 fn route_choice(
     app: &AppRef,
     parent: &gtk::Box,
@@ -1701,7 +1727,7 @@ fn route_choice(
     subtitle: &str,
     selected: bool,
     enabled: bool,
-    exit_node: Option<String>,
+    choice: ExitChoice,
 ) {
     let button = gtk::Button::new();
     button.add_css_class("flat");
@@ -1736,15 +1762,28 @@ fn route_choice(
     button.set_child(Some(&row));
     {
         let app = app.clone();
+        let choice = choice.clone();
         button.connect_clicked(move |_| {
+            let patch = match choice.clone() {
+                ExitChoice::Direct => SettingsPatch {
+                    exit_node: Some(String::new()),
+                    wireguard_exit_enabled: Some(false),
+                    ..SettingsPatch::default()
+                },
+                ExitChoice::WireGuard => SettingsPatch {
+                    exit_node: Some(String::new()),
+                    wireguard_exit_enabled: Some(true),
+                    ..SettingsPatch::default()
+                },
+                ExitChoice::Peer(npub) => SettingsPatch {
+                    exit_node: Some(npub),
+                    wireguard_exit_enabled: Some(false),
+                    ..SettingsPatch::default()
+                },
+            };
             dispatch(
                 &app,
-                NativeAppAction::UpdateSettings {
-                    patch: SettingsPatch {
-                        exit_node: Some(exit_node.clone().unwrap_or_default()),
-                        ..SettingsPatch::default()
-                    },
-                },
+                NativeAppAction::UpdateSettings { patch },
             );
         });
     }

@@ -207,6 +207,26 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public string AdvertisedRoutes { get => _advertisedRoutes; set => SetField(ref _advertisedRoutes, value); }
     public string WireguardExitConfig { get => _wireguardExitConfig; set => SetField(ref _wireguardExitConfig, value); }
 
+    // Bullet-style radio indicators next to each exit-node row.
+    public string DirectExitMarker =>
+        (!State.WireguardExitEnabled && string.IsNullOrEmpty(State.ExitNode)) ? "●" : "○";
+
+    public string WireguardExitMarker => State.WireguardExitEnabled ? "●" : "○";
+
+    public string WireguardExitSubtitle
+    {
+        get
+        {
+            if (!State.WireguardExitConfigured)
+            {
+                return "No WireGuard config saved yet";
+            }
+            return string.IsNullOrWhiteSpace(State.WireguardExitEndpoint)
+                ? "Configured"
+                : State.WireguardExitEndpoint;
+        }
+    }
+
     public bool UpdateChecking
     {
         get => _updateChecking;
@@ -463,6 +483,43 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     {
         return DispatchAsync(
             NativeActions.UpdateSettings(new SettingsPatch { ExitNode = npub }),
+            "Saving exit node");
+    }
+
+    // Mutually-exclusive exit-node selection — flip both fields in
+    // one update so the state can't end up with both set or both
+    // looking unset.
+
+    public Task SelectDirectExitAsync()
+    {
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch
+            {
+                ExitNode = "",
+                WireguardExitEnabled = false,
+            }),
+            "Saving exit node");
+    }
+
+    public Task SelectWireGuardUpstreamExitAsync()
+    {
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch
+            {
+                ExitNode = "",
+                WireguardExitEnabled = true,
+            }),
+            "Saving exit node");
+    }
+
+    public Task SelectPeerExitAsync(string npub)
+    {
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch
+            {
+                ExitNode = npub,
+                WireguardExitEnabled = false,
+            }),
             "Saving exit node");
     }
 
@@ -866,6 +923,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(DiagnosticsExternal));
         OnPropertyChanged(nameof(CanRequestActiveNetworkJoin));
         OnPropertyChanged(nameof(ActiveNetworkJoinStatus));
+        OnPropertyChanged(nameof(DirectExitMarker));
+        OnPropertyChanged(nameof(WireguardExitMarker));
+        OnPropertyChanged(nameof(WireguardExitSubtitle));
     }
 
     private static string FirstNonEmpty(string first, string second, string fallback)
