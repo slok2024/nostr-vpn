@@ -1051,7 +1051,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1119,7 +1119,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1173,7 +1173,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 [[package]]
 name = "fips-core"
 version = "0.3.0-dev"
-source = "git+https://github.com/mmalmi/fips.git?rev=1abda1c2276b9a7d7a6959f9a6ef6b5f3d21c1ce#1abda1c2276b9a7d7a6959f9a6ef6b5f3d21c1ce"
+source = "git+https://github.com/mmalmi/fips.git?rev=c264edcd7da22dcddb7ec897a73dc22e7cbb3459#c264edcd7da22dcddb7ec897a73dc22e7cbb3459"
 dependencies = [
  "bluer",
  "dirs",
@@ -1207,7 +1207,7 @@ dependencies = [
 [[package]]
 name = "fips-endpoint"
 version = "0.3.0-dev"
-source = "git+https://github.com/mmalmi/fips.git?rev=1abda1c2276b9a7d7a6959f9a6ef6b5f3d21c1ce#1abda1c2276b9a7d7a6959f9a6ef6b5f3d21c1ce"
+source = "git+https://github.com/mmalmi/fips.git?rev=c264edcd7da22dcddb7ec897a73dc22e7cbb3459#c264edcd7da22dcddb7ec897a73dc22e7cbb3459"
 dependencies = [
  "fips-core",
 ]
@@ -1215,7 +1215,7 @@ dependencies = [
 [[package]]
 name = "fips-identity"
 version = "0.3.0-dev"
-source = "git+https://github.com/mmalmi/fips.git?rev=1abda1c2276b9a7d7a6959f9a6ef6b5f3d21c1ce#1abda1c2276b9a7d7a6959f9a6ef6b5f3d21c1ce"
+source = "git+https://github.com/mmalmi/fips.git?rev=c264edcd7da22dcddb7ec897a73dc22e7cbb3459#c264edcd7da22dcddb7ec897a73dc22e7cbb3459"
 dependencies = [
  "bech32",
  "hex",
@@ -2604,7 +2604,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3220,7 +3220,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3657,7 +3657,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4586,7 +4586,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4794,7 +4794,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
 dependencies = [
  "cfg-if",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

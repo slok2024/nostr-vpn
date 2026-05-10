@@ -2786,7 +2786,10 @@ fn reload_daemon(args: ReloadArgs) -> Result<()> {
     }
 
     request_daemon_reload(&config_path)?;
-    wait_for_daemon_control_ack(&config_path, Duration::from_secs(3))?;
+    wait_for_daemon_control_ack(
+        &config_path,
+        daemon_control_ack_timeout(DaemonControlRequest::Reload),
+    )?;
     println!("daemon reload requested");
     Ok(())
 }
@@ -2798,11 +2801,28 @@ pub(crate) fn daemon_control_ack_timeout(request: DaemonControlRequest) -> Durat
     ) {
         #[cfg(target_os = "macos")]
         {
-            return Duration::from_secs(10);
+            return Duration::from_secs(15);
         }
     }
 
-    Duration::from_secs(3)
+    // Daemon polls the control file inside its 1s state_interval tick, but
+    // each tick can stall on FIPS event drain + tunnel reconfig + route
+    // refresh. 3s was empirically too short — leave headroom for a busy node.
+    Duration::from_secs(10)
+}
+
+pub(crate) fn daemon_control_result_timeout(request: DaemonControlRequest) -> Duration {
+    if matches!(
+        request,
+        DaemonControlRequest::Pause | DaemonControlRequest::Resume
+    ) {
+        #[cfg(target_os = "macos")]
+        {
+            return Duration::from_secs(30);
+        }
+    }
+
+    Duration::from_secs(15)
 }
 
 #[cfg(test)]

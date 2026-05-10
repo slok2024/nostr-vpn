@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use base64::Engine;
@@ -287,14 +286,17 @@ pub(crate) fn maybe_reload_running_daemon(config_path: &Path) {
         eprintln!("config: failed to request daemon reload after save: {error}");
         return;
     }
-    if let Err(error) = wait_for_daemon_control_ack(config_path, Duration::from_secs(2)) {
+    if let Err(error) = wait_for_daemon_control_ack(
+        config_path,
+        crate::daemon_control_ack_timeout(DaemonControlRequest::Reload),
+    ) {
         eprintln!("config: daemon did not acknowledge reload after save: {error}");
         return;
     }
     if let Err(error) = wait_for_daemon_control_result(
         config_path,
         DaemonControlRequest::Reload,
-        Duration::from_secs(2),
+        crate::daemon_control_result_timeout(DaemonControlRequest::Reload),
     ) {
         eprintln!("config: daemon reload after save failed: {error}");
     }

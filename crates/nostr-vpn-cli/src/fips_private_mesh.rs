@@ -618,14 +618,6 @@ fn fips_endpoint_config(
     let mut config = Config::new();
     config.node.control.enabled = false;
     config.dns.enabled = false;
-    // Optional per-peer actor task pattern (step 6 of fips's
-    // peer-actor refactor). Enable via env var so we can A/B bench
-    // without a config-file roll. Off by default; production rollout
-    // happens after step 7+ moves more work onto the per-peer task.
-    config.node.peer_actor_enabled = std::env::var("FIPS_PEER_ACTOR")
-        .ok()
-        .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
     let advertise_udp = transport
         .map(|transport| transport.advertise_endpoint)
         .unwrap_or(false);

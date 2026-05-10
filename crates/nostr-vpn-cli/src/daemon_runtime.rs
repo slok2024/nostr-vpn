@@ -409,11 +409,14 @@ pub(crate) fn apply_config_via_running_daemon(
     clear_daemon_control_result(config_path);
     stage_daemon_config_apply(config_path, source_path)?;
     request_daemon_reload(config_path)?;
-    wait_for_daemon_control_ack(config_path, Duration::from_secs(3))?;
+    wait_for_daemon_control_ack(
+        config_path,
+        crate::daemon_control_ack_timeout(DaemonControlRequest::Reload),
+    )?;
     wait_for_daemon_control_result(
         config_path,
         DaemonControlRequest::Reload,
-        Duration::from_secs(3),
+        crate::daemon_control_result_timeout(DaemonControlRequest::Reload),
     )
 }
 
