@@ -1891,6 +1891,11 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     event_rx: mpsc::Receiver<FipsPrivateMeshEvent>,
     interface_index: u32,
     route_targets: Vec<String>,
+    /// Same shape as the macOS variant: a userspace WG upstream
+    /// tunnel (boringtun + a *separate* WinTun adapter, distinct from
+    /// the FIPS adapter above) that the daemon reconciles whenever
+    /// `wireguard_exit` changes.
+    wg_upstream: Option<crate::wg_upstream_runtime::DaemonWgUpstream>,
 }
 
 #[cfg(target_os = "windows")]
@@ -1955,10 +1960,10 @@ impl FipsPrivateTunnelRuntime {
         let mesh_recv_task =
             spawn_windows_fips_mesh_recv_task(Arc::clone(&mesh), session.clone(), event_tx);
 
-        Ok(Self {
+        let mut runtime = Self {
             iface,
             mesh,
-            config,
+            config: config.clone(),
             session,
             stop,
             tun_read_thread,
@@ -1967,7 +1972,16 @@ impl FipsPrivateTunnelRuntime {
             event_rx,
             interface_index,
             route_targets,
-        })
+            wg_upstream: None,
+        };
+        // Reconcile the WG upstream against the initial config. Same
+        // safe-by-construction guarantee as macOS: if the WG handshake
+        // doesn't complete within the watchdog window, the routing
+        // table stays untouched.
+        runtime
+            .reconcile_windows_wg_upstream(&config.wireguard_exit)
+            .await;
+        Ok(runtime)
     }
 
     pub(crate) fn iface(&self) -> &str {
@@ -2006,12 +2020,54 @@ impl FipsPrivateTunnelRuntime {
             )
             .context("failed to apply Windows FIPS routes")?;
         }
+        self.reconcile_windows_wg_upstream(&config.wireguard_exit)
+            .await;
         self.config = config;
         Ok(())
     }
 
     pub(crate) async fn refresh_peer_dependent_routes(&mut self) -> Result<()> {
         Ok(())
+    }
+
+    /// Same shape as the macOS reconcile: a no-op if the existing
+    /// tunnel already matches, teardown-then-rebuild on config change,
+    /// just teardown on disable. Handshake-first, watchdog-protected:
+    /// the routing table is only modified after a successful WG
+    /// handshake.
+    async fn reconcile_windows_wg_upstream(&mut self, wg_config: &WireGuardExitConfig) {
+        let want_up = wg_config.enabled && wg_config.configured();
+        if want_up
+            && self
+                .wg_upstream
+                .as_ref()
+                .is_some_and(|existing| existing.matches(wg_config))
+        {
+            return;
+        }
+        if let Some(existing) = self.wg_upstream.take() {
+            existing.cleanup().await;
+        }
+        if !want_up {
+            return;
+        }
+        match crate::wg_upstream_runtime::apply_daemon_wg_upstream(
+            wg_config,
+            crate::wg_upstream_runtime::DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT,
+        )
+        .await
+        {
+            Ok(handle) => {
+                eprintln!(
+                    "fips: WG upstream up on {} via {} (default route swapped)",
+                    handle.iface, handle.upstream
+                );
+                self.wg_upstream = Some(handle);
+            }
+            Err(error) => {
+                eprintln!("fips: WG upstream not started: {error}");
+            }
+        }
     }
 
     pub(crate) async fn ping_peers(&self, network_id: &str, now: u64) -> Result<usize> {
@@ -2065,7 +2121,12 @@ impl FipsPrivateTunnelRuntime {
     }
 
     pub(crate) async fn stop(self) -> Result<()> {
-        let runtime = self;
+        let mut runtime = self;
+        // Tear the WG upstream down BEFORE the FIPS bits so the route
+        // revert lands while we still have a sane working tree.
+        if let Some(handle) = runtime.wg_upstream.take() {
+            handle.cleanup().await;
+        }
         runtime.stop.store(true, Ordering::Relaxed);
         let _ = runtime.session.shutdown();
         if let Err(error) = crate::windows_tunnel::remove_windows_routes(

@@ -41,6 +41,8 @@ use tokio::time::interval;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use boringtun::device::tun::TunSocket;
+#[cfg(target_os = "windows")]
+use wintun::Session as WintunSession;
 
 const MAX_WG_PACKET: usize = 65_535;
 const TIMER_TICK: Duration = Duration::from_millis(250);
@@ -53,6 +55,7 @@ const TIMER_TICK: Duration = Duration::from_millis(250);
 pub struct WgUpstreamRuntime {
     pump: Option<JoinHandle<()>>,
     tun_reader: Option<JoinHandle<()>>,
+    tun_writer: Option<JoinHandle<()>>,
     handshake: Arc<HandshakeState>,
     upstream: SocketAddr,
 }
@@ -69,23 +72,64 @@ impl WgUpstreamRuntime {
     /// connectivity work. Useful as a smoke test before any platform
     /// routing is attempted.
     pub async fn start_handshake_only(config: &WireGuardExitConfig) -> Result<Self> {
-        Self::start_inner(config, None).await
+        Self::start_inner(config, None, None).await
     }
 
-    /// Build the runtime with a tun device attached. Plaintext packets
-    /// read from the tun get encapsulated and sent to the upstream;
-    /// decrypted packets from the upstream get written back to the tun.
-    /// The caller is responsible for assigning the tun's IP / MTU /
-    /// routes — this runtime only does the data plane.
+    /// Build the runtime with a POSIX tun device (Linux tun / macOS
+    /// utun). Plaintext packets read from the tun get encapsulated and
+    /// sent to the upstream; decrypted packets from the upstream get
+    /// written back to the tun. The caller is responsible for
+    /// assigning the tun's IP / MTU / routes — this runtime only does
+    /// the data plane.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub async fn start_with_tun(config: &WireGuardExitConfig, tun: Arc<TunSocket>) -> Result<Self> {
-        Self::start_inner(config, Some(tun)).await
+        let (in_tx, in_rx) = mpsc::channel::<Vec<u8>>(256);
+        let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>(256);
+        let reader = spawn_posix_tun_reader(tun.clone(), in_tx);
+        let writer = spawn_posix_tun_writer(tun, out_rx);
+        Self::start_inner(config, Some((in_rx, out_tx)), Some((reader, writer))).await
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    /// Build the runtime with a Windows WinTun session. Same shape as
+    /// `start_with_tun` — pump is platform-agnostic, just the tun
+    /// reader/writer threads do the OS-specific I/O.
+    #[cfg(target_os = "windows")]
+    pub async fn start_with_wintun(
+        config: &WireGuardExitConfig,
+        session: Arc<WintunSession>,
+    ) -> Result<Self> {
+        let (in_tx, in_rx) = mpsc::channel::<Vec<u8>>(256);
+        let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>(256);
+        let reader = spawn_wintun_reader(session.clone(), in_tx);
+        let writer = spawn_wintun_writer(session, out_rx);
+        Self::start_inner(config, Some((in_rx, out_tx)), Some((reader, writer))).await
+    }
+
+    /// Build the runtime with raw mpsc channels for tun I/O. Used by
+    /// platforms where the OS owns the tun (iOS NEPacketTunnelProvider,
+    /// Android VpnService): the host code feeds plaintext packets into
+    /// `tun_in_tx` (drained from the OS-provided packet flow) and
+    /// reads plaintext packets out of `tun_out_rx` (to write back via
+    /// the OS-provided packet flow). The runtime's Drop / `shutdown`
+    /// closes the WG side; the host is responsible for the OS side.
+    pub async fn start_with_channels(
+        config: &WireGuardExitConfig,
+        tun_in_rx: mpsc::Receiver<Vec<u8>>,
+        tun_out_tx: mpsc::Sender<Vec<u8>>,
+    ) -> Result<Self> {
+        Self::start_inner(config, Some((tun_in_rx, tun_out_tx)), None).await
+    }
+
+    /// Inner constructor. `tun_io = Some((rx, tx))` means we have a
+    /// real tun: `rx` yields plaintext packets the kernel handed us
+    /// (via the platform reader task), `tx` carries plaintext packets
+    /// we want written back. `tun_handles` are the reader+writer
+    /// JoinHandles so we can abort them on shutdown. None for
+    /// handshake-only mode.
     async fn start_inner(
         config: &WireGuardExitConfig,
-        tun: Option<Arc<TunSocket>>,
+        tun_io: Option<(mpsc::Receiver<Vec<u8>>, mpsc::Sender<Vec<u8>>)>,
+        tun_handles: Option<(JoinHandle<()>, JoinHandle<()>)>,
     ) -> Result<Self> {
         let private = decode_private_key(&config.private_key)?;
         let public = decode_public_key(&config.peer_public_key)?;
@@ -104,39 +148,32 @@ impl WgUpstreamRuntime {
         };
         let tunn = Tunn::new(private, public, preshared, keepalive, 1, None);
 
-        // tun → loop fan-in. Spawned producer reads the tun and pushes
-        // plaintext packets into this channel; the main loop pulls and
-        // encapsulates them. Channel decouples blocking-ish tun reads
-        // from the tunn-bearing loop. Closing this sender (which
-        // happens when we drop the runtime + abort the reader task) is
-        // also how the pump observes shutdown.
-        let (tun_tx, tun_rx) = mpsc::channel::<Vec<u8>>(256);
         let handshake = Arc::new(HandshakeState::default());
-
-        let tun_reader = tun.clone().map(|tun| spawn_tun_reader(tun, tun_tx));
+        let (tun_in_rx, tun_out_tx) = match tun_io {
+            Some((rx, tx)) => (Some(rx), Some(tx)),
+            None => (None, None),
+        };
+        let (tun_reader, tun_writer) = match tun_handles {
+            Some((r, w)) => (Some(r), Some(w)),
+            None => (None, None),
+        };
 
         let pump = tokio::spawn(run_pump(
             tunn,
             udp,
             upstream,
-            tun,
-            tun_rx,
+            tun_in_rx,
+            tun_out_tx,
             handshake.clone(),
         ));
 
         Ok(Self {
             pump: Some(pump),
             tun_reader,
+            tun_writer,
             handshake,
             upstream,
         })
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    async fn start_inner(_config: &WireGuardExitConfig, _tun: Option<()>) -> Result<Self> {
-        Err(anyhow!(
-            "userspace WG upstream runtime is only supported on Linux and macOS for now"
-        ))
     }
 
     /// Wait for at most `timeout` for the WG handshake to complete.
@@ -168,6 +205,10 @@ impl WgUpstreamRuntime {
             reader.abort();
             let _ = reader.await;
         }
+        if let Some(writer) = self.tun_writer.take() {
+            writer.abort();
+            let _ = writer.await;
+        }
         if let Some(pump) = self.pump.take() {
             pump.abort();
             let _ = pump.await;
@@ -180,6 +221,9 @@ impl Drop for WgUpstreamRuntime {
         if let Some(reader) = self.tun_reader.take() {
             reader.abort();
         }
+        if let Some(writer) = self.tun_writer.take() {
+            writer.abort();
+        }
         if let Some(pump) = self.pump.take() {
             pump.abort();
         }
@@ -191,7 +235,6 @@ impl Drop for WgUpstreamRuntime {
 /// so the `Tunn` (which is `!Send`-friendly but still requires `&mut self`
 /// per call) is owned by exactly one task and we don't have to wrestle
 /// with the `select!` borrow surface across `&mut udp_buf` and other arms.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 enum PumpEvent {
     Timer,
     UdpDatagram {
@@ -202,13 +245,12 @@ enum PumpEvent {
     TunReaderClosed,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn run_pump(
     mut tunn: Tunn,
     udp: Arc<UdpSocket>,
     upstream: SocketAddr,
-    tun: Option<Arc<TunSocket>>,
-    mut tun_rx: mpsc::Receiver<Vec<u8>>,
+    tun_in_rx: Option<mpsc::Receiver<Vec<u8>>>,
+    tun_out_tx: Option<mpsc::Sender<Vec<u8>>>,
     handshake: Arc<HandshakeState>,
 ) {
     // Kick off the handshake immediately so the upstream sees us and we
@@ -264,15 +306,13 @@ async fn run_pump(
         }
     });
 
-    // Feeder: tun receive (forwarded from the per-tun async-fd reader
-    // task that the runtime started before us). In handshake-only mode
-    // we still get the receiver but the matching sender was dropped
-    // immediately, so don't bother forwarding — and definitely don't
-    // emit a TunReaderClosed event the moment we start, which would
-    // immediately tear the coordinator down.
-    let tun_forward_task = if tun.is_some() {
+    // Feeder: tun receive — forwards plaintext packets from the
+    // platform-specific reader task into our event channel. In
+    // handshake-only mode tun_in_rx is None so this branch is just
+    // skipped; the pump still runs on the timer + UDP feeders.
+    let tun_forward_task = tun_in_rx.map(|mut tun_rx| {
         let tun_forward_tx = event_tx.clone();
-        Some(tokio::spawn(async move {
+        tokio::spawn(async move {
             while let Some(packet) = tun_rx.recv().await {
                 if tun_forward_tx
                     .send(PumpEvent::TunPacket(packet))
@@ -283,10 +323,8 @@ async fn run_pump(
                 }
             }
             let _ = tun_forward_tx.send(PumpEvent::TunReaderClosed).await;
-        }))
-    } else {
-        None
-    };
+        })
+    });
 
     // Drop the cloned sender so the channel closes when all feeders exit.
     drop(event_tx);
@@ -299,8 +337,8 @@ async fn run_pump(
             PumpEvent::Timer => {
                 let mut out = vec![0u8; MAX_WG_PACKET];
                 let result = tunn.update_timers(&mut out);
-                handle_tunn_result(&result, &udp, upstream, tun.as_deref()).await;
-                drain_decapsulate(&mut tunn, &udp, upstream, tun.as_deref()).await;
+                handle_tunn_result(&result, &udp, upstream, tun_out_tx.as_ref()).await;
+                drain_decapsulate(&mut tunn, &udp, upstream, tun_out_tx.as_ref()).await;
                 let (age, _, _, _, _) = tunn.stats();
                 let mut current = handshake.last_age.write().await;
                 let prev = current.is_some();
@@ -312,8 +350,8 @@ async fn run_pump(
             PumpEvent::UdpDatagram { source, payload } => {
                 let mut out = vec![0u8; MAX_WG_PACKET];
                 let result = tunn.decapsulate(Some(source), &payload, &mut out);
-                handle_tunn_result(&result, &udp, upstream, tun.as_deref()).await;
-                drain_decapsulate(&mut tunn, &udp, upstream, tun.as_deref()).await;
+                handle_tunn_result(&result, &udp, upstream, tun_out_tx.as_ref()).await;
+                drain_decapsulate(&mut tunn, &udp, upstream, tun_out_tx.as_ref()).await;
                 // Update handshake-completion eagerly on UDP rx as well —
                 // boringtun establishes the session as a side-effect of
                 // decapsulate. Don't wait for the next 250ms timer tick.
@@ -328,7 +366,7 @@ async fn run_pump(
             PumpEvent::TunPacket(packet) => {
                 let mut out = vec![0u8; MAX_WG_PACKET];
                 let result = tunn.encapsulate(&packet, &mut out);
-                handle_tunn_result(&result, &udp, upstream, tun.as_deref()).await;
+                handle_tunn_result(&result, &udp, upstream, tun_out_tx.as_ref()).await;
             }
             PumpEvent::TunReaderClosed => break,
         }
@@ -341,12 +379,18 @@ async fn run_pump(
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+/// Common handler for whatever a `Tunn::*` call produced. Outbound
+/// network packets get sent via UDP; outbound tunnel packets get
+/// forwarded to the platform-specific writer task via the
+/// `tun_out_tx` channel — dropped when there is no tun (handshake-only
+/// mode) or when the channel is full (the writer task has stalled,
+/// in which case the packet would have been dropped by the kernel
+/// anyway).
 async fn handle_tunn_result(
     result: &TunnResult<'_>,
     udp: &Arc<UdpSocket>,
     upstream: SocketAddr,
-    tun: Option<&TunSocket>,
+    tun_out_tx: Option<&mpsc::Sender<Vec<u8>>>,
 ) {
     match result {
         TunnResult::Done | TunnResult::Err(_) => {}
@@ -355,14 +399,9 @@ async fn handle_tunn_result(
                 tracing::warn!(?error, "wg-upstream: udp send failed");
             }
         }
-        TunnResult::WriteToTunnelV4(packet, _) => {
-            if let Some(tun) = tun {
-                let _ = tun.write4(packet);
-            }
-        }
-        TunnResult::WriteToTunnelV6(packet, _) => {
-            if let Some(tun) = tun {
-                let _ = tun.write6(packet);
+        TunnResult::WriteToTunnelV4(packet, _) | TunnResult::WriteToTunnelV6(packet, _) => {
+            if let Some(tx) = tun_out_tx {
+                let _ = tx.try_send(packet.to_vec());
             }
         }
     }
@@ -371,25 +410,24 @@ async fn handle_tunn_result(
 /// After `decapsulate(Some(src), ciphertext, ...)` produces a result,
 /// boringtun may still hold queued outbound packets that need to be
 /// flushed via `decapsulate(None, &[], ...)` calls. Loop until Done.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn drain_decapsulate(
     tunn: &mut Tunn,
     udp: &Arc<UdpSocket>,
     upstream: SocketAddr,
-    tun: Option<&TunSocket>,
+    tun_out_tx: Option<&mpsc::Sender<Vec<u8>>>,
 ) {
     loop {
         let mut out = vec![0u8; MAX_WG_PACKET];
         let result = tunn.decapsulate(None, &[], &mut out);
         match &result {
             TunnResult::Done | TunnResult::Err(_) => return,
-            _ => handle_tunn_result(&result, udp, upstream, tun).await,
+            _ => handle_tunn_result(&result, udp, upstream, tun_out_tx).await,
         }
     }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn spawn_tun_reader(tun: Arc<TunSocket>, tun_tx: mpsc::Sender<Vec<u8>>) -> JoinHandle<()> {
+fn spawn_posix_tun_reader(tun: Arc<TunSocket>, tun_tx: mpsc::Sender<Vec<u8>>) -> JoinHandle<()> {
     use std::os::unix::io::{AsRawFd, RawFd};
     use tokio::io::Interest;
     use tokio::io::unix::AsyncFd;
@@ -428,6 +466,89 @@ fn spawn_tun_reader(tun: Arc<TunSocket>, tun_tx: mpsc::Sender<Vec<u8>>) -> JoinH
                     }
                 }
                 Err(_) => guard.clear_ready(),
+            }
+        }
+    })
+}
+
+/// POSIX tun writer. Reads decrypted plaintext packets off the channel
+/// and writes them back to the tun. The IP version is sniffed from the
+/// first nibble so we call the right write4/write6 variant.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn spawn_posix_tun_writer(
+    tun: Arc<TunSocket>,
+    mut rx: mpsc::Receiver<Vec<u8>>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(packet) = rx.recv().await {
+            match packet.first().map(|byte| byte >> 4) {
+                Some(4) => {
+                    let _ = tun.write4(&packet);
+                }
+                Some(6) => {
+                    let _ = tun.write6(&packet);
+                }
+                _ => {}
+            }
+        }
+    })
+}
+
+/// Windows tun reader. WinTun's `receive_blocking` is, well, blocking,
+/// so we run it on a dedicated `spawn_blocking` task and bridge to the
+/// async pump via the mpsc.
+#[cfg(target_os = "windows")]
+fn spawn_wintun_reader(
+    session: Arc<WintunSession>,
+    tun_tx: mpsc::Sender<Vec<u8>>,
+) -> JoinHandle<()> {
+    tokio::task::spawn_blocking(move || {
+        loop {
+            match session.receive_blocking() {
+                Ok(packet) => {
+                    let bytes = packet.bytes().to_vec();
+                    drop(packet);
+                    // blocking_send is fine — we're already on a
+                    // blocking task. If the channel is closed the
+                    // pump is shutting down; bail.
+                    if tun_tx.blocking_send(bytes).is_err() {
+                        return;
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(?error, "wg-upstream: wintun receive failed");
+                    return;
+                }
+            }
+        }
+    })
+}
+
+/// Windows tun writer. Same reasoning as the reader: WinTun's
+/// `allocate_send_packet` + `send_packet` are synchronous, so we run
+/// the loop on a `spawn_blocking` task.
+#[cfg(target_os = "windows")]
+fn spawn_wintun_writer(
+    session: Arc<WintunSession>,
+    mut rx: mpsc::Receiver<Vec<u8>>,
+) -> JoinHandle<()> {
+    tokio::task::spawn_blocking(move || {
+        while let Some(packet) = rx.blocking_recv() {
+            let Ok(size) = u16::try_from(packet.len()) else {
+                tracing::warn!(
+                    "wg-upstream: wintun packet too large to send ({} bytes)",
+                    packet.len()
+                );
+                continue;
+            };
+            match session.allocate_send_packet(size) {
+                Ok(mut outbound) => {
+                    outbound.bytes_mut().copy_from_slice(&packet);
+                    session.send_packet(outbound);
+                }
+                Err(error) => {
+                    tracing::warn!(?error, "wg-upstream: wintun allocate_send_packet failed");
+                }
             }
         }
     })
@@ -979,7 +1100,7 @@ fn run_checked(command: &mut ProcessCommand) -> Result<()> {
 /// watchdog: by waiting for a real handshake before swapping the
 /// default route, a misconfigured config or unreachable upstream cannot
 /// take the host offline.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub const DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[cfg(target_os = "macos")]
@@ -994,11 +1115,25 @@ pub struct DaemonWgUpstream {
     config_fingerprint: WireGuardExitFingerprint,
 }
 
+#[cfg(target_os = "windows")]
+pub struct DaemonWgUpstream {
+    pub iface: String,
+    pub upstream: SocketAddr,
+    runtime: Option<WgUpstreamRuntime>,
+    full_route: Option<WindowsFullDefaultRoute>,
+    // Adapter + session held to keep the WinTun device open for the
+    // lifetime of the tunnel; dropping releases the WinTun adapter
+    // (which removes its routes too).
+    _session: Arc<WintunSession>,
+    _adapter: Arc<wintun::Adapter>,
+    config_fingerprint: WireGuardExitFingerprint,
+}
+
 /// Subset of `WireGuardExitConfig` that meaningfully affects the
 /// userspace tunnel — used to short-circuit reconcile if nothing
 /// changed. We deliberately exclude DNS / MTU since they don't
 /// require tearing the WG tunnel down.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WireGuardExitFingerprint {
     enabled: bool,
@@ -1011,7 +1146,7 @@ pub struct WireGuardExitFingerprint {
     persistent_keepalive_secs: u16,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 impl WireGuardExitFingerprint {
     pub fn from_config(config: &WireGuardExitConfig) -> Self {
         Self {
@@ -1128,6 +1263,383 @@ impl DaemonWgUpstream {
     }
 }
 
+#[cfg(target_os = "windows")]
+impl DaemonWgUpstream {
+    pub fn matches(&self, new_config: &WireGuardExitConfig) -> bool {
+        self.config_fingerprint == WireGuardExitFingerprint::from_config(new_config)
+    }
+
+    pub async fn cleanup(mut self) {
+        if let Some(mut full_route) = self.full_route.take() {
+            if let Err(error) = full_route.revert() {
+                eprintln!(
+                    "fips: WG upstream route revert failed: {error}. \
+                     Routing table may need manual cleanup."
+                );
+            }
+            drop(full_route);
+        }
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown().await;
+        }
+        // self._session and self._adapter drop here. WinTun removes
+        // its adapter (and any routes pointing at it) when the last
+        // reference goes; the kernel falls back to whatever default
+        // route still exists with a higher metric, which the
+        // WindowsFullDefaultRoute revert above just restored.
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Windows full default-route swap. Same shape as FullDefaultRoute on
+// POSIX, but the routing table is driven by `netsh interface ipv4`
+// instead of `ip` / `route`, and the WG iface is identified by its
+// kernel interface index rather than a name. The captured original
+// default route is held verbatim from `route print 0.0.0.0` so we can
+// re-add it on cleanup.
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+pub fn apply_windows_full_default_route(
+    wg_iface_index: u32,
+    upstream: SocketAddr,
+) -> Result<WindowsFullDefaultRoute> {
+    let upstream_ip = match upstream.ip() {
+        IpAddr::V4(ip) => ip,
+        IpAddr::V6(_) => {
+            return Err(anyhow!(
+                "WG upstream IPv6 endpoint not yet supported on Windows"
+            ));
+        }
+    };
+
+    // Capture the underlay default route (gateway + interface index)
+    // before we touch anything. We need the gateway to install a /32
+    // bypass for the WG endpoint.
+    let original = capture_windows_default_route()?;
+    if original.interface_index == wg_iface_index {
+        return Err(anyhow!(
+            "captured default route already points at the WG WinTun adapter (interface={}); \
+             refusing to swap to avoid creating a routing loop",
+            wg_iface_index
+        ));
+    }
+
+    // 1. /32 bypass for the WG endpoint via the original gateway.
+    //    Must exist BEFORE we add the WG default; otherwise the
+    //    encrypted UDP would loop into the WG iface.
+    run_windows_netsh(&[
+        "interface".to_string(),
+        "ipv4".to_string(),
+        "add".to_string(),
+        "route".to_string(),
+        format!("{upstream_ip}/32"),
+        format!("interface={}", original.interface_index),
+        format!("nexthop={}", original.gateway),
+        "metric=1".to_string(),
+        "store=active".to_string(),
+    ])?;
+
+    // 2. Default via the WG WinTun adapter at metric=1 so it wins
+    //    against the underlay's default (typically metric ~10).
+    if let Err(error) = run_windows_netsh(&[
+        "interface".to_string(),
+        "ipv4".to_string(),
+        "add".to_string(),
+        "route".to_string(),
+        "0.0.0.0/0".to_string(),
+        format!("interface={}", wg_iface_index),
+        "metric=1".to_string(),
+        "store=active".to_string(),
+    ]) {
+        // Roll back the bypass we just added before bubbling the
+        // error up — leaving a /32 to a now-broken gateway around
+        // would be a real footgun.
+        let _ = run_windows_netsh(&[
+            "interface".to_string(),
+            "ipv4".to_string(),
+            "delete".to_string(),
+            "route".to_string(),
+            format!("{upstream_ip}/32"),
+            format!("interface={}", original.interface_index),
+            "store=active".to_string(),
+        ]);
+        return Err(error);
+    }
+
+    Ok(WindowsFullDefaultRoute {
+        wg_iface_index,
+        bypass_target: upstream_ip,
+        original,
+        reverted: false,
+    })
+}
+
+#[cfg(target_os = "windows")]
+pub struct WindowsFullDefaultRoute {
+    wg_iface_index: u32,
+    bypass_target: std::net::Ipv4Addr,
+    original: WindowsDefaultRoute,
+    reverted: bool,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone)]
+struct WindowsDefaultRoute {
+    gateway: String,
+    interface_index: u32,
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsFullDefaultRoute {
+    pub fn revert(&mut self) -> Result<()> {
+        if self.reverted {
+            return Ok(());
+        }
+        // Delete our 0.0.0.0/0 → WG-iface entry. The original default
+        // (which we never touched) is still in the table at its
+        // higher metric and now becomes the active default again.
+        let _ = run_windows_netsh(&[
+            "interface".to_string(),
+            "ipv4".to_string(),
+            "delete".to_string(),
+            "route".to_string(),
+            "0.0.0.0/0".to_string(),
+            format!("interface={}", self.wg_iface_index),
+            "store=active".to_string(),
+        ]);
+        // Delete the /32 bypass for the WG endpoint.
+        let _ = run_windows_netsh(&[
+            "interface".to_string(),
+            "ipv4".to_string(),
+            "delete".to_string(),
+            "route".to_string(),
+            format!("{}/32", self.bypass_target),
+            format!("interface={}", self.original.interface_index),
+            "store=active".to_string(),
+        ]);
+        self.reverted = true;
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for WindowsFullDefaultRoute {
+    fn drop(&mut self) {
+        if let Err(error) = self.revert() {
+            eprintln!(
+                "wg-upstream: WARNING — Windows route revert failed: {error}. \
+                 You may need to run `netsh interface ipv4 delete route 0.0.0.0/0 \
+                 interface={}` manually.",
+                self.wg_iface_index
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn capture_windows_default_route() -> Result<WindowsDefaultRoute> {
+    // `route print -4 0.0.0.0` lists IPv4 default routes. Output
+    // includes columns like:
+    //   Network Destination | Netmask | Gateway | Interface | Metric
+    //   0.0.0.0             | 0.0.0.0 | 192.168.1.1 | 192.168.1.42 | 25
+    let output = ProcessCommand::new("route")
+        .arg("print")
+        .arg("-4")
+        .arg("0.0.0.0")
+        .output()
+        .context("spawn `route print -4 0.0.0.0`")?;
+    if !output.status.success() {
+        return Err(anyhow!("route print failed: {}", output.status));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let interface_ip = parse_windows_default_route_columns(&stdout)
+        .ok_or_else(|| anyhow!("no IPv4 default route found in `route print` output"))?;
+    let interface_index = resolve_windows_interface_index_for_address(&interface_ip.interface_ip)?;
+    Ok(WindowsDefaultRoute {
+        gateway: interface_ip.gateway,
+        interface_index,
+    })
+}
+
+#[cfg(any(test, target_os = "windows"))]
+struct ParsedWindowsDefaultRoute {
+    gateway: String,
+    interface_ip: String,
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn parse_windows_default_route_columns(output: &str) -> Option<ParsedWindowsDefaultRoute> {
+    for line in output.lines() {
+        let tokens: Vec<&str> = line.split_whitespace().collect();
+        if tokens.len() < 5 {
+            continue;
+        }
+        if tokens[0] == "0.0.0.0" && tokens[1] == "0.0.0.0" {
+            // Some columns may be "On-link" for the gateway when the
+            // default goes via a /32 host route; skip those — they
+            // can't be used as the bypass nexthop.
+            if tokens[2].eq_ignore_ascii_case("on-link") {
+                continue;
+            }
+            return Some(ParsedWindowsDefaultRoute {
+                gateway: tokens[2].to_string(),
+                interface_ip: tokens[3].to_string(),
+            });
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_windows_interface_index_for_address(interface_ip: &str) -> Result<u32> {
+    use std::net::Ipv4Addr;
+    let target: Ipv4Addr = interface_ip
+        .parse()
+        .with_context(|| format!("invalid IPv4 interface address {interface_ip}"))?;
+
+    // `netsh interface ipv4 show ipaddresses level=verbose` enumerates
+    // every IPv4 address with its interface index. Cheap parse; we
+    // could use the IpHelper API but that's a bigger crate dep.
+    let output = ProcessCommand::new("netsh")
+        .args([
+            "interface",
+            "ipv4",
+            "show",
+            "ipaddresses",
+            "level=verbose",
+        ])
+        .output()
+        .context("spawn `netsh interface ipv4 show ipaddresses`")?;
+    if !output.status.success() {
+        return Err(anyhow!("netsh show ipaddresses failed: {}", output.status));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut current_index: Option<u32> = None;
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("Interface ") {
+            // "Interface 7: ..."
+            if let Some((idx_str, _)) = rest.split_once(':')
+                && let Ok(idx) = idx_str.trim().parse::<u32>()
+            {
+                current_index = Some(idx);
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("Address ") {
+            if let Some((addr_str, _)) = rest.split_once(' ')
+                && let Ok(addr) = addr_str.parse::<Ipv4Addr>()
+                && addr == target
+                && let Some(idx) = current_index
+            {
+                return Ok(idx);
+            }
+        }
+    }
+    Err(anyhow!(
+        "no Windows interface found with IPv4 address {target}"
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_netsh(args: &[String]) -> Result<()> {
+    let output = ProcessCommand::new("netsh")
+        .args(args)
+        .output()
+        .with_context(|| format!("spawn `netsh {}`", args.join(" ")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(anyhow!(
+            "netsh {} failed:\n  stdout: {}\n  stderr: {}",
+            args.join(" "),
+            stdout.trim(),
+            stderr.trim()
+        ));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Windows daemon entry point. Mirrors the macOS variant: creates a
+// dedicated WinTun adapter for the WG upstream, runs the userspace
+// state machine, watchdogs the handshake, and only swaps the default
+// route after a successful handshake.
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+pub async fn apply_daemon_wg_upstream(
+    config: &WireGuardExitConfig,
+    handshake_timeout: Duration,
+) -> Result<DaemonWgUpstream> {
+    let fingerprint = WireGuardExitFingerprint::from_config(config);
+    let adapter_name = if config.interface.trim().is_empty() {
+        "nvpn-wg-upstream".to_string()
+    } else {
+        config.interface.clone()
+    };
+
+    let wintun = nostr_vpn_wintun::load_wintun()
+        .context("load wintun.dll for WG upstream")?;
+    let adapter = wintun::Adapter::open(&wintun, &adapter_name)
+        .or_else(|_| wintun::Adapter::create(&wintun, &adapter_name, "NostrVPN", None))
+        .with_context(|| format!("open or create wintun adapter {adapter_name}"))?;
+
+    let mtu = if config.mtu > 0 { config.mtu } else { 1420 };
+    adapter
+        .set_mtu(mtu as usize)
+        .with_context(|| format!("set MTU on wintun adapter {adapter_name}"))?;
+    let parsed_address = crate::windows_tunnel::windows_interface_address(&config.address)?;
+    adapter
+        .set_network_addresses_tuple(
+            parsed_address.address.into(),
+            parsed_address.mask.into(),
+            None,
+        )
+        .with_context(|| format!("set address on wintun adapter {adapter_name}"))?;
+    let interface_index = adapter
+        .get_adapter_index()
+        .with_context(|| format!("read interface index for {adapter_name}"))?;
+    let session = Arc::new(
+        adapter
+            .start_session(wintun::MAX_RING_CAPACITY)
+            .with_context(|| format!("start wintun session for {adapter_name}"))?,
+    );
+    let adapter = Arc::new(adapter);
+
+    let runtime = WgUpstreamRuntime::start_with_wintun(config, session.clone())
+        .await
+        .context("start userspace WG runtime on wintun")?;
+    let upstream = runtime.upstream();
+
+    if !runtime.wait_for_handshake(handshake_timeout).await {
+        runtime.shutdown().await;
+        // Adapter and session drop here, removing the WinTun device.
+        return Err(anyhow!(
+            "WG upstream handshake to {upstream} did not complete within {}s; \
+             routing table NOT modified",
+            handshake_timeout.as_secs()
+        ));
+    }
+
+    let full_route = match apply_windows_full_default_route(interface_index, upstream) {
+        Ok(route) => route,
+        Err(error) => {
+            runtime.shutdown().await;
+            return Err(error.context("swap Windows default route via WG upstream"));
+        }
+    };
+
+    Ok(DaemonWgUpstream {
+        iface: adapter_name,
+        upstream,
+        runtime: Some(runtime),
+        full_route: Some(full_route),
+        _session: session,
+        _adapter: adapter,
+        config_fingerprint: fingerprint,
+    })
+}
+
 async fn resolve_endpoint(endpoint: &str) -> Result<SocketAddr> {
     let endpoint = endpoint.trim();
     if let Ok(addr) = endpoint.parse::<SocketAddr>() {
@@ -1154,6 +1666,52 @@ mod tests {
         let priv_b64 = STANDARD.encode(private.to_bytes());
         let pub_b64 = STANDARD.encode(public.as_bytes());
         (private, public, priv_b64, pub_b64)
+    }
+
+    #[test]
+    fn parses_windows_default_route_from_route_print() {
+        // Synthetic `route print -4 0.0.0.0` output. Only the
+        // 0.0.0.0/0.0.0.0 row matters; all other content is meant to
+        // be skipped by the parser.
+        let sample = "\
+===========================================================================
+Interface List
+ 23...00 ff a1 b2 c3 d4 ......WireGuard Tunnel
+ 12...c0 d4 fe ff aa bb ......Realtek PCIe GbE
+===========================================================================
+
+IPv4 Route Table
+===========================================================================
+Active Routes:
+Network Destination        Netmask          Gateway       Interface  Metric
+          0.0.0.0          0.0.0.0      192.168.1.1     192.168.1.42     25
+        127.0.0.0        255.0.0.0         On-link         127.0.0.1    331
+===========================================================================
+";
+        let parsed = parse_windows_default_route_columns(sample)
+            .expect("default route parsed");
+        assert_eq!(parsed.gateway, "192.168.1.1");
+        assert_eq!(parsed.interface_ip, "192.168.1.42");
+    }
+
+    #[test]
+    fn skips_on_link_default_routes() {
+        let sample = "\
+Active Routes:
+Network Destination        Netmask          Gateway       Interface  Metric
+          0.0.0.0          0.0.0.0         On-link        10.0.0.1     50
+          0.0.0.0          0.0.0.0      192.168.1.1   192.168.1.42     25
+";
+        let parsed = parse_windows_default_route_columns(sample)
+            .expect("non-On-link default parsed");
+        assert_eq!(parsed.gateway, "192.168.1.1");
+        assert_eq!(parsed.interface_ip, "192.168.1.42");
+    }
+
+    #[test]
+    fn returns_none_when_no_default_route_present() {
+        let sample = "Active Routes:\n      127.0.0.0  255.0.0.0  On-link  127.0.0.1  331\n";
+        assert!(parse_windows_default_route_columns(sample).is_none());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
