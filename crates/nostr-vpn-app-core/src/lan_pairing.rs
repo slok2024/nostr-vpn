@@ -16,7 +16,7 @@ use socket2::{Domain, Protocol, SockRef, Socket, Type};
 use crate::invite::{parse_network_invite, to_npub};
 
 pub(crate) const LAN_PAIRING_ANNOUNCEMENT_VERSION: u8 = 2;
-pub(crate) const LAN_PAIRING_DURATION: Duration = Duration::from_mins(15);
+pub const LAN_PAIRING_DURATION: Duration = Duration::from_mins(15);
 pub(crate) const LAN_PAIRING_STALE_AFTER: Duration = Duration::from_secs(16);
 
 const LAN_PAIRING_ADDR: Ipv4Addr = Ipv4Addr::new(239, 255, 73, 73);
@@ -26,21 +26,21 @@ const LAN_PAIRING_READ_TIMEOUT: Duration = Duration::from_millis(250);
 const LAN_PAIRING_BUFFER_BYTES: usize = 8_192;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LanPairingSignal {
-    pub(crate) npub: String,
-    pub(crate) node_name: String,
-    pub(crate) endpoint: String,
-    pub(crate) network_name: String,
-    pub(crate) network_id: String,
-    pub(crate) invite: String,
+pub struct LanPairingSignal {
+    pub npub: String,
+    pub node_name: String,
+    pub endpoint: String,
+    pub network_name: String,
+    pub network_id: String,
+    pub invite: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LanPairingAnnouncement {
-    pub(crate) npub: String,
-    pub(crate) node_name: String,
-    pub(crate) endpoint: String,
-    pub(crate) invite: String,
+pub struct LanPairingAnnouncement {
+    pub npub: String,
+    pub node_name: String,
+    pub endpoint: String,
+    pub invite: String,
 }
 
 /// Shared control surface for the worker thread.
@@ -80,7 +80,7 @@ impl LanPairingControl {
 }
 
 #[derive(Debug)]
-pub(crate) struct LanPairingWorker {
+pub struct LanPairingWorker {
     receiver: Receiver<LanPairingSignal>,
     control: Arc<LanPairingControl>,
     handle: Option<JoinHandle<()>>,
@@ -101,7 +101,7 @@ struct LanPairingAnnouncementPayload {
 }
 
 impl LanPairingWorker {
-    pub(crate) fn drain(&mut self) -> Vec<LanPairingSignal> {
+    pub fn drain(&mut self) -> Vec<LanPairingSignal> {
         let mut signals = Vec::new();
         while let Ok(signal) = self.receiver.try_recv() {
             signals.push(signal);
@@ -110,14 +110,14 @@ impl LanPairingWorker {
     }
 
     /// Mark the worker as broadcasting our invite until `expires_at`.
-    pub(crate) fn set_broadcast_until(&self, expires_at: SystemTime) {
+    pub fn set_broadcast_until(&self, expires_at: SystemTime) {
         self.control
             .broadcast_until
             .store(unix_seconds(expires_at), Ordering::Relaxed);
     }
 
     /// Mark the worker as listening for nearby invites until `expires_at`.
-    pub(crate) fn set_listen_until(&self, expires_at: SystemTime) {
+    pub fn set_listen_until(&self, expires_at: SystemTime) {
         self.control
             .listen_until
             .store(unix_seconds(expires_at), Ordering::Relaxed);
@@ -137,7 +137,7 @@ impl LanPairingWorker {
         }
     }
 
-    pub(crate) fn stop(&mut self) {
+    pub fn stop(&mut self) {
         self.control.stop.store(true, Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
@@ -151,9 +151,7 @@ impl Drop for LanPairingWorker {
     }
 }
 
-pub(crate) fn spawn_lan_pairing_worker(
-    announcement: LanPairingAnnouncement,
-) -> Result<LanPairingWorker> {
+pub fn spawn_lan_pairing_worker(announcement: LanPairingAnnouncement) -> Result<LanPairingWorker> {
     let socket = bind_lan_pairing_socket()?;
     let interfaces = lan_pairing_interfaces();
     join_multicast_on_interfaces(&socket, &interfaces);

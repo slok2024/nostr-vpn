@@ -1,0 +1,28 @@
+services:
+  alice:
+    build:
+      context: .
+      dockerfile: Dockerfile.lan-pair-probe
+    image: nostr-vpn-lan-pair-probe:latest
+    command: ["lan_pair_probe", "alice", "10"]
+    networks:
+      lan:
+        ipv4_address: 10.204.0.10
+
+  bob:
+    image: nostr-vpn-lan-pair-probe:latest
+    depends_on:
+      - alice
+    command: ["lan_pair_probe", "bob", "10"]
+    networks:
+      lan:
+        ipv4_address: 10.204.0.11
+
+networks:
+  lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.204.0.0/24
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
