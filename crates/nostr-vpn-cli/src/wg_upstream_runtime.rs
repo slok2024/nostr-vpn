@@ -218,10 +218,9 @@ async fn run_pump(
         let mut buf = vec![0u8; MAX_WG_PACKET];
         if let TunnResult::WriteToNetwork(packet) =
             tunn.format_handshake_initiation(&mut buf, false)
+            && let Err(error) = udp.send_to(packet, upstream).await
         {
-            if let Err(error) = udp.send_to(packet, upstream).await {
-                tracing::warn!(?error, "wg-upstream: initial handshake send failed");
-            }
+            tracing::warn!(?error, "wg-upstream: initial handshake send failed");
         }
     }
 
@@ -1044,23 +1043,20 @@ pub async fn apply_daemon_wg_upstream(
     handshake_timeout: Duration,
 ) -> Result<DaemonWgUpstream> {
     let fingerprint = WireGuardExitFingerprint::from_config(config);
-    let interface_hint = if config.interface.trim().is_empty()
-        || !config.interface.starts_with("utun")
-    {
-        // Daemon-side: always let the kernel pick the next utunN.
-        // The user-facing config's `interface` is just a label.
-        "utun".to_string()
-    } else {
-        config.interface.clone()
-    };
+    let interface_hint =
+        if config.interface.trim().is_empty() || !config.interface.starts_with("utun") {
+            // Daemon-side: always let the kernel pick the next utunN.
+            // The user-facing config's `interface` is just a label.
+            "utun".to_string()
+        } else {
+            config.interface.clone()
+        };
 
     let tun = TunSocket::new(&interface_hint)
         .with_context(|| format!("create utun for WG upstream (hint='{interface_hint}')"))?
         .set_non_blocking()
         .context("set utun non-blocking")?;
-    let actual_iface = tun
-        .name()
-        .context("read utun name (probably needs root)")?;
+    let actual_iface = tun.name().context("read utun name (probably needs root)")?;
     let tun = Arc::new(tun);
 
     let runtime = WgUpstreamRuntime::start_with_tun(config, tun.clone())
@@ -1081,8 +1077,7 @@ pub async fn apply_daemon_wg_upstream(
     }
 
     let mtu = if config.mtu > 0 { config.mtu } else { 1420 };
-    let full_route = match apply_full_default_route(&actual_iface, &config.address, upstream, mtu)
-    {
+    let full_route = match apply_full_default_route(&actual_iface, &config.address, upstream, mtu) {
         Ok(route) => route,
         Err(error) => {
             runtime.shutdown().await;
