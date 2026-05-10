@@ -1,3 +1,4 @@
+use std::net::Ipv4Addr;
 use std::os::raw::c_int;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock, mpsc};
@@ -14,6 +15,8 @@ use nostr_vpn_core::config::{
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
 use nostr_vpn_core::wg_upstream::{DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT, WgUpstreamRuntime};
 use serde::{Deserialize, Serialize};
+
+use crate::wg_upstream_nat::{rewrite_ipv4_destination, rewrite_ipv4_source};
 use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
 use tokio::sync::mpsc as tokio_mpsc;
 use tokio::task::JoinHandle;
@@ -235,11 +238,14 @@ impl MobileTunnel {
         // `wg_recv_rx` carries plaintext we got back after
         // decapsulating the upstream's reply, ready to write back to
         // the OS tun.
+        let mesh_ipv4 = parse_ipv4(&config.local_address);
         let mut tasks: Vec<JoinHandle<()>> = Vec::new();
         let mut wg_runtime: Option<WgUpstreamRuntime> = None;
         let mut wg_send_tx: Option<tokio_mpsc::Sender<Vec<u8>>> = None;
         let mut wg_socket_fd: c_int = -1;
+        let mut wg_address_ipv4: Option<Ipv4Addr> = None;
         if let Some(wg_config) = config.wireguard_exit.as_ref() {
+            wg_address_ipv4 = parse_ipv4(&wg_config.address);
             let (send_tx, send_rx) = tokio_mpsc::channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
             let (recv_tx, mut recv_rx) = tokio_mpsc::channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
             match WgUpstreamRuntime::start_with_channels(wg_config, send_rx, recv_tx).await {
@@ -249,10 +255,17 @@ impl MobileTunnel {
                     wg_runtime = Some(runtime);
                     wg_send_tx = Some(send_tx);
                     // Forward decrypted WG packets back to the OS as
-                    // inbound traffic.
+                    // inbound traffic. DNAT: rewrite the WG-side
+                    // destination IP back to the mesh tun address so
+                    // the OS routes the reply to the local app stack.
                     let inbound_tx_for_wg = inbound_tx.clone();
+                    let wg_addr = wg_address_ipv4;
+                    let mesh_addr = mesh_ipv4;
                     tasks.push(tokio::spawn(async move {
-                        while let Some(packet) = recv_rx.recv().await {
+                        while let Some(mut packet) = recv_rx.recv().await {
+                            if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
+                                rewrite_ipv4_destination(&mut packet, wg, mesh);
+                            }
                             if inbound_tx_for_wg.send(packet).is_err() {
                                 break;
                             }
@@ -293,6 +306,8 @@ impl MobileTunnel {
             let endpoint = Arc::clone(&endpoint);
             let mesh = Arc::clone(&mesh);
             let wg_send_tx_for_dispatch = wg_send_tx.clone();
+            let wg_addr = wg_address_ipv4;
+            let mesh_addr = mesh_ipv4;
             tokio::spawn(async move {
                 while let Some(packet) = outbound_rx.recv().await {
                     let outgoing = mesh
@@ -305,7 +320,15 @@ impl MobileTunnel {
                         // No matching mesh peer route: hand the
                         // plaintext off to the WG runtime, which will
                         // boringtun-encapsulate and send out via the
-                        // upstream UDP socket.
+                        // upstream UDP socket. SNAT first so the inner
+                        // source IP matches the WG peer's configured
+                        // address — Mullvad / Proton silently drop
+                        // packets whose inner source isn't an allowed
+                        // peer IP.
+                        let mut packet = packet;
+                        if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
+                            rewrite_ipv4_source(&mut packet, mesh, wg);
+                        }
                         let _ = wg_tx.try_send(packet);
                     }
                 }
@@ -494,6 +517,10 @@ fn local_interface_address_for_tunnel(tunnel_ip: &str) -> String {
 
 fn strip_cidr(value: &str) -> &str {
     value.split('/').next().unwrap_or(value)
+}
+
+fn parse_ipv4(value: &str) -> Option<Ipv4Addr> {
+    strip_cidr(value.trim()).parse().ok()
 }
 
 fn empty_config() -> MobileTunnelConfig {

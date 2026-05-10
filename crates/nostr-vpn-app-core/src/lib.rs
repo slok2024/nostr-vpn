@@ -7,6 +7,7 @@ mod mobile_tunnel;
 pub mod native_state;
 pub mod platform;
 pub mod state;
+mod wg_upstream_nat;
 
 pub use actions::NativeAppAction;
 pub use ffi::FfiApp;

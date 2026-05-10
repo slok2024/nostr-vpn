@@ -105,15 +105,22 @@ impl WgUpstreamRuntime {
         tun_io: Option<(mpsc::Receiver<Vec<u8>>, mpsc::Sender<Vec<u8>>)>,
         tun_handles: Option<(JoinHandle<()>, JoinHandle<()>)>,
     ) -> Result<Self> {
+        log_android_info("wg-upstream: start_with_io entered");
         let private = decode_private_key(&config.private_key)?;
         let public = decode_public_key(&config.peer_public_key)?;
         let preshared = decode_optional_preshared_key(&config.peer_preshared_key)?;
         let upstream = resolve_endpoint(&config.endpoint).await?;
+        log_android_info(&format!(
+            "wg-upstream: keys decoded, upstream resolved to {upstream}"
+        ));
 
         let udp = UdpSocket::bind("0.0.0.0:0")
             .await
             .context("bind upstream WG udp socket")?;
         let udp_socket_fd = raw_udp_socket_fd(&udp);
+        log_android_info(&format!(
+            "wg-upstream: udp socket bound, fd={udp_socket_fd}"
+        ));
         let udp = Arc::new(udp);
 
         let keepalive = if config.persistent_keepalive_secs == 0 {
@@ -260,12 +267,29 @@ async fn run_pump(
     tun_out_tx: Option<mpsc::Sender<Vec<u8>>>,
     handshake: Arc<HandshakeState>,
 ) {
+    log_android_info(&format!(
+        "wg-upstream: run_pump starting, upstream={upstream}"
+    ));
     {
         let mut buf = vec![0u8; MAX_WG_PACKET];
-        if let TunnResult::WriteToNetwork(packet) = tunn.format_handshake_initiation(&mut buf, false)
-            && let Err(error) = udp.send_to(packet, upstream).await
-        {
-            tracing::warn!(?error, "wg-upstream: initial handshake send failed");
+        match tunn.format_handshake_initiation(&mut buf, false) {
+            TunnResult::WriteToNetwork(packet) => {
+                let len = packet.len();
+                match udp.send_to(packet, upstream).await {
+                    Ok(n) => log_android_info(&format!(
+                        "wg-upstream: initial handshake init sent ({n}/{len} bytes to {upstream})"
+                    )),
+                    Err(error) => {
+                        log_android_warn(&format!(
+                            "wg-upstream: initial handshake send failed: {error}"
+                        ));
+                        tracing::warn!(?error, "wg-upstream: initial handshake send failed");
+                    }
+                }
+            }
+            _ => log_android_info(
+                "wg-upstream: format_handshake_initiation returned non-WriteToNetwork",
+            ),
         }
     }
 
@@ -287,9 +311,16 @@ async fn run_pump(
     let udp_tx = event_tx.clone();
     let udp_task = tokio::spawn(async move {
         let mut buf = vec![0u8; MAX_WG_PACKET];
+        let mut count: u32 = 0;
         loop {
             match udp_rx_socket.recv_from(&mut buf).await {
                 Ok((n, src)) => {
+                    count = count.saturating_add(1);
+                    if count <= 3 || count % 50 == 0 {
+                        log_android_info(&format!(
+                            "wg-upstream: udp recv #{count} from {src} ({n} bytes)"
+                        ));
+                    }
                     let event = PumpEvent::UdpDatagram {
                         source: src.ip(),
                         payload: buf[..n].to_vec(),
@@ -299,6 +330,7 @@ async fn run_pump(
                     }
                 }
                 Err(error) => {
+                    log_android_warn(&format!("wg-upstream: udp recv failed: {error}"));
                     tracing::warn!(?error, "wg-upstream: udp recv failed");
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
@@ -375,15 +407,31 @@ async fn handle_tunn_result(
     tun_out_tx: Option<&mpsc::Sender<Vec<u8>>>,
 ) {
     match result {
-        TunnResult::Done | TunnResult::Err(_) => {}
+        TunnResult::Done => {}
+        TunnResult::Err(error) => {
+            log_android_warn(&format!("wg-upstream: tunn error {error:?}"));
+        }
         TunnResult::WriteToNetwork(packet) => {
             if let Err(error) = udp.send_to(packet, upstream).await {
+                log_android_warn(&format!(
+                    "wg-upstream: udp send failed ({} bytes): {error}",
+                    packet.len()
+                ));
                 tracing::warn!(?error, "wg-upstream: udp send failed");
             }
         }
         TunnResult::WriteToTunnelV4(packet, _) | TunnResult::WriteToTunnelV6(packet, _) => {
+            let len = packet.len();
             if let Some(tx) = tun_out_tx {
-                let _ = tx.try_send(packet.to_vec());
+                if let Err(error) = tx.try_send(packet.to_vec()) {
+                    log_android_warn(&format!(
+                        "wg-upstream: tun_out send failed ({len} bytes): {error}"
+                    ));
+                }
+            } else {
+                log_android_warn(&format!(
+                    "wg-upstream: dropped {len}-byte plaintext (no tun_out_tx)"
+                ));
             }
         }
     }
@@ -463,6 +511,48 @@ fn raw_udp_socket_fd(_socket: &UdpSocket) -> c_int {
     -1
 }
 
+// Direct Android logcat bridge so the WG pump's diagnostic messages
+// actually surface during device testing — Rust stderr/stdout on
+// Android is redirected to /dev/null by default, and the existing
+// `tracing` macros silently no-op without a registered subscriber.
+// Cheap, self-contained, no extra dep.
+
+#[cfg(target_os = "android")]
+fn log_android(prio: i32, message: &str) {
+    use std::ffi::CString;
+    let tag = CString::new("nvpn-wg").unwrap_or_default();
+    if let Ok(msg) = CString::new(message) {
+        unsafe {
+            __android_log_write(prio, tag.as_ptr(), msg.as_ptr());
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+fn log_android_info(message: &str) {
+    log_android(4 /* ANDROID_LOG_INFO */, message);
+}
+
+#[cfg(target_os = "android")]
+fn log_android_warn(message: &str) {
+    log_android(5 /* ANDROID_LOG_WARN */, message);
+}
+
+#[cfg(not(target_os = "android"))]
+fn log_android_info(_message: &str) {}
+
+#[cfg(not(target_os = "android"))]
+fn log_android_warn(_message: &str) {}
+
+#[cfg(target_os = "android")]
+unsafe extern "C" {
+    fn __android_log_write(
+        prio: i32,
+        tag: *const std::os::raw::c_char,
+        text: *const std::os::raw::c_char,
+    ) -> i32;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -523,8 +613,7 @@ mod tests {
                     _ => continue,
                 };
                 let mut out = vec![0u8; MAX_WG_PACKET];
-                let to_send = match server_tunn
-                    .decapsulate(Some(src.ip()), &udp_buf[..n], &mut out)
+                let to_send = match server_tunn.decapsulate(Some(src.ip()), &udp_buf[..n], &mut out)
                 {
                     TunnResult::WriteToNetwork(packet) => Some(packet.to_vec()),
                     _ => None,

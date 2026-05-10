@@ -92,11 +92,22 @@ class NostrVpnService : VpnService() {
         // Rust side exposes the fd via the JNI binding below; -1 means
         // WG upstream isn't running so there's nothing to protect.
         val wgSocketFd = NativeCore.mobileTunnelWgSocketFd(handle)
-        if (wgSocketFd >= 0 && !protect(wgSocketFd)) {
-            android.util.Log.w(
+        android.util.Log.i(
+            "NostrVpnService",
+            "WG upstream socket fd from native runtime: $wgSocketFd (-1 means WG upstream not running)",
+        )
+        if (wgSocketFd >= 0) {
+            val protected_ = protect(wgSocketFd)
+            android.util.Log.i(
                 "NostrVpnService",
-                "VpnService.protect(wgSocketFd=$wgSocketFd) returned false; WG upstream may loop into the VPN tun",
+                "VpnService.protect(wgSocketFd=$wgSocketFd) returned $protected_",
             )
+            if (!protected_) {
+                android.util.Log.w(
+                    "NostrVpnService",
+                    "protect(fd) failed — WG upstream may loop into the VPN tun",
+                )
+            }
         }
 
         registerUnderlyingNetworkUpdates()
