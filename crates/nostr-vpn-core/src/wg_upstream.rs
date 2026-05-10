@@ -359,6 +359,13 @@ async fn run_pump(
 
     drop(event_tx);
 
+    // Recovery state: when boringtun's `update_timers` mysteriously
+    // declines to send a keepalive (observed on iOS — session goes
+    // idle, no keepalive fires, eventually decap returns
+    // NoCurrentSession), force a re-handshake ourselves.
+    let mut consecutive_decap_errors: u32 = 0;
+    let mut last_self_keepalive = std::time::Instant::now();
+
     while let Some(event) = event_rx.recv().await {
         match event {
             PumpEvent::Timer => {
@@ -373,22 +380,46 @@ async fn run_pump(
                 if !prev && age.is_some() {
                     handshake.completed.notify_waiters();
                 }
+                drop(current);
+
+                // Belt-and-braces keepalive: every 20s, if the
+                // session is alive, push a 0-byte plaintext through
+                // encapsulate(). boringtun emits a Transport message
+                // that resets both sides' rekey timers. This compensates
+                // for boringtun's `update_timers` not firing
+                // persistent_keepalive reliably on iOS-suspended runtimes.
+                if age.is_some() && last_self_keepalive.elapsed() >= Duration::from_secs(20) {
+                    last_self_keepalive = std::time::Instant::now();
+                    let mut ka_out = vec![0u8; MAX_WG_PACKET];
+                    let ka_result = tunn.encapsulate(&[], &mut ka_out);
+                    if let TunnResult::WriteToNetwork(packet) = &ka_result {
+                        log_android_info(&format!(
+                            "wg-upstream: self-keepalive {} bytes",
+                            packet.len()
+                        ));
+                    }
+                    handle_tunn_result(&ka_result, &udp, upstream, tun_out_tx.as_ref()).await;
+                }
             }
             PumpEvent::UdpDatagram { source, payload } => {
                 let mut out = vec![0u8; MAX_WG_PACKET];
                 let result = tunn.decapsulate(Some(source), &payload, &mut out);
-                let kind = match &result {
-                    TunnResult::Done => "Done",
+                match &result {
+                    TunnResult::Done => {
+                        consecutive_decap_errors = 0;
+                    }
                     TunnResult::Err(e) => {
-                        log_android_warn(&format!("wg-upstream: decap err {e:?}"));
-                        "Err"
+                        consecutive_decap_errors = consecutive_decap_errors.saturating_add(1);
+                        log_android_warn(&format!(
+                            "wg-upstream: decap err {e:?} (run={consecutive_decap_errors})"
+                        ));
                     }
-                    TunnResult::WriteToNetwork(_) => "WriteToNetwork",
-                    TunnResult::WriteToTunnelV4(_, _) | TunnResult::WriteToTunnelV6(_, _) => {
-                        "WriteToTunnel"
+                    TunnResult::WriteToNetwork(_)
+                    | TunnResult::WriteToTunnelV4(_, _)
+                    | TunnResult::WriteToTunnelV6(_, _) => {
+                        consecutive_decap_errors = 0;
                     }
-                };
-                let _ = kind;
+                }
                 handle_tunn_result(&result, &udp, upstream, tun_out_tx.as_ref()).await;
                 drain_decapsulate(&mut tunn, &udp, upstream, tun_out_tx.as_ref()).await;
                 let (age, _, _, _, _) = tunn.stats();
@@ -398,6 +429,24 @@ async fn run_pump(
                 if !prev && age.is_some() {
                     log_android_info(&format!("wg-upstream: handshake completed, age={age:?}"));
                     handshake.completed.notify_waiters();
+                }
+                drop(current);
+
+                // 5+ consecutive decap errors means our session lost
+                // sync with the upstream. Force a fresh handshake init
+                // — boringtun will accept the next response and
+                // install new keys.
+                if consecutive_decap_errors >= 5 {
+                    log_android_warn(
+                        "wg-upstream: forcing re-handshake after persistent decap errors",
+                    );
+                    consecutive_decap_errors = 0;
+                    let mut hs_out = vec![0u8; MAX_WG_PACKET];
+                    if let TunnResult::WriteToNetwork(packet) =
+                        tunn.format_handshake_initiation(&mut hs_out, true)
+                    {
+                        let _ = udp.send_to(packet, upstream).await;
+                    }
                 }
             }
             PumpEvent::TunPacket(packet) => {
