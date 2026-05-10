@@ -446,6 +446,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.exitNodesPage(
             Text("Exit Node", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(10.dp))
 
+            // The daemon clears the *other* side automatically when
+            // both would otherwise be set (see
+            // `settings_patch_enforces_exit_node_mutual_exclusion`),
+            // so the WG and peer rows only push the field they own.
+            // "Direct" still needs to flip both explicitly — neither
+            // is a conflict the daemon resolves.
             val directSelected = !state.wireguardExitEnabled && state.exitNode.isBlank()
             ExitNodeRow(
                 title = "Direct",
@@ -476,12 +482,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.exitNodesPage(
                 selected = state.wireguardExitEnabled,
                 enabled = state.wireguardExitConfigured,
                 onClick = {
-                    dispatch(
-                        NativeActions.updateSettings(
-                            "exitNode" to "",
-                            "wireguardExitEnabled" to true,
-                        ),
-                    )
+                    dispatch(NativeActions.updateSettings("wireguardExitEnabled" to true))
                 },
             )
 
@@ -492,12 +493,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.exitNodesPage(
                     selected = !state.wireguardExitEnabled && state.exitNode == participant.npub,
                     enabled = true,
                     onClick = {
-                        dispatch(
-                            NativeActions.updateSettings(
-                                "exitNode" to participant.npub,
-                                "wireguardExitEnabled" to false,
-                            ),
-                        )
+                        dispatch(NativeActions.updateSettings("exitNode" to participant.npub))
                     },
                 )
             }

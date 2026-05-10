@@ -486,9 +486,12 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
             "Saving exit node");
     }
 
-    // Mutually-exclusive exit-node selection — flip both fields in
-    // one update so the state can't end up with both set or both
-    // looking unset.
+    // Exit-node selection. The daemon enforces mutual exclusion
+    // between peer and WG (see settings_patch_enforces_exit_node_
+    // mutual_exclusion in ffi.rs), so non-direct rows send only the
+    // field they own. Direct flips both because that's the
+    // "neither" state which doesn't trigger the daemon's conflict
+    // resolution.
 
     public Task SelectDirectExitAsync()
     {
@@ -506,7 +509,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         return DispatchAsync(
             NativeActions.UpdateSettings(new SettingsPatch
             {
-                ExitNode = "",
                 WireguardExitEnabled = true,
             }),
             "Saving exit node");
@@ -518,7 +520,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
             NativeActions.UpdateSettings(new SettingsPatch
             {
                 ExitNode = npub,
-                WireguardExitEnabled = false,
             }),
             "Saving exit node");
     }

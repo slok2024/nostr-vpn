@@ -856,6 +856,15 @@ impl NativeAppRuntime {
         if let Some(value) = patch.listen_port {
             self.config.node.listen_port = value;
         }
+        // Exit-node selection is mutually exclusive: at most one of
+        // (peer exit_node, WireGuard upstream) can be active at a
+        // time. The daemon enforces this so every UI / CLI client
+        // can push a single field and get the right end state —
+        // they don't have to remember to clear the other side. When
+        // both fields are in the same patch, both are applied as
+        // sent (so the patch fully specifies the intent).
+        let exit_node_in_patch = patch.exit_node.is_some();
+        let wg_enabled_in_patch = patch.wireguard_exit_enabled.is_some();
         if let Some(value) = patch.exit_node {
             self.config.exit_node = if value.trim().is_empty() {
                 String::new()
@@ -874,6 +883,24 @@ impl NativeAppRuntime {
         }
         if let Some(value) = patch.wireguard_exit_enabled {
             self.config.wireguard_exit.enabled = value;
+        }
+        // Mutual-exclusion guard. After both fields have landed,
+        // resolve any conflict by preferring the field the patch
+        // *explicitly* set. If both are set explicitly, the patch
+        // already declared the full intent — trust it. If only one
+        // is in the patch, clear the other side when the new value
+        // would otherwise leave both "selected".
+        let peer_set = !self.config.exit_node.is_empty();
+        let wg_on = self.config.wireguard_exit.enabled;
+        if peer_set && wg_on {
+            if exit_node_in_patch && !wg_enabled_in_patch {
+                self.config.wireguard_exit.enabled = false;
+            } else if wg_enabled_in_patch && !exit_node_in_patch {
+                self.config.exit_node = String::new();
+            }
+            // both-in-patch: leave as the caller sent — caller will
+            // typically have set them consistently (one true, other
+            // empty), so this branch is dead in practice.
         }
         if let Some(value) = patch.wireguard_exit_interface {
             self.config.wireguard_exit.interface = value.trim().to_string();
@@ -2363,6 +2390,85 @@ mod tests {
         assert_eq!(state.wireguard_exit_allowed_ips, "0.0.0.0/0");
         assert!(state.wireguard_exit_config.contains("[Interface]"));
         assert!(state.wireguard_exit_config.contains("[Peer]"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn settings_patch_enforces_exit_node_mutual_exclusion() {
+        // Selecting a peer exit clears WG upstream, and selecting WG
+        // upstream clears the peer exit — the daemon enforces this
+        // so every UI can just push the new selection.
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-mutual-exit-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+
+        use nostr_sdk::prelude::{Keys, ToBech32};
+        let peer_npub = Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("peer npub");
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.mobile_runtime = true;
+        runtime.config_path = dir.join("config.toml");
+        runtime.config.ensure_defaults();
+        // Add the peer as a participant in the active network so the
+        // ensure_defaults pass at save time doesn't clear our chosen
+        // exit_node as "not a participant".
+        if let Some(network) = runtime.config.networks.first_mut() {
+            network.participants.push(peer_npub.clone());
+        }
+
+        // Start with WG upstream enabled.
+        runtime.dispatch(NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                wireguard_exit_enabled: Some(true),
+                ..SettingsPatch::default()
+            },
+        });
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        assert!(runtime.config.wireguard_exit.enabled);
+        assert_eq!(runtime.config.exit_node, "");
+
+        // Now push a peer exit. WG must clear.
+        runtime.dispatch(NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                exit_node: Some(peer_npub.clone()),
+                ..SettingsPatch::default()
+            },
+        });
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        assert!(!runtime.config.wireguard_exit.enabled);
+        assert!(!runtime.config.exit_node.is_empty());
+
+        // Flip back to WG: peer exit must clear.
+        runtime.dispatch(NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                wireguard_exit_enabled: Some(true),
+                ..SettingsPatch::default()
+            },
+        });
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        assert!(runtime.config.wireguard_exit.enabled);
+        assert_eq!(runtime.config.exit_node, "");
+
+        // Selecting Direct (clearing exit_node) leaves WG alone — the
+        // user has to explicitly disable WG to go fully direct.
+        runtime.dispatch(NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                exit_node: Some(String::new()),
+                ..SettingsPatch::default()
+            },
+        });
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        assert!(runtime.config.wireguard_exit.enabled);
+        assert_eq!(runtime.config.exit_node, "");
 
         let _ = fs::remove_dir_all(&dir);
     }

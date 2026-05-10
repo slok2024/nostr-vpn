@@ -1764,6 +1764,10 @@ fn route_choice(
         let app = app.clone();
         let choice = choice.clone();
         button.connect_clicked(move |_| {
+            // The daemon enforces mutual exclusion (peer vs WG), so
+            // each non-direct row only sends the field it owns.
+            // Direct needs to flip both because there's nothing to
+            // conflict with — it means "neither".
             let patch = match choice.clone() {
                 ExitChoice::Direct => SettingsPatch {
                     exit_node: Some(String::new()),
@@ -1771,13 +1775,11 @@ fn route_choice(
                     ..SettingsPatch::default()
                 },
                 ExitChoice::WireGuard => SettingsPatch {
-                    exit_node: Some(String::new()),
                     wireguard_exit_enabled: Some(true),
                     ..SettingsPatch::default()
                 },
                 ExitChoice::Peer(npub) => SettingsPatch {
                     exit_node: Some(npub),
-                    wireguard_exit_enabled: Some(false),
                     ..SettingsPatch::default()
                 },
             };

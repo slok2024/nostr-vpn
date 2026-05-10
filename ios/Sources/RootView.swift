@@ -274,6 +274,11 @@ private struct ExitNodesPage: View {
         return endpoint.isEmpty ? "Configured" : endpoint
     }
 
+    // The daemon clears the *other* side automatically when there
+    // would otherwise be both a peer exit AND WG upstream enabled
+    // (see `settings_patch_enforces_exit_node_mutual_exclusion` in
+    // ffi.rs). "Direct" needs to clear both explicitly though, since
+    // there's no conflict in that case for the daemon to resolve.
     private func selectDirect() {
         model.dispatch(
             NativeActions.updateSettings(["exitNode": "", "wireguardExitEnabled": false]),
@@ -283,14 +288,14 @@ private struct ExitNodesPage: View {
 
     private func selectWireGuard() {
         model.dispatch(
-            NativeActions.updateSettings(["exitNode": "", "wireguardExitEnabled": true]),
+            NativeActions.updateSettings(["wireguardExitEnabled": true]),
             status: "Saving route"
         )
     }
 
     private func selectPeer(_ npub: String) {
         model.dispatch(
-            NativeActions.updateSettings(["exitNode": npub, "wireguardExitEnabled": false]),
+            NativeActions.updateSettings(["exitNode": npub]),
             status: "Saving route"
         )
     }
