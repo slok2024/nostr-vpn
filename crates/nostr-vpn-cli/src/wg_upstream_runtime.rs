@@ -123,18 +123,20 @@ fn spawn_wintun_reader(
     session: Arc<WintunSession>,
     tun_tx: mpsc::Sender<Vec<u8>>,
 ) -> JoinHandle<()> {
-    tokio::task::spawn_blocking(move || loop {
-        match session.receive_blocking() {
-            Ok(packet) => {
-                let bytes = packet.bytes().to_vec();
-                drop(packet);
-                if tun_tx.blocking_send(bytes).is_err() {
+    tokio::task::spawn_blocking(move || {
+        loop {
+            match session.receive_blocking() {
+                Ok(packet) => {
+                    let bytes = packet.bytes().to_vec();
+                    drop(packet);
+                    if tun_tx.blocking_send(bytes).is_err() {
+                        return;
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(?error, "wg-upstream: wintun receive failed");
                     return;
                 }
-            }
-            Err(error) => {
-                tracing::warn!(?error, "wg-upstream: wintun receive failed");
-                return;
             }
         }
     })
@@ -1051,13 +1053,7 @@ fn resolve_windows_interface_index_for_address(interface_ip: &str) -> Result<u32
     // every IPv4 address with its interface index. Cheap parse; we
     // could use the IpHelper API but that's a bigger crate dep.
     let output = ProcessCommand::new("netsh")
-        .args([
-            "interface",
-            "ipv4",
-            "show",
-            "ipaddresses",
-            "level=verbose",
-        ])
+        .args(["interface", "ipv4", "show", "ipaddresses", "level=verbose"])
         .output()
         .context("spawn `netsh interface ipv4 show ipaddresses`")?;
     if !output.status.success() {
@@ -1127,8 +1123,7 @@ pub async fn apply_daemon_wg_upstream(
         config.interface.clone()
     };
 
-    let wintun = nostr_vpn_wintun::load_wintun()
-        .context("load wintun.dll for WG upstream")?;
+    let wintun = nostr_vpn_wintun::load_wintun().context("load wintun.dll for WG upstream")?;
     let adapter = wintun::Adapter::open(&wintun, &adapter_name)
         .or_else(|_| wintun::Adapter::create(&wintun, &adapter_name, "NostrVPN", None))
         .with_context(|| format!("open or create wintun adapter {adapter_name}"))?;
@@ -1212,8 +1207,7 @@ Network Destination        Netmask          Gateway       Interface  Metric
         127.0.0.0        255.0.0.0         On-link         127.0.0.1    331
 ===========================================================================
 ";
-        let parsed = parse_windows_default_route_columns(sample)
-            .expect("default route parsed");
+        let parsed = parse_windows_default_route_columns(sample).expect("default route parsed");
         assert_eq!(parsed.gateway, "192.168.1.1");
         assert_eq!(parsed.interface_ip, "192.168.1.42");
     }
@@ -1226,8 +1220,8 @@ Network Destination        Netmask          Gateway       Interface  Metric
           0.0.0.0          0.0.0.0         On-link        10.0.0.1     50
           0.0.0.0          0.0.0.0      192.168.1.1   192.168.1.42     25
 ";
-        let parsed = parse_windows_default_route_columns(sample)
-            .expect("non-On-link default parsed");
+        let parsed =
+            parse_windows_default_route_columns(sample).expect("non-On-link default parsed");
         assert_eq!(parsed.gateway, "192.168.1.1");
         assert_eq!(parsed.interface_ip, "192.168.1.42");
     }

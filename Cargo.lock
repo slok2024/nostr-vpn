@@ -2509,6 +2509,7 @@ dependencies = [
  "serde_json",
  "socket2 0.6.3",
  "tokio",
+ "tracing",
  "uniffi",
 ]
 
@@ -2547,6 +2548,8 @@ version = "4.0.10"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
+ "boringtun",
  "hex",
  "hickory-proto",
  "hostname",
