@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+### Added
+
+- macOS daemon now actually drives WireGuard upstream end-to-end. The "WireGuard upstream" radio item in the GUI does something on Mac for the first time: when toggled on (and a config has been pasted), the daemon's `FipsPrivateTunnelRuntime` brings up a userspace tun via boringtun, runs the WG handshake against the upstream, and **only swaps the default route to the WG tun once the handshake actually completes within a 10-second watchdog window**. If the handshake doesn't complete the routing table is deliberately left untouched, so a misconfigured config or unreachable upstream cannot blackhole the host. Toggling off, changing the config, or stopping the daemon tears the tunnel back down via a `Drop`-guard that restores the original default route + deletes the WG-endpoint bypass.
+- `crates/nostr-vpn-cli/src/wg_upstream_runtime.rs` gains `apply_daemon_wg_upstream(config, timeout) -> DaemonWgUpstream` as the daemon-facing entry point: handshake-first, watchdog-protected, returns a holder that the long-lived runtime stores and tears down on disable. Idempotent — the reconcile loop short-circuits if the existing tunnel already matches the new config (compares an `WireGuardExitFingerprint`).
+- FIPS mesh peer routes keep going through the FIPS tunnel even when WG upstream is up: peer /32s are installed before the WG default-route swap, so longest-prefix-match keeps mesh traffic on the FIPS tunnel and only "the rest of the internet" goes through Mullvad/Proton. No daemon-side changes are required to make this work — the macOS routing table just does the right thing.
+
 ## 4.0.10 - 2026-05-10
 
 ### Changed

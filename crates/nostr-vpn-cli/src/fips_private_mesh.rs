@@ -894,6 +894,15 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     original_default_ipv6_route: Option<String>,
     #[cfg(target_os = "linux")]
     exit_node_runtime: crate::LinuxExitNodeRuntime,
+    /// Userspace WG upstream tunnel (Mullvad/Proton-style). Owned for
+    /// the lifetime of "WG upstream is enabled in config"; dropped on
+    /// disable. Populated by `reconcile_macos_wg_upstream` after a
+    /// successful handshake — `None` means either WG upstream is
+    /// disabled in the config or the most recent reconcile attempt
+    /// could not complete a handshake (in which case the routing
+    /// table was deliberately left untouched).
+    #[cfg(target_os = "macos")]
+    wg_upstream: Option<crate::wg_upstream_runtime::DaemonWgUpstream>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -960,6 +969,8 @@ impl FipsPrivateTunnelRuntime {
             original_default_ipv6_route: None,
             #[cfg(target_os = "linux")]
             exit_node_runtime: crate::LinuxExitNodeRuntime::default(),
+            #[cfg(target_os = "macos")]
+            wg_upstream: None,
         };
         runtime.apply_interface_config(&config).await?;
         Ok(runtime)
@@ -1065,12 +1076,16 @@ impl FipsPrivateTunnelRuntime {
     }
 
     pub(crate) async fn stop(self) -> Result<()> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let mut runtime = self;
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         let runtime = self;
         #[cfg(target_os = "linux")]
         runtime.cleanup_linux_network_state();
+        #[cfg(target_os = "macos")]
+        if let Some(handle) = runtime.wg_upstream.take() {
+            handle.cleanup().await;
+        }
         runtime.tun_read_task.abort();
         runtime.mesh_send_task.abort();
         runtime.mesh_recv_task.abort();
@@ -1092,6 +1107,10 @@ impl FipsPrivateTunnelRuntime {
         }
         #[cfg(target_os = "macos")]
         {
+            // FIPS mesh peer routes go in first. They're /32s for
+            // each peer's tunnel IP, so even when we swap the default
+            // route to the WG tun below, mesh traffic still wins on
+            // longest-prefix-match and stays inside the FIPS tunnel.
             crate::apply_local_interface_network_with_mtu(
                 &self.iface,
                 &config.local_address,
@@ -1099,8 +1118,72 @@ impl FipsPrivateTunnelRuntime {
                 nostr_vpn_core::MESH_TUNNEL_MTU,
             )
             .with_context(|| format!("failed to configure FIPS tunnel interface {}", self.iface))?;
+            self.reconcile_macos_wg_upstream(&config.wireguard_exit)
+                .await;
         }
         Ok(())
+    }
+
+    /// Bring the WG upstream tunnel up / down to match `wireguard_exit`.
+    ///
+    /// Called on every `apply_interface_config` (which fires on
+    /// startup, on every config change, and on the periodic
+    /// peer-dependent route refresh). The function is idempotent: a
+    /// no-op if the existing tunnel already matches the config, a
+    /// teardown-then-bring-up if the config changed, just a teardown
+    /// if WG is now disabled.
+    ///
+    /// **Safe-by-construction**: if the WG handshake doesn't complete
+    /// within the watchdog window (10s), nothing modifies the routing
+    /// table. The host's default route only ever swaps to the WG tun
+    /// after we've seen a real handshake from the upstream.
+    #[cfg(target_os = "macos")]
+    async fn reconcile_macos_wg_upstream(&mut self, wg_config: &WireGuardExitConfig) {
+        let want_up = wg_config.enabled && wg_config.configured();
+
+        // Already up with matching config → nothing to do.
+        if want_up
+            && self
+                .wg_upstream
+                .as_ref()
+                .is_some_and(|existing| existing.matches(wg_config))
+        {
+            return;
+        }
+
+        // If we have a stale tunnel (config changed, or now disabled),
+        // tear it down before doing anything else. This restores the
+        // original default route + deletes the bypass.
+        if let Some(existing) = self.wg_upstream.take() {
+            existing.cleanup().await;
+        }
+
+        if !want_up {
+            return;
+        }
+
+        match crate::wg_upstream_runtime::apply_daemon_wg_upstream(
+            wg_config,
+            crate::wg_upstream_runtime::DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT,
+        )
+        .await
+        {
+            Ok(handle) => {
+                eprintln!(
+                    "fips: WG upstream up on {} via {} (default route swapped)",
+                    handle.iface, handle.upstream
+                );
+                self.wg_upstream = Some(handle);
+            }
+            Err(error) => {
+                // The watchdog fired or another error occurred. The
+                // routing table was deliberately left untouched, so
+                // the host's internet is still fine — surface the
+                // error for the GUI / status page and try again on
+                // the next reconcile tick.
+                eprintln!("fips: WG upstream not started: {error}");
+            }
+        }
     }
 
     #[cfg(target_os = "linux")]

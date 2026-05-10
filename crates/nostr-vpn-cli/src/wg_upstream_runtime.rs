@@ -421,7 +421,7 @@ fn spawn_tun_reader(tun: Arc<TunSocket>, tun_tx: mpsc::Sender<Vec<u8>>) -> JoinH
                 }
             };
             match tun.read(&mut buf) {
-                Ok(packet) if packet.is_empty() => guard.clear_ready(),
+                Ok([]) => guard.clear_ready(),
                 Ok(packet) => {
                     let bytes = packet.to_vec();
                     if tun_tx.send(bytes).await.is_err() {
@@ -657,6 +657,9 @@ pub fn apply_full_default_route(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub struct FullDefaultRoute {
+    // Read only on macOS (route delete -interface ...); Linux uses the raw
+    // `ip route show default` line for restore and never touches iface.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     iface: String,
     bypass_target: IpAddr,
     original_default: CapturedDefaultRoute,
@@ -963,6 +966,171 @@ fn run_checked(command: &mut ProcessCommand) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Long-lived holder used by the daemon (macOS-only for now). Owns the tun,
+// the userspace WG runtime, and the FullDefaultRoute guard for the lifetime
+// of "WireGuard upstream is enabled". Reconciled by FipsPrivateTunnelRuntime
+// whenever the config changes.
+// ---------------------------------------------------------------------------
+
+/// Default time the daemon waits for the WG handshake to complete before
+/// giving up and tearing the tun back down. Acts as the implicit
+/// watchdog: by waiting for a real handshake before swapping the
+/// default route, a misconfigured config or unreachable upstream cannot
+/// take the host offline.
+#[cfg(target_os = "macos")]
+pub const DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[cfg(target_os = "macos")]
+pub struct DaemonWgUpstream {
+    pub iface: String,
+    pub upstream: SocketAddr,
+    runtime: Option<WgUpstreamRuntime>,
+    full_route: Option<FullDefaultRoute>,
+    // Tun is held to keep the utun fd open for the lifetime of the
+    // tunnel; dropping it auto-removes the utun device on macOS.
+    _tun: Arc<TunSocket>,
+    config_fingerprint: WireGuardExitFingerprint,
+}
+
+/// Subset of `WireGuardExitConfig` that meaningfully affects the
+/// userspace tunnel — used to short-circuit reconcile if nothing
+/// changed. We deliberately exclude DNS / MTU since they don't
+/// require tearing the WG tunnel down.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WireGuardExitFingerprint {
+    enabled: bool,
+    address: String,
+    private_key: String,
+    peer_public_key: String,
+    peer_preshared_key: String,
+    endpoint: String,
+    allowed_ips: Vec<String>,
+    persistent_keepalive_secs: u16,
+}
+
+#[cfg(target_os = "macos")]
+impl WireGuardExitFingerprint {
+    pub fn from_config(config: &WireGuardExitConfig) -> Self {
+        Self {
+            enabled: config.enabled,
+            address: config.address.clone(),
+            private_key: config.private_key.clone(),
+            peer_public_key: config.peer_public_key.clone(),
+            peer_preshared_key: config.peer_preshared_key.clone(),
+            endpoint: config.endpoint.clone(),
+            allowed_ips: config.allowed_ips.clone(),
+            persistent_keepalive_secs: config.persistent_keepalive_secs,
+        }
+    }
+}
+
+/// Bring up the daemon-owned WG upstream tunnel: create utun, run the
+/// userspace WG state machine, wait for handshake, and only then swap
+/// the default route. If the handshake doesn't complete within
+/// `handshake_timeout`, the tunnel is torn down and the routing table
+/// is **not** modified.
+///
+/// This is the "happy path" entry point used by the macOS daemon
+/// reconcile loop. The caller stores the returned `DaemonWgUpstream`
+/// inside the long-lived runtime; dropping it (or calling `cleanup`)
+/// restores the original default route.
+#[cfg(target_os = "macos")]
+pub async fn apply_daemon_wg_upstream(
+    config: &WireGuardExitConfig,
+    handshake_timeout: Duration,
+) -> Result<DaemonWgUpstream> {
+    let fingerprint = WireGuardExitFingerprint::from_config(config);
+    let interface_hint = if config.interface.trim().is_empty()
+        || !config.interface.starts_with("utun")
+    {
+        // Daemon-side: always let the kernel pick the next utunN.
+        // The user-facing config's `interface` is just a label.
+        "utun".to_string()
+    } else {
+        config.interface.clone()
+    };
+
+    let tun = TunSocket::new(&interface_hint)
+        .with_context(|| format!("create utun for WG upstream (hint='{interface_hint}')"))?
+        .set_non_blocking()
+        .context("set utun non-blocking")?;
+    let actual_iface = tun
+        .name()
+        .context("read utun name (probably needs root)")?;
+    let tun = Arc::new(tun);
+
+    let runtime = WgUpstreamRuntime::start_with_tun(config, tun.clone())
+        .await
+        .context("start userspace WG runtime")?;
+    let upstream = runtime.upstream();
+
+    // Watchdog: wait up to `handshake_timeout` for the WG handshake to
+    // complete. If it doesn't, we never modify the routing table —
+    // tear down the tun + runtime and surface the error.
+    if !runtime.wait_for_handshake(handshake_timeout).await {
+        runtime.shutdown().await;
+        return Err(anyhow!(
+            "WG upstream handshake to {upstream} did not complete within {}s; \
+             routing table NOT modified",
+            handshake_timeout.as_secs()
+        ));
+    }
+
+    let mtu = if config.mtu > 0 { config.mtu } else { 1420 };
+    let full_route = match apply_full_default_route(&actual_iface, &config.address, upstream, mtu)
+    {
+        Ok(route) => route,
+        Err(error) => {
+            runtime.shutdown().await;
+            return Err(error.context("swap default route via WG upstream"));
+        }
+    };
+
+    Ok(DaemonWgUpstream {
+        iface: actual_iface,
+        upstream,
+        runtime: Some(runtime),
+        full_route: Some(full_route),
+        _tun: tun,
+        config_fingerprint: fingerprint,
+    })
+}
+
+#[cfg(target_os = "macos")]
+impl DaemonWgUpstream {
+    /// Whether the daemon should consider this WG upstream tunnel
+    /// equivalent to a fresh apply for `new_config`. Used by the
+    /// reconcile loop to short-circuit a teardown+rebuild on every
+    /// tick.
+    pub fn matches(&self, new_config: &WireGuardExitConfig) -> bool {
+        self.config_fingerprint == WireGuardExitFingerprint::from_config(new_config)
+    }
+
+    /// Tear down the WG upstream cleanly: restore the default route
+    /// FIRST (so the host has a working route to the internet again
+    /// while the WG runtime is winding down), then stop the boringtun
+    /// pump, then drop the tun (which removes the utun device).
+    pub async fn cleanup(mut self) {
+        if let Some(mut full_route) = self.full_route.take() {
+            if let Err(error) = full_route.revert() {
+                eprintln!(
+                    "fips: WG upstream route revert failed: {error}. \
+                     Routing table may need manual cleanup."
+                );
+            }
+            // Drop FullDefaultRoute *after* explicit revert; the Drop
+            // impl is idempotent, so doing it twice is harmless.
+            drop(full_route);
+        }
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown().await;
+        }
+        // self._tun drops here, removing the utun device.
+    }
 }
 
 async fn resolve_endpoint(endpoint: &str) -> Result<SocketAddr> {
