@@ -11,10 +11,10 @@ mod network_signaling;
 mod platform_routing;
 mod service_management;
 mod session_runtime;
-#[cfg(any(target_os = "windows", test))]
-mod windows_tunnel;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod wg_upstream_runtime;
+#[cfg(any(target_os = "windows", test))]
+mod windows_tunnel;
 #[cfg(target_os = "linux")]
 mod wireguard_exit;
 
@@ -1260,14 +1260,14 @@ async fn run_wg_upstream_test(args: WgUpstreamTestArgs) -> Result<()> {
     #[cfg(target_os = "macos")]
     ping.arg("-W").arg("2000"); // macOS ping -W is in milliseconds
     ping.arg(scoped_host.to_string());
-    let status = ping
-        .status()
-        .await
-        .context("spawn ping")?;
+    let status = ping.status().await.context("spawn ping")?;
     let ping_ok = status.success();
 
     if args.hold_secs > 0 {
-        println!("wg-upstream-test: holding tunnel up for {}s…", args.hold_secs);
+        println!(
+            "wg-upstream-test: holding tunnel up for {}s…",
+            args.hold_secs
+        );
         tokio::time::sleep(Duration::from_secs(args.hold_secs)).await;
     }
 

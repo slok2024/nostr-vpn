@@ -78,10 +78,7 @@ impl WgUpstreamRuntime {
     /// The caller is responsible for assigning the tun's IP / MTU /
     /// routes — this runtime only does the data plane.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    pub async fn start_with_tun(
-        config: &WireGuardExitConfig,
-        tun: Arc<TunSocket>,
-    ) -> Result<Self> {
+    pub async fn start_with_tun(config: &WireGuardExitConfig, tun: Arc<TunSocket>) -> Result<Self> {
         Self::start_inner(config, Some(tun)).await
     }
 
@@ -136,10 +133,7 @@ impl WgUpstreamRuntime {
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    async fn start_inner(
-        _config: &WireGuardExitConfig,
-        _tun: Option<()>,
-    ) -> Result<Self> {
+    async fn start_inner(_config: &WireGuardExitConfig, _tun: Option<()>) -> Result<Self> {
         Err(anyhow!(
             "userspace WG upstream runtime is only supported on Linux and macOS for now"
         ))
@@ -200,7 +194,10 @@ impl Drop for WgUpstreamRuntime {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 enum PumpEvent {
     Timer,
-    UdpDatagram { source: std::net::IpAddr, payload: Vec<u8> },
+    UdpDatagram {
+        source: std::net::IpAddr,
+        payload: Vec<u8>,
+    },
     TunPacket(Vec<u8>),
     TunReaderClosed,
 }
@@ -406,14 +403,14 @@ fn spawn_tun_reader(tun: Arc<TunSocket>, tun_tx: mpsc::Sender<Vec<u8>>) -> JoinH
     }
 
     tokio::spawn(async move {
-        let async_fd =
-            match AsyncFd::with_interest(BorrowedFd(tun.as_raw_fd()), Interest::READABLE) {
-                Ok(fd) => fd,
-                Err(error) => {
-                    tracing::warn!(?error, "wg-upstream: failed to register tun fd");
-                    return;
-                }
-            };
+        let async_fd = match AsyncFd::with_interest(BorrowedFd(tun.as_raw_fd()), Interest::READABLE)
+        {
+            Ok(fd) => fd,
+            Err(error) => {
+                tracing::warn!(?error, "wg-upstream: failed to register tun fd");
+                return;
+            }
+        };
         let mut buf = vec![0u8; MAX_WG_PACKET];
         loop {
             let mut guard = match async_fd.readable().await {
@@ -692,10 +689,7 @@ fn capture_default_route() -> Result<CapturedDefaultRoute> {
             .output()
             .context("ip route show default")?;
         if !output.status.success() {
-            return Err(anyhow!(
-                "ip route show default exited {}",
-                output.status
-            ));
+            return Err(anyhow!("ip route show default exited {}", output.status));
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
         // Take the first non-empty line, prefer one that doesn't go
@@ -706,7 +700,9 @@ fn capture_default_route() -> Result<CapturedDefaultRoute> {
             .lines()
             .find(|line| {
                 let line = line.trim();
-                !line.is_empty() && !line.contains(" dev utun") && !line.contains(" dev wg-")
+                !line.is_empty()
+                    && !line.contains(" dev utun")
+                    && !line.contains(" dev wg-")
                     && !line.contains(" dev nvpn-wg")
             })
             .or_else(|| stdout.lines().find(|line| !line.trim().is_empty()))
@@ -1034,7 +1030,8 @@ mod tests {
                 let mut out = vec![0u8; MAX_WG_PACKET];
                 // Decapsulate the inbound datagram, then drain queued
                 // outputs via decapsulate(None, &[], ...) until Done.
-                let to_send = match server_tunn.decapsulate(Some(src.ip()), &udp_buf[..n], &mut out) {
+                let to_send = match server_tunn.decapsulate(Some(src.ip()), &udp_buf[..n], &mut out)
+                {
                     TunnResult::WriteToNetwork(packet) => Some(packet.to_vec()),
                     _ => None,
                 };
@@ -1068,6 +1065,9 @@ mod tests {
         runtime.shutdown().await;
         server_pump.abort();
         let _ = server_pump.await;
-        assert!(ok, "expected handshake to complete against the paired responder");
+        assert!(
+            ok,
+            "expected handshake to complete against the paired responder"
+        );
     }
 }

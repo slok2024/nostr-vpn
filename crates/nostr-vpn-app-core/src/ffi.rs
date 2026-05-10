@@ -693,10 +693,7 @@ impl NativeAppRuntime {
         self.gc_lan_pairing_worker();
     }
 
-    fn ensure_lan_pairing_worker(
-        &mut self,
-        announcement: LanPairingAnnouncement,
-    ) -> Result<()> {
+    fn ensure_lan_pairing_worker(&mut self, announcement: LanPairingAnnouncement) -> Result<()> {
         if self.lan_pairing_worker.is_some() {
             return Ok(());
         }
@@ -2184,7 +2181,10 @@ mod tests {
         let state = runtime.state();
         assert!(!state.invite_broadcast_active);
         assert_eq!(state.invite_broadcast_remaining_secs, 0);
-        assert!(state.nearby_discovery_active, "discovery should keep running");
+        assert!(
+            state.nearby_discovery_active,
+            "discovery should keep running"
+        );
 
         runtime.dispatch(NativeAppAction::StopNearbyDiscovery);
         let state = runtime.state();

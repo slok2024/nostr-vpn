@@ -255,9 +255,7 @@ fn directed_broadcast(addr: Ipv4Addr, prefix_len: u8) -> Option<Ipv4Addr> {
         return None;
     }
     let host_bits = 32 - u32::from(prefix_len);
-    let mask = u32::MAX
-        .checked_shl(host_bits)
-        .unwrap_or(0);
+    let mask = u32::MAX.checked_shl(host_bits).unwrap_or(0);
     let bcast = u32::from(addr) | !mask;
     Some(Ipv4Addr::from(bcast))
 }
@@ -324,11 +322,7 @@ fn run_lan_pairing_loop(
         }
 
         if control.broadcast_active(now_secs) && now >= next_announcement {
-            let snapshot = control
-                .announcement
-                .read()
-                .ok()
-                .map(|guard| guard.clone());
+            let snapshot = control.announcement.read().ok().map(|guard| guard.clone());
             if let Some(announcement) = snapshot {
                 let _ = send_lan_pairing_announcement(
                     socket,
@@ -556,19 +550,24 @@ mod tests {
         let mut bob_saw_alice = false;
         let mut alice_saw_bob = false;
         while Instant::now() < deadline && !bob_saw_alice {
-            bob_saw_alice |= bob.drain().into_iter().any(|signal| {
-                signal.npub == alice_npub && signal.network_id == "alice-mesh"
-            });
-            alice_saw_bob |= alice.drain().into_iter().any(|signal| {
-                signal.npub == bob_npub && signal.network_id == "bob-mesh"
-            });
+            bob_saw_alice |= bob
+                .drain()
+                .into_iter()
+                .any(|signal| signal.npub == alice_npub && signal.network_id == "alice-mesh");
+            alice_saw_bob |= alice
+                .drain()
+                .into_iter()
+                .any(|signal| signal.npub == bob_npub && signal.network_id == "bob-mesh");
             thread::sleep(Duration::from_millis(100));
         }
 
         alice.stop();
         bob.stop();
 
-        assert!(bob_saw_alice, "listen-only worker did not receive broadcast");
+        assert!(
+            bob_saw_alice,
+            "listen-only worker did not receive broadcast"
+        );
         assert!(
             !alice_saw_bob,
             "broadcast-only worker should not surface peers (listen disabled)"
