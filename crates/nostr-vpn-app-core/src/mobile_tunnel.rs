@@ -132,11 +132,16 @@ impl MobileTunnelConfig {
                 }
                 route_targets.sort();
                 route_targets.dedup();
-                // Fall back to Cloudflare/Quad9 if the user's WG
-                // config didn't carry DNS — without dnsSettings on
-                // iOS the resolver dies silently.
+                // Fall back to Mullvad's resolver if the user's WG
+                // config didn't carry DNS. Mullvad hijacks port 53 to
+                // public resolvers (1.1.1.1 / 9.9.9.9), so even
+                // though those DNS responses transit the tunnel they
+                // come back signed as from the wrong source and iOS'
+                // resolver discards them. 10.64.0.1 is Mullvad's
+                // own DNS endpoint inside the tunnel and is the
+                // safe default for both Mullvad and Proton.
                 let dns = if app.wireguard_exit.dns.is_empty() {
-                    vec!["1.1.1.1".to_string(), "9.9.9.9".to_string()]
+                    vec!["10.64.0.1".to_string()]
                 } else {
                     app.wireguard_exit.dns.clone()
                 };
@@ -287,8 +292,33 @@ impl MobileTunnel {
                     let wg_addr = wg_address_ipv4;
                     let mesh_addr = mesh_ipv4;
                     tasks.push(tokio::spawn(async move {
+                        let mut count: u32 = 0;
                         while let Some(mut packet) = recv_rx.recv().await {
-                            if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
+                            count = count.saturating_add(1);
+                            // Log first 10 inbound packets so we can
+                            // verify the DNAT / packet shape on iOS.
+                            if count <= 10 && packet.len() >= 20 && packet[0] >> 4 == 4 {
+                                let proto = packet[9];
+                                let src = format!(
+                                    "{}.{}.{}.{}",
+                                    packet[12], packet[13], packet[14], packet[15]
+                                );
+                                let dst_before = format!(
+                                    "{}.{}.{}.{}",
+                                    packet[16], packet[17], packet[18], packet[19]
+                                );
+                                if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
+                                    rewrite_ipv4_destination(&mut packet, wg, mesh);
+                                }
+                                let dst_after = format!(
+                                    "{}.{}.{}.{}",
+                                    packet[16], packet[17], packet[18], packet[19]
+                                );
+                                log_pump_packet(&format!(
+                                    "inbound #{count} {} bytes proto={proto} {src}:* -> {dst_before}->{dst_after}",
+                                    packet.len()
+                                ));
+                            } else if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
                                 rewrite_ipv4_destination(&mut packet, wg, mesh);
                             }
                             if inbound_tx_for_wg.send(packet).is_err() {
@@ -334,6 +364,7 @@ impl MobileTunnel {
             let wg_addr = wg_address_ipv4;
             let mesh_addr = mesh_ipv4;
             tokio::spawn(async move {
+                let mut outbound_count: u32 = 0;
                 while let Some(packet) = outbound_rx.recv().await {
                     let outgoing = mesh
                         .read()
@@ -351,8 +382,36 @@ impl MobileTunnel {
                         // packets whose inner source isn't an allowed
                         // peer IP.
                         let mut packet = packet;
+                        let len_before = packet.len();
+                        let pre_log = if outbound_count <= 10
+                            && packet.len() >= 20
+                            && packet[0] >> 4 == 4
+                        {
+                            outbound_count = outbound_count.saturating_add(1);
+                            let proto = packet[9];
+                            let src_before = format!(
+                                "{}.{}.{}.{}",
+                                packet[12], packet[13], packet[14], packet[15]
+                            );
+                            let dst = format!(
+                                "{}.{}.{}.{}",
+                                packet[16], packet[17], packet[18], packet[19]
+                            );
+                            Some((proto, src_before, dst))
+                        } else {
+                            None
+                        };
                         if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
                             rewrite_ipv4_source(&mut packet, mesh, wg);
+                        }
+                        if let Some((proto, src_before, dst)) = pre_log {
+                            let src_after = format!(
+                                "{}.{}.{}.{}",
+                                packet[12], packet[13], packet[14], packet[15]
+                            );
+                            log_pump_packet(&format!(
+                                "outbound #{outbound_count} {len_before}B proto={proto} src={src_before}->{src_after} dst={dst}"
+                            ));
                         }
                         let _ = wg_tx.try_send(packet);
                     }
@@ -553,6 +612,30 @@ fn strip_cidr(value: &str) -> &str {
 
 fn parse_ipv4(value: &str) -> Option<Ipv4Addr> {
     strip_cidr(value.trim()).parse().ok()
+}
+
+/// Append-once-per-line packet diagnostic to the same `tmp/nvpn-wg.log`
+/// the WG pump uses, so we can correlate SNAT/DNAT events with WG
+/// activity in the same timeline. iOS extension stderr/stdout is
+/// /dev/null and our tracing-without-subscriber is a no-op, so a
+/// file append is the simplest reliable channel.
+fn log_pump_packet(message: &str) {
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let path = std::env::temp_dir().join("nvpn-wg.log");
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(file, "{secs:.3} mobile-pump: {message}");
+        }
+    }
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let _ = message;
 }
 
 fn empty_config() -> MobileTunnelConfig {
