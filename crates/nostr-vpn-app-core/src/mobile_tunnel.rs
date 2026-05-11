@@ -383,24 +383,22 @@ impl MobileTunnel {
                         // peer IP.
                         let mut packet = packet;
                         let len_before = packet.len();
-                        let pre_log = if outbound_count <= 10
-                            && packet.len() >= 20
-                            && packet[0] >> 4 == 4
-                        {
-                            outbound_count = outbound_count.saturating_add(1);
-                            let proto = packet[9];
-                            let src_before = format!(
-                                "{}.{}.{}.{}",
-                                packet[12], packet[13], packet[14], packet[15]
-                            );
-                            let dst = format!(
-                                "{}.{}.{}.{}",
-                                packet[16], packet[17], packet[18], packet[19]
-                            );
-                            Some((proto, src_before, dst))
-                        } else {
-                            None
-                        };
+                        let pre_log =
+                            if outbound_count <= 10 && packet.len() >= 20 && packet[0] >> 4 == 4 {
+                                outbound_count = outbound_count.saturating_add(1);
+                                let proto = packet[9];
+                                let src_before = format!(
+                                    "{}.{}.{}.{}",
+                                    packet[12], packet[13], packet[14], packet[15]
+                                );
+                                let dst = format!(
+                                    "{}.{}.{}.{}",
+                                    packet[16], packet[17], packet[18], packet[19]
+                                );
+                                Some((proto, src_before, dst))
+                            } else {
+                                None
+                            };
                         if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
                             rewrite_ipv4_source(&mut packet, mesh, wg);
                         }
