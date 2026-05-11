@@ -1863,6 +1863,27 @@ impl ConnectMagicDnsRuntime {
             }
         }
     }
+
+    /// Rebuild MagicDNS records from the current `AppConfig` and push them
+    /// to the in-process responder (and the `/etc/hosts` fallback block on
+    /// Linux if it's active). Without this, the records map is frozen at
+    /// daemon-start time and any peer added later (via `add-participant`,
+    /// invite acceptance, FIPS roster event, or peer-alias rename) returns
+    /// NXDOMAIN until the daemon is restarted.
+    fn refresh_records(&self, app: &AppConfig) {
+        let records = build_magic_dns_records(app);
+        self.server.update_records(records.clone());
+        #[cfg(target_os = "linux")]
+        if !self.suffix.is_empty()
+            && let Err(error) = nostr_vpn_core::magic_dns::refresh_linux_hosts_fallback_if_active(
+                &self.suffix,
+                &records,
+            )
+        {
+            eprintln!("magicdns: failed to refresh hosts fallback: {error}");
+        }
+        let _ = records; // suppress unused-binding on non-Linux
+    }
 }
 
 impl Drop for ConnectMagicDnsRuntime {

@@ -457,6 +457,25 @@ fn install_linux_hosts_fallback(suffix: &str, records: &HashMap<String, Ipv4Addr
     write_linux_hosts_file(&next)
 }
 
+/// Rewrite the nostr-vpn block in `/etc/hosts` with `records` iff a block
+/// is already present (i.e. the resolvectl path failed at install time and
+/// we're on the hosts fallback). No-op otherwise so we don't litter
+/// `/etc/hosts` on systems where resolvectl is the active path.
+///
+/// Called from the daemon after every config / roster reload so newly-added
+/// peers become resolvable without restarting the daemon.
+#[cfg(target_os = "linux")]
+pub fn refresh_linux_hosts_fallback_if_active(
+    suffix: &str,
+    records: &HashMap<String, Ipv4Addr>,
+) -> Result<()> {
+    let current = read_linux_hosts_file()?;
+    if !current.contains(LINUX_HOSTS_BEGIN) {
+        return Ok(());
+    }
+    install_linux_hosts_fallback(suffix, records)
+}
+
 #[cfg(target_os = "linux")]
 fn uninstall_linux_hosts_fallback() -> Result<bool> {
     let current = read_linux_hosts_file()?;

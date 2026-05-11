@@ -156,6 +156,10 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
         println!("connect: FIPS private mesh on {}", runtime.iface());
         Some(runtime)
     };
+    // Foreground `nvpn connect` does not consume FIPS roster events nor the
+    // daemon control channel, so the MagicDNS records can't change during
+    // its lifetime — the underscore prefix keeps the responder alive until
+    // session shutdown without triggering an unused-binding warning.
     let _magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);
 
     println!(
@@ -297,7 +301,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     } else {
         None
     };
-    let _magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);
+    let magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);
 
     let mut announce_interval =
         tokio::time::interval(Duration::from_secs(args.mesh_refresh_interval_secs.max(5)));
@@ -594,6 +598,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                 vpn_status =
                                     format!("Roster applied, but FIPS reload failed ({error})");
                             }
+                            if let Some(rt) = magic_dns_runtime.as_ref() {
+                                rt.refresh_records(&app);
+                            }
                         }
                         Ok(false) => {}
                         Err(error) => {
@@ -666,6 +673,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                             network_id = reload.network_id;
                                             expected_peers = reload.expected_peers;
                                             own_pubkey = reload.own_pubkey;
+                                            if let Some(rt) = magic_dns_runtime.as_ref() {
+                                                rt.refresh_records(&app);
+                                            }
 
                                             let join_requests_active = app.join_requests_enabled();
                                             let vpn_active =

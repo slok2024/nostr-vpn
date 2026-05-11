@@ -117,6 +117,56 @@ fn magic_dns_server_answers_a_and_nxdomain() {
     server.stop();
 }
 
+#[test]
+fn magic_dns_server_update_records_reflects_newly_added_alias() {
+    // Regression: peers added via `nvpn add-participant` or imported via
+    // invite after the daemon started used to keep returning NXDOMAIN until
+    // the daemon was restarted, because the records map was baked at boot
+    // and `update_records` was never called outside tests. The session
+    // runtime now wires `update_records` into every reload point — guard
+    // that behaviour at the server level so a future regression surfaces
+    // before it ships.
+    let initial_ip = Ipv4Addr::new(10, 44, 0, 11);
+    let mut initial = HashMap::new();
+    initial.insert("home-server.nvpn".to_string(), initial_ip);
+
+    let mut server = MagicDnsServer::start(
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)),
+        initial,
+    )
+    .expect("start dns server");
+    let server_addr = server.local_addr();
+
+    let socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)))
+        .expect("bind client socket");
+    socket
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("set timeout");
+
+    let pre = send_dns_query(&socket, server_addr, "pi.nvpn.", RecordType::A);
+    assert_eq!(pre.response_code(), ResponseCode::NXDomain);
+
+    let new_ip = Ipv4Addr::new(10, 44, 1, 42);
+    let mut updated = HashMap::new();
+    updated.insert("home-server.nvpn".to_string(), initial_ip);
+    updated.insert("pi.nvpn".to_string(), new_ip);
+    server.update_records(updated);
+
+    let post = send_dns_query(&socket, server_addr, "pi.nvpn.", RecordType::A);
+    assert_eq!(post.response_code(), ResponseCode::NoError);
+    let answer = post.answers().first().expect("expected answer after refresh");
+    match answer.data() {
+        RData::A(A(ip)) => assert_eq!(*ip, new_ip),
+        other => panic!("unexpected answer data: {other:?}"),
+    }
+
+    // The original record must still resolve — refresh swaps the whole map.
+    let still = send_dns_query(&socket, server_addr, "home-server.nvpn.", RecordType::A);
+    assert_eq!(still.response_code(), ResponseCode::NoError);
+
+    server.stop();
+}
+
 fn send_dns_query(
     socket: &UdpSocket,
     server_addr: SocketAddr,
