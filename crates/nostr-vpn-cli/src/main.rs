@@ -782,9 +782,9 @@ async fn run_command(command: Command) -> Result<()> {
                 load_config_with_overrides(&config_path, args.network_id, args.participants)?;
             let daemon = daemon_status(&config_path)?;
 
-            let (peers, expected_peers, peer_count, mesh_ready, status_source) = if daemon.running {
-                if let Some(state) = daemon.state.clone() {
-                    let peers = state
+            let daemon_peers: Option<Vec<DaemonPeerState>> = if daemon.running {
+                daemon.state.as_ref().map(|state| {
+                    state
                         .peers
                         .iter()
                         .filter(|peer| {
@@ -792,6 +792,18 @@ async fn run_command(command: Command) -> Result<()> {
                                 || !peer.tunnel_ip.is_empty()
                                 || !peer.endpoint.is_empty()
                         })
+                        .cloned()
+                        .collect()
+                })
+            } else {
+                None
+            };
+
+            let (peers, expected_peers, peer_count, mesh_ready, status_source) =
+                if let Some(daemon_peers) = daemon_peers.as_ref() {
+                    let state = daemon.state.as_ref().expect("daemon peers implies state");
+                    let peers = daemon_peers
+                        .iter()
                         .map(|peer| PeerAnnouncement {
                             node_id: if peer.node_id.is_empty() {
                                 peer.participant_pubkey.clone()
@@ -818,12 +830,7 @@ async fn run_command(command: Command) -> Result<()> {
                     let peers = configured_fips_peer_announcements(&app, &network_id);
                     let expected = expected_peer_count(&app);
                     (peers, expected, 0, false, "config")
-                }
-            } else {
-                let peers = configured_fips_peer_announcements(&app, &network_id);
-                let expected = expected_peer_count(&app);
-                (peers, expected, 0, false, "config")
-            };
+                };
 
             if args.json {
                 let endpoint = status_endpoint(&app, &daemon);
@@ -920,18 +927,30 @@ async fn run_command(command: Command) -> Result<()> {
                     println!("mesh_progress: {}/{}", peer_count, expected_peers);
                     println!("mesh_ready: {mesh_ready}");
                 }
-                println!("peers: {}", peers.len());
-                for peer in peers {
-                    if peer.advertised_routes.is_empty() {
-                        println!("  {} {} {}", peer.node_id, peer.tunnel_ip, peer.endpoint);
-                    } else {
-                        println!(
-                            "  {} {} {} routes={}",
-                            peer.node_id,
-                            peer.tunnel_ip,
-                            peer.endpoint,
-                            peer.advertised_routes.join(",")
-                        );
+                if let Some(daemon_peers) = daemon_peers.as_ref() {
+                    let reachable_count = daemon_peers.iter().filter(|p| p.reachable).count();
+                    println!(
+                        "peers: {} total, {reachable_count} reachable",
+                        daemon_peers.len()
+                    );
+                    let now = unix_timestamp();
+                    for peer in daemon_peers {
+                        print_daemon_peer_line(peer, now);
+                    }
+                } else {
+                    println!("peers: {}", peers.len());
+                    for peer in &peers {
+                        if peer.advertised_routes.is_empty() {
+                            println!("  {} {} {}", peer.node_id, peer.tunnel_ip, peer.endpoint);
+                        } else {
+                            println!(
+                                "  {} {} {} routes={}",
+                                peer.node_id,
+                                peer.tunnel_ip,
+                                peer.endpoint,
+                                peer.advertised_routes.join(",")
+                            );
+                        }
                     }
                 }
             }
@@ -3150,6 +3169,81 @@ async fn run_doctor(args: DoctorArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn print_daemon_peer_line(peer: &DaemonPeerState, now: u64) {
+    let marker = if peer.reachable { '✓' } else { '✗' };
+    let transport = match (
+        peer.fips_transport_type.as_str(),
+        peer.fips_transport_addr.as_str(),
+    ) {
+        ("", "") if peer.reachable => "relayed".to_string(),
+        ("", "") => "pending".to_string(),
+        (kind, addr) if addr.is_empty() => kind.to_string(),
+        (kind, addr) => format!("{kind} {addr}"),
+    };
+    let srtt = peer
+        .fips_srtt_ms
+        .map(|ms| format!(" srtt={ms}ms"))
+        .unwrap_or_default();
+    let last = peer
+        .last_fips_seen_at
+        .filter(|seen| *seen > 0)
+        .map(|seen| format!(" last={}s", now.saturating_sub(seen)))
+        .unwrap_or_default();
+    let traffic = if peer.fips_bytes_sent + peer.fips_bytes_recv > 0 {
+        format!(
+            " io={}/{}",
+            human_bytes(peer.fips_bytes_recv),
+            human_bytes(peer.fips_bytes_sent),
+        )
+    } else {
+        String::new()
+    };
+    let routes = if peer.advertised_routes.is_empty() {
+        String::new()
+    } else {
+        format!(" routes={}", peer.advertised_routes.join(","))
+    };
+    let err = peer
+        .error
+        .as_deref()
+        .filter(|err| !err.is_empty() && !peer.reachable)
+        .map(|err| format!(" ({err})"))
+        .unwrap_or_default();
+    let pubkey = if !peer.public_key.is_empty() {
+        peer.public_key.as_str()
+    } else {
+        peer.participant_pubkey.as_str()
+    };
+    println!(
+        "  {marker} {} {} {transport}{srtt}{last}{traffic}{routes}{err}",
+        truncate_pubkey(pubkey),
+        peer.tunnel_ip,
+    );
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "K", "M", "G", "T"];
+    let mut value = bytes as f64;
+    let mut idx = 0;
+    while value >= 1024.0 && idx + 1 < UNITS.len() {
+        value /= 1024.0;
+        idx += 1;
+    }
+    if idx == 0 {
+        format!("{}{}", bytes, UNITS[0])
+    } else {
+        format!("{value:.1}{}", UNITS[idx])
+    }
+}
+
+fn truncate_pubkey(pubkey_hex: &str) -> String {
+    if pubkey_hex.len() <= 12 {
+        pubkey_hex.to_string()
+    } else {
+        format!("{}…", &pubkey_hex[..12])
+    }
 }
 
 fn unix_timestamp() -> u64 {
