@@ -3,3 +3,18 @@ passthrough = [
   "BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_musl",
   "BINDGEN_EXTRA_CLANG_ARGS_x86_64_unknown_linux_musl",
 ]
+
+# cross-rs 32-bit arm images ship Ubuntu 20.04 with linux-libc-dev pre-5.16,
+# so the target sysroot's nf_tables.h lacks NFTA_CHAIN_FLAGS and rustables
+# fails to compile. Stage the container's host /usr/include/linux/ into the
+# cross-toolchain sysroot before the build; the host package is newer and
+# the constants are arch-independent.
+[target.arm-unknown-linux-gnueabihf]
+pre-build = [
+  "cp -r /usr/include/linux/. /x-tools/arm-unknown-linux-gnueabihf/arm-unknown-linux-gnueabihf/sysroot/usr/include/linux/",
+]
+
+[target.arm-unknown-linux-musleabihf]
+pre-build = [
+  "cp -r /usr/include/linux/. /usr/local/arm-linux-musleabihf/include/linux/",
+]

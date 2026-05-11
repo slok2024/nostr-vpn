@@ -1,32 +1,10 @@
-use anyhow::{Context, Result, anyhow};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use nostr_sdk::prelude::{PublicKey, ToBech32};
+use anyhow::{Result, anyhow};
 use nostr_vpn_core::config::{
     AppConfig, NetworkConfig, normalize_nostr_pubkey, normalize_runtime_network_id,
 };
-use serde::{Deserialize, Serialize};
-
-pub(crate) const NETWORK_INVITE_PREFIX: &str = "nvpn://invite/";
-const NETWORK_INVITE_VERSION: u8 = 3;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct NetworkInvite {
-    pub(crate) v: u8,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub(crate) network_name: String,
-    pub(crate) network_id: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub(crate) inviter_npub: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub(crate) inviter_node_name: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) admins: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) participants: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) relays: Vec<String>,
-}
+pub(crate) use nostr_vpn_core::invite::{
+    NETWORK_INVITE_VERSION, NetworkInvite, encode_network_invite, parse_network_invite, to_npub,
+};
 
 pub(crate) fn active_network_invite_code(config: &AppConfig) -> Result<String> {
     let active_network = config.active_network();
@@ -44,76 +22,7 @@ pub(crate) fn active_network_invite_code(config: &AppConfig) -> Result<String> {
         participants: Vec::new(),
         relays: Vec::new(),
     };
-    let encoded = URL_SAFE_NO_PAD
-        .encode(serde_json::to_vec(&invite).context("failed to encode network invite JSON")?);
-    Ok(format!("{NETWORK_INVITE_PREFIX}{encoded}"))
-}
-
-pub(crate) fn parse_network_invite(value: &str) -> Result<NetworkInvite> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(anyhow!("invite code is empty"));
-    }
-
-    let mut invite = if trimmed.starts_with('{') {
-        serde_json::from_str::<NetworkInvite>(trimmed)
-            .context("failed to parse network invite JSON")?
-    } else {
-        let payload = trimmed
-            .strip_prefix(NETWORK_INVITE_PREFIX)
-            .unwrap_or(trimmed);
-        let decoded = URL_SAFE_NO_PAD
-            .decode(payload)
-            .context("failed to decode network invite payload")?;
-        serde_json::from_slice::<NetworkInvite>(&decoded)
-            .context("failed to parse network invite payload")?
-    };
-
-    if invite.v != 1 && invite.v != 2 && invite.v != NETWORK_INVITE_VERSION {
-        return Err(anyhow!(
-            "unsupported invite version {}; expected 1, 2, or {}",
-            invite.v,
-            NETWORK_INVITE_VERSION
-        ));
-    }
-
-    invite.network_name = invite.network_name.trim().to_string();
-    invite.network_id = invite.network_id.trim().to_string();
-    if invite.network_id.is_empty() {
-        return Err(anyhow!("invite network id is empty"));
-    }
-
-    invite.admins = normalized_invite_pubkeys(&invite.admins)?;
-    if invite.inviter_npub.trim().is_empty() {
-        invite.inviter_npub = invite
-            .admins
-            .first()
-            .cloned()
-            .ok_or_else(|| anyhow!("invite must include at least one admin"))?;
-    } else {
-        invite.inviter_npub = to_npub(&normalize_nostr_pubkey(&invite.inviter_npub)?);
-        if !invite
-            .admins
-            .iter()
-            .any(|admin| admin == &invite.inviter_npub)
-        {
-            invite.admins.push(invite.inviter_npub.clone());
-        }
-    }
-    if invite.admins.is_empty() {
-        invite.admins.push(invite.inviter_npub.clone());
-        invite.admins.sort();
-        invite.admins.dedup();
-    }
-
-    invite.inviter_node_name = invite.inviter_node_name.trim().to_string();
-    invite.participants = normalized_invite_pubkeys(&invite.participants)?;
-    if invite.participants.is_empty() && invite.v < NETWORK_INVITE_VERSION {
-        invite.participants.push(invite.inviter_npub.clone());
-    }
-    invite.relays.clear();
-
-    Ok(invite)
+    encode_network_invite(&invite)
 }
 
 pub(crate) fn apply_network_invite_to_active_network(
@@ -278,23 +187,6 @@ pub(crate) fn preferred_join_request_recipient(network: &NetworkConfig) -> Optio
         return Some(network.invite_inviter.clone());
     }
     network.admins.first().cloned()
-}
-
-pub(crate) fn to_npub(pubkey_hex: &str) -> String {
-    PublicKey::parse(pubkey_hex)
-        .ok()
-        .and_then(|pubkey| pubkey.to_bech32().ok())
-        .unwrap_or_else(|| pubkey_hex.to_string())
-}
-
-fn normalized_invite_pubkeys(pubkeys: &[String]) -> Result<Vec<String>> {
-    let mut normalized = pubkeys
-        .iter()
-        .map(|pubkey| normalize_nostr_pubkey(pubkey).map(|value| to_npub(&value)))
-        .collect::<Result<Vec<_>>>()?;
-    normalized.sort();
-    normalized.dedup();
-    Ok(normalized)
 }
 
 fn network_should_adopt_invite(network: &NetworkConfig) -> bool {

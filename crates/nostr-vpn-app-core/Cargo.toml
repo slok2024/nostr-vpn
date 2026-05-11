@@ -16,7 +16,7 @@ base64.workspace = true
 dirs.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 fips-endpoint.workspace = true
-netdev = "0.40"
+netdev.workspace = true
 nostr-sdk.workspace = true
 nostr-vpn-core = { path = "../nostr-vpn-core" }
 qrcode = { version = "0.14", default-features = false }

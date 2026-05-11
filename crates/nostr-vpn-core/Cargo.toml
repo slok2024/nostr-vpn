@@ -25,5 +25,7 @@ uuid.workspace = true
 hex.workspace = true
 hickory-proto.workspace = true
 hostname.workspace = true
+netdev.workspace = true
+socket2.workspace = true
 
 [dev-dependencies]
