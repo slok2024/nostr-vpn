@@ -31,7 +31,7 @@ pub use config::DEFAULT_RELAYS;
 /// inheritance (see fips-core `Node::adopt_established_traversal`) so
 /// adopted sockets pick up the same framing budget instead of falling
 /// back to the 1280 default and dropping every full-sized datagram.
-pub const MESH_UNDERLAY_UDP_MTU: u16 = 1280;
+pub const MESH_UNDERLAY_UDP_MTU: u16 = 1420;
 
 /// Tunnel-side MTU: maximum IPv4/IPv6 packet a TUN device hands to the daemon
 /// for encryption + transit. Equals `MESH_UNDERLAY_UDP_MTU` minus the 106-byte
@@ -40,4 +40,4 @@ pub const MESH_UNDERLAY_UDP_MTU: u16 = 1280;
 /// COORDS warmup tag and any per-link variance. Single source of truth —
 /// every TUN config, every UdpConfig, every Wintun adapter, every linux
 /// `ip link set mtu` should derive from this.
-pub const MESH_TUNNEL_MTU: u16 = 1150;
+pub const MESH_TUNNEL_MTU: u16 = 1290;
