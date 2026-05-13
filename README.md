@@ -145,7 +145,7 @@ just run
 If you only want the CLI and test binaries:
 
 ```bash
-cargo build -p nostr-vpn-cli
+cargo build -p nvpn
 ```
 
 ## Install `nvpn`
@@ -175,13 +175,21 @@ The quick-install line still points at GitHub until a verified `releases/nostr-v
 
 On Windows, download the `nvpn-<version>-x86_64-pc-windows-msvc.zip` release asset and run `nvpn.exe`, or build from source.
 
+From crates.io:
+
+```bash
+cargo install nvpn
+```
+
 From source:
 
 ```bash
 cargo install --path crates/nostr-vpn-cli --bin nvpn
 ```
 
-This is the supported route on Intel macOS.
+`cargo install nvpn` installs the published CLI/daemon binary. The path-based
+command is useful when developing from a checkout and remains the supported
+route on Intel macOS until prebuilt release archives cover that target.
 
 If you already have a release tarball, extract it and run:
 

@@ -15,7 +15,7 @@ mkdir -p "$ARTIFACT_DIR" "$(dirname "$CONFIG_PATH")" "$CONFIG_HOME"
 rm -f "$CONFIG_PATH" "$BOB_CONFIG" "$FAKE_NVPN" "$SCREENSHOT"
 
 cd "$ROOT_DIR"
-cargo build -p nostr-vpn-cli >/dev/null
+cargo build -p nvpn >/dev/null
 "$ROOT_DIR/target/debug/nvpn" init --config "$CONFIG_PATH" --force >/dev/null
 "$ROOT_DIR/target/debug/nvpn" init --config "$BOB_CONFIG" --force >/dev/null
 

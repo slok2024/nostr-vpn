@@ -4,7 +4,7 @@ WORKDIR /work
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
-RUN cargo build --release -p nostr-vpn-cli -p nostr-vpn-web
+RUN cargo build --release -p nvpn -p nostr-vpn-web
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \

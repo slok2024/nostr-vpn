@@ -3,7 +3,7 @@
 //! Wraps `boringtun::noise::Tunn` for the case where this device is a WG
 //! *client* of one upstream provider, not a multi-peer mesh participant.
 //! Lives here in `nostr-vpn-core` so both the desktop daemon
-//! (`nostr-vpn-cli`) and the mobile runtime (`nostr-vpn-app-core`) can use
+//! (`nvpn`) and the mobile runtime (`nostr-vpn-app-core`) can use
 //! the same boringtun pump — only the platform glue (tun ownership,
 //! routing-table changes) lives in the platform-specific crate.
 //!
@@ -545,7 +545,7 @@ async fn drain_decapsulate(
 }
 
 // Platform-specific tun reader/writer tasks (POSIX TunSocket, Windows
-// WinTun) live in nostr-vpn-cli, where the boringtun `device` feature
+// WinTun) live in nvpn, where the boringtun `device` feature
 // is enabled. Mobile callers don't need them — they use
 // `start_with_channels` and feed packets directly from the OS-managed
 // tun (NEPacketTunnelProvider on iOS, VpnService on Android).

@@ -54,6 +54,7 @@ and optionally publish it.
 
 Options:
   --publish                 Publish the staged release tree with htree
+  --cargo-publish           Publish Rust crates to crates.io after staging/publishing
   --dry-run                 Print the plan without running build or publish commands
   --skip-verify            Skip fmt/clippy/test verification
   --tag <tag>              Release tag (defaults to workspace version, for example v4.0.0)
@@ -73,6 +74,7 @@ function parseArgs(argv) {
   const options = {
     dryRun: false,
     publish: false,
+    cargoPublish: false,
     skipVerify: false,
     releaseTree: null,
     stageDir: null,
@@ -92,6 +94,9 @@ function parseArgs(argv) {
         process.exit(0)
       case '--publish':
         options.publish = true
+        break
+      case '--cargo-publish':
+        options.cargoPublish = true
         break
       case '--dry-run':
         options.dryRun = true
@@ -422,7 +427,7 @@ function buildWindowsArtifacts({ env, tag, dryRun, builtLines }) {
       `
 ${pathSetup}
 Set-Location ${guestRepoQuoted}
-cargo build --release --target ${psQuote(target)} -p nostr-vpn-cli
+cargo build --release --target ${psQuote(target)} -p nvpn
 $cli = Join-Path ${guestRepoQuoted} ${psQuote(`target\\${target}\\release\\nvpn.exe`)}
 if (!(Test-Path $cli)) { throw "Missing nvpn.exe for ${target}" }
 $tempDir = Join-Path $env:TEMP ${psQuote(`nvpn-${target}-zip`)}
@@ -489,7 +494,7 @@ function buildLinuxArtifacts({ env, tag, dryRun, builtLines }) {
     'cargo deb --no-build',
     `cp "$(ls -1t target/debian/*.deb | head -1)" "/work/dist/${linuxDebName}"`,
     'cd /build',
-    `cargo build --release --target ${muslTriple} -p nostr-vpn-cli`,
+    `cargo build --release --target ${muslTriple} -p nvpn`,
     'rm -rf /work/dist/nvpn',
     'mkdir -p /work/dist/nvpn',
     `cp target/${muslTriple}/release/nvpn /work/dist/nvpn/`,
@@ -860,6 +865,11 @@ function publishRelease({ stageDir, releaseTree, tag, dryRun }) {
   return cid
 }
 
+function publishRustCrates({ dryRun }) {
+  const script = join(repoRoot, 'scripts', 'publish.sh')
+  run('bash', dryRun ? [script, '--dry-run'] : [script], { dryRun })
+}
+
 function resolveReleaseCommit(tag, { dryRun = false } = {}) {
   const normalizedTag = normalizeTag(tag)
   if (dryRun) {
@@ -955,6 +965,10 @@ function main() {
     console.log(`Published ${tag} to ${releaseTree} via ${cid}`)
   } else if (!options.dryRun) {
     console.log(`Staged ${tag} at ${stageDir}`)
+  }
+
+  if (options.cargoPublish) {
+    publishRustCrates({ dryRun: options.dryRun })
   }
 }
 

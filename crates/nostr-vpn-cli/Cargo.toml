@@ -1,9 +1,12 @@
 [package]
-name = "nostr-vpn-cli"
+name = "nvpn"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+description = "CLI and daemon for Nostr VPN private mesh networks"
+repository.workspace = true
+readme = "README.md"
 
 [features]
 default = ["embedded-fips"]
@@ -24,7 +27,7 @@ tracing-subscriber.workspace = true
 tracing.workspace = true
 nostr-sdk.workspace = true
 
-nostr-vpn-core = { path = "../nostr-vpn-core" }
+nostr-vpn-core.workspace = true
 crab_nat = "0.7"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev.workspace = true
@@ -37,7 +40,7 @@ version = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 boringtun.workspace = true
-nostr-vpn-wintun = { path = "../nostr-vpn-wintun" }
+nostr-vpn-wintun.workspace = true
 wintun = "0.5.1"
 windows-service = "0.8"
 

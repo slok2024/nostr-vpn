@@ -12,9 +12,9 @@ COPY crates ./crates
 COPY --from=fips . /app/fips
 
 # The compose file passes the sibling fips checkout as a BuildKit context.
-# Patch the locked git dependency to that local context so perf/e2e images
-# exercise the code under test instead of the last pinned upstream revision.
-RUN printf '\n[patch."https://github.com/mmalmi/fips.git"]\nfips-core = { path = "/app/fips/crates/fips-core" }\nfips-endpoint = { path = "/app/fips/crates/fips-endpoint" }\nfips-identity = { path = "/app/fips/crates/fips-identity" }\n' >> Cargo.toml
+# Patch crates.io FIPS dependencies to that local context so perf/e2e images
+# exercise the code under test instead of the published crates.
+RUN printf '\n[patch.crates-io]\nfips-core = { path = "/app/fips/crates/fips-core" }\nfips-endpoint = { path = "/app/fips/crates/fips-endpoint" }\nfips-identity = { path = "/app/fips/crates/fips-identity" }\n' >> Cargo.toml
 
 # BuildKit cache mounts: persist the cargo registry, git checkouts, and
 # target/ across builds. Without this, every source change re-downloads
@@ -25,7 +25,7 @@ RUN printf '\n[patch."https://github.com/mmalmi/fips.git"]\nfips-core = { path =
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/nostr-vpn/target \
-    cargo build --release --features embedded-fips -p nostr-vpn-cli \
+    cargo build --release --features embedded-fips -p nvpn \
     && cp target/release/nvpn /tmp/nvpn
 
 FROM debian:bookworm-slim AS runtime

@@ -54,7 +54,7 @@ cd "$ROOT"
 
 CHECK_OUTPUT="$(
   NVPN_UPDATE_MANIFEST_URL="$MANIFEST_URL" \
-    cargo run --quiet -p nostr-vpn-cli -- update --check
+    cargo run --quiet -p nvpn -- update --check
 )"
 if ! grep -Fq "update available:" <<<"$CHECK_OUTPUT"; then
   echo "CLI update e2e failed: update check did not report an available update" >&2
@@ -69,7 +69,7 @@ fi
 
 INSTALL_OUTPUT="$(
   NVPN_UPDATE_MANIFEST_URL="$MANIFEST_URL" \
-    cargo run --quiet -p nostr-vpn-cli -- update --force --path "$INSTALL_PATH"
+    cargo run --quiet -p nvpn -- update --force --path "$INSTALL_PATH"
 )"
 if ! grep -Fq "updated nvpn at $INSTALL_PATH" <<<"$INSTALL_OUTPUT"; then
   echo "CLI update e2e failed: install did not report the expected destination" >&2

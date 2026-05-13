@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Native app state and action contract for Nostr VPN"
+repository.workspace = true
+publish = false
 
 [lib]
 name = "nostr_vpn_app_core"
@@ -18,7 +20,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 fips-endpoint.workspace = true
 netdev.workspace = true
 nostr-sdk.workspace = true
-nostr-vpn-core = { path = "../nostr-vpn-core" }
+nostr-vpn-core.workspace = true
 qrcode = { version = "0.14", default-features = false }
 rqrr = "0.7"
 serde.workspace = true

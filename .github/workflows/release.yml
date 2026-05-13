@@ -92,11 +92,11 @@ jobs:
         env:
           BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_musl: -I/usr/include --sysroot=/usr/local/aarch64-linux-musl
           BINDGEN_EXTRA_CLANG_ARGS_x86_64_unknown_linux_musl: -I/usr/include --sysroot=/usr/local/x86_64-linux-musl
-        run: cross build --release --target ${{ matrix.target }} -p nostr-vpn-cli
+        run: cross build --release --target ${{ matrix.target }} -p nvpn
 
       - name: Build CLI natively
         if: ${{ !matrix.cross }}
-        run: cargo build --release --target ${{ matrix.target }} -p nostr-vpn-cli
+        run: cargo build --release --target ${{ matrix.target }} -p nvpn
 
       - name: Package CLI artifact
         shell: bash

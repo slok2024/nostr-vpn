@@ -15,6 +15,7 @@ version = "4.0.15"
 edition = "2024"
 license = "MIT"
 authors = ["sirius"]
+repository = "https://github.com/mmalmi/nostr-vpn"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -24,7 +25,7 @@ base64 = "0.22"
 boringtun = "0.7"
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = { git = "https://github.com/mmalmi/fips.git", rev = "811eef3ff1f4ece3096a7c66d44281b95bfff8b8" }
+fips-endpoint = "0.3.1"
 futures = "0.3"
 hex = "0.4"
 hickory-proto = "0.25"
@@ -44,6 +45,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.35", default-features = false, features = ["nip44"] }
+nostr-vpn-core = { version = "4.0.15", path = "crates/nostr-vpn-core" }
+nostr-vpn-wintun = { version = "4.0.15", path = "crates/nostr-vpn-wintun" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

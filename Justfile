@@ -82,7 +82,7 @@ build:
         Darwin) just macos-build ;; \
         Linux) just linux-build ;; \
         MINGW*|MSYS*|CYGWIN*) just windows-build ;; \
-        *) cargo build -p nostr-vpn-cli -p nostr-vpn-reflector ;; \
+        *) cargo build -p nvpn -p nostr-vpn-reflector ;; \
     esac
     @./scripts/build-output-path
 
@@ -135,7 +135,7 @@ release-gate:
     ./scripts/release-gate.sh
 
 security-regressions:
-    cargo test -p nostr-vpn-cli platform_routing
+    cargo test -p nvpn platform_routing
     cargo test -p nostr-vpn-app-core mobile_config
     ./scripts/e2e-wireguard-exit-docker.sh
 

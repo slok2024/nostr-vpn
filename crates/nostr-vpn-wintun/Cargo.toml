@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+description = "WinTun DLL discovery and loading helpers for Nostr VPN"
+repository.workspace = true
+readme = "README.md"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 anyhow.workspace = true
