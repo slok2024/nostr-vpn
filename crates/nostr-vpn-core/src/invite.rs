@@ -109,7 +109,10 @@ pub fn parse_network_invite(value: &str) -> Result<NetworkInvite> {
 /// Encode a `NetworkInvite` into `nvpn://invite/<base64>`.
 pub fn encode_network_invite(invite: &NetworkInvite) -> Result<String> {
     let bytes = serde_json::to_vec(invite).context("failed to encode network invite JSON")?;
-    Ok(format!("{NETWORK_INVITE_PREFIX}{}", URL_SAFE_NO_PAD.encode(bytes)))
+    Ok(format!(
+        "{NETWORK_INVITE_PREFIX}{}",
+        URL_SAFE_NO_PAD.encode(bytes)
+    ))
 }
 
 /// Convert a 32-byte hex pubkey to its `npub1...` bech32 form. Returns the

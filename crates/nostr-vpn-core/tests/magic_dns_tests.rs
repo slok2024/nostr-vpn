@@ -154,7 +154,10 @@ fn magic_dns_server_update_records_reflects_newly_added_alias() {
 
     let post = send_dns_query(&socket, server_addr, "pi.nvpn.", RecordType::A);
     assert_eq!(post.response_code(), ResponseCode::NoError);
-    let answer = post.answers().first().expect("expected answer after refresh");
+    let answer = post
+        .answers()
+        .first()
+        .expect("expected answer after refresh");
     match answer.data() {
         RData::A(A(ip)) => assert_eq!(*ip, new_ip),
         other => panic!("unexpected answer data: {other:?}"),

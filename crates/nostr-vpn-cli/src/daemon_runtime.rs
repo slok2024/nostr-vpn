@@ -851,19 +851,65 @@ pub(crate) fn repair_saved_network_state(config_path: &Path) -> Result<bool> {
 }
 
 pub(crate) fn write_runtime_file_atomically(path: &Path, contents: &[u8]) -> Result<()> {
+    use std::io::Write;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("runtime file has no parent: {}", path.display()))?;
-    let temp_path = parent.join(format!(
-        ".{}.tmp-{}-{}",
-        path.file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("runtime"),
-        std::process::id(),
-        unix_timestamp()
-    ));
-    fs::write(&temp_path, contents)
-        .with_context(|| format!("failed to write temp runtime file {}", temp_path.display()))?;
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("runtime");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let mut temp_file = None;
+    let mut temp_path = None;
+    for attempt in 0..128u32 {
+        let candidate = parent.join(format!(
+            ".{file_name}.tmp-{}-{nonce}-{attempt}",
+            std::process::id()
+        ));
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        {
+            options.mode(0o600);
+        }
+        match options.open(&candidate) {
+            Ok(file) => {
+                temp_file = Some(file);
+                temp_path = Some(candidate);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("failed to create temp runtime file {}", candidate.display())
+                });
+            }
+        }
+    }
+    let temp_path = temp_path.ok_or_else(|| {
+        anyhow!(
+            "failed to allocate temp runtime file for {}",
+            path.display()
+        )
+    })?;
+    let mut file = temp_file.expect("temp file set with temp path");
+    if let Err(error) = file.write_all(contents) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error)
+            .with_context(|| format!("failed to write temp runtime file {}", temp_path.display()));
+    }
+    if let Err(error) = file.sync_all() {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error)
+            .with_context(|| format!("failed to sync temp runtime file {}", temp_path.display()));
+    }
+    drop(file);
     fs::rename(&temp_path, path).with_context(|| {
         format!(
             "failed to replace {} with {}",

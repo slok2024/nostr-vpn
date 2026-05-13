@@ -1,4 +1,5 @@
 use super::*;
+use nostr_vpn_core::config::PendingOutboundJoinRequest;
 
 #[test]
 fn default_relays_match_hashtree_defaults() {
@@ -225,6 +226,41 @@ fn apply_admin_signed_shared_roster_replaces_members_from_known_admin() {
     expected_admins.sort();
     assert_eq!(config.networks[0].admins, expected_admins);
     assert_eq!(config.networks[0].shared_roster_updated_at, 1_726_000_000);
+}
+
+#[test]
+fn apply_admin_signed_shared_roster_clears_join_request_when_own_key_is_added() {
+    let own = Keys::generate();
+    let current_admin = Keys::generate();
+    let own_hex = own.public_key().to_hex();
+    let current_admin_hex = current_admin.public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    config.nostr.secret_key = own.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex.clone();
+    config.networks[0].network_id = "mesh-home".to_string();
+    config.networks[0].admins = vec![current_admin_hex.clone()];
+    config.networks[0].participants = Vec::new();
+    config.networks[0].outbound_join_request = Some(PendingOutboundJoinRequest {
+        recipient: current_admin_hex.clone(),
+        requested_at: 1_725_999_999,
+    });
+    config.ensure_defaults();
+
+    let changed = config
+        .apply_admin_signed_shared_roster(
+            "mesh-home",
+            "Home",
+            vec![current_admin_hex.clone(), own_hex],
+            vec![current_admin_hex.clone()],
+            std::collections::HashMap::new(),
+            1_726_000_000,
+            &current_admin_hex,
+        )
+        .expect("apply accepted roster");
+
+    assert!(changed);
+    assert!(config.networks[0].outbound_join_request.is_none());
 }
 
 #[test]

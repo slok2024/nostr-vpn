@@ -223,6 +223,7 @@ struct RootView: View {
                 pageTitle("Share", "qrcode")
                 if let activeNetwork {
                     inviteSection(activeNetwork)
+                    joinRequestsSection(activeNetwork)
                     joinNetworkSection(activeNetwork)
                 }
             }
@@ -612,6 +613,13 @@ struct RootView: View {
                         .disabled(state.activeNetworkInvite.isEmpty)
                     }
                     HStack {
+                        Toggle("Join requests", isOn: Binding(
+                            get: { network.joinRequestsEnabled },
+                            set: { manager.setJoinRequests(networkId: network.id, enabled: $0) }
+                        ))
+                        .disabled(!network.localIsAdmin || manager.actionInFlight)
+                        .help("Listen for join requests")
+                        badge(network.joinRequestsEnabled ? "Open" : "Closed", style: network.joinRequestsEnabled ? .ok : .muted)
                         Spacer()
                         Button {
                             state.inviteBroadcastActive ? manager.stopInviteBroadcast() : manager.startInviteBroadcast()

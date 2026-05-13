@@ -25,8 +25,9 @@ use crate::invite::{
 };
 use crate::lan_pairing::{
     LAN_PAIRING_DURATION, LAN_PAIRING_STALE_AFTER, LanPairingAnnouncement, LanPairingSignal,
-    LanPairingWorker, spawn_lan_pairing_worker,
 };
+#[cfg(not(test))]
+use crate::lan_pairing::{LanPairingWorker, spawn_lan_pairing_worker};
 use crate::native_state::{
     NativeAppState, NativeHealthIssue, NativeInboundJoinRequestState, NativeLanPeerState,
     NativeNetworkState, NativeNetworkSummary, NativeOutboundJoinRequestState,
@@ -119,7 +120,7 @@ struct NativeAppRuntime {
     service_binary_version: String,
     expected_service_binary_version: String,
     last_service_status_refresh_at: Option<Instant>,
-    lan_pairing_worker: Option<LanPairingWorker>,
+    lan_pairing_worker: Option<NativeLanPairingWorker>,
     invite_broadcast_expires_at: Option<SystemTime>,
     nearby_discovery_expires_at: Option<SystemTime>,
     lan_peers: HashMap<String, LanPeerRecord>,
@@ -129,6 +130,85 @@ struct NativeAppRuntime {
 struct LanPeerRecord {
     signal: LanPairingSignal,
     last_seen: SystemTime,
+}
+
+#[cfg(not(test))]
+#[derive(Debug)]
+struct NativeLanPairingWorker(LanPairingWorker);
+
+#[cfg(test)]
+#[derive(Debug)]
+struct NativeLanPairingWorker;
+
+#[cfg_attr(test, allow(clippy::unnecessary_wraps, clippy::unused_self))]
+impl NativeLanPairingWorker {
+    #[cfg(not(test))]
+    fn spawn(announcement: LanPairingAnnouncement) -> Result<Self> {
+        Ok(Self(spawn_lan_pairing_worker(announcement)?))
+    }
+
+    #[cfg(test)]
+    fn spawn(_announcement: LanPairingAnnouncement) -> Result<Self> {
+        Ok(Self)
+    }
+
+    #[cfg(not(test))]
+    fn drain(&mut self) -> Vec<LanPairingSignal> {
+        self.0.drain()
+    }
+
+    #[cfg(test)]
+    fn drain(&mut self) -> Vec<LanPairingSignal> {
+        Vec::new()
+    }
+
+    #[cfg(not(test))]
+    fn set_broadcast_until(&self, expires_at: SystemTime) {
+        self.0.set_broadcast_until(expires_at);
+    }
+
+    #[cfg(test)]
+    fn set_broadcast_until(&self, _expires_at: SystemTime) {}
+
+    #[cfg(not(test))]
+    fn set_listen_until(&self, expires_at: SystemTime) {
+        self.0.set_listen_until(expires_at);
+    }
+
+    #[cfg(test)]
+    fn set_listen_until(&self, _expires_at: SystemTime) {}
+
+    #[cfg(not(test))]
+    fn clear_broadcast(&self) {
+        self.0.clear_broadcast();
+    }
+
+    #[cfg(test)]
+    fn clear_broadcast(&self) {}
+
+    #[cfg(not(test))]
+    fn clear_listen(&self) {
+        self.0.clear_listen();
+    }
+
+    #[cfg(test)]
+    fn clear_listen(&self) {}
+
+    #[cfg(not(test))]
+    fn update_announcement(&self, announcement: LanPairingAnnouncement) {
+        self.0.update_announcement(announcement);
+    }
+
+    #[cfg(test)]
+    fn update_announcement(&self, _announcement: LanPairingAnnouncement) {}
+
+    #[cfg(not(test))]
+    fn stop(&mut self) {
+        self.0.stop();
+    }
+
+    #[cfg(test)]
+    fn stop(&mut self) {}
 }
 
 #[derive(Debug, Deserialize)]
@@ -221,11 +301,19 @@ impl NativeAppRuntime {
 
     fn from_startup_error(error: &anyhow::Error) -> Self {
         let error = error.to_string();
+        #[cfg(not(test))]
+        let config = AppConfig::generated();
+        #[cfg(test)]
+        let mut config = AppConfig::generated();
+        #[cfg(test)]
+        {
+            config.node.endpoint = "198.51.100.10:51820".to_string();
+        }
         Self {
             rev: 0,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             config_path: default_config_path(),
-            config: AppConfig::generated(),
+            config,
             nvpn_bin: resolve_nvpn_cli_path().ok(),
             mobile_runtime: current_runtime_capabilities().mobile,
             startup_error: Some(error.clone()),
@@ -697,7 +785,7 @@ impl NativeAppRuntime {
         if self.lan_pairing_worker.is_some() {
             return Ok(());
         }
-        let worker = spawn_lan_pairing_worker(announcement)?;
+        let worker = NativeLanPairingWorker::spawn(announcement)?;
         self.lan_pairing_worker = Some(worker);
         Ok(())
     }
@@ -1996,6 +2084,7 @@ fn applescript_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nostr_sdk::prelude::{Keys, ToBech32};
 
     #[test]
     fn advertised_routes_are_normalized_and_deduplicated() {
@@ -2144,8 +2233,6 @@ mod tests {
 
     #[test]
     fn invite_import_queues_join_request_to_invite_admin() {
-        use nostr_sdk::prelude::{Keys, ToBech32};
-
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -2222,8 +2309,6 @@ mod tests {
 
     #[test]
     fn accepting_join_request_uses_requester_node_name_as_alias() {
-        use nostr_sdk::prelude::{Keys, ToBech32};
-
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -2396,6 +2481,8 @@ mod tests {
 
     #[test]
     fn settings_patch_enforces_exit_node_mutual_exclusion() {
+        use nostr_sdk::prelude::{Keys, ToBech32};
+
         // Selecting a peer exit clears WG upstream, and selecting WG
         // upstream clears the peer exit — the daemon enforces this
         // so every UI can just push the new selection.
@@ -2406,7 +2493,6 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("nvpn-mutual-exit-{nonce}"));
         fs::create_dir_all(&dir).expect("create test dir");
 
-        use nostr_sdk::prelude::{Keys, ToBech32};
         let peer_npub = Keys::generate()
             .public_key()
             .to_bech32()

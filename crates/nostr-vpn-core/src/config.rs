@@ -1,5 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
+#[cfg(unix)]
+use std::fs::OpenOptions;
+#[cfg(unix)]
+use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
@@ -84,6 +90,12 @@ pub struct AppConfig {
         skip_serializing_if = "is_true"
     )]
     pub fips_advertise_endpoint: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub mesh_mtu_profile: String,
+    #[serde(default, skip_serializing_if = "is_zero_u16")]
+    pub mesh_underlay_udp_mtu: u16,
+    #[serde(default, skip_serializing_if = "is_zero_u16")]
+    pub mesh_tunnel_mtu: u16,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub exit_node: String,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -478,6 +490,10 @@ fn wireguard_exit_persistent_keepalive_secs_is_default(value: &u16) -> bool {
     *value == default_wireguard_exit_persistent_keepalive_secs()
 }
 
+fn is_zero_u16(value: &u16) -> bool {
+    *value == 0
+}
+
 fn normalize_wireguard_exit_config(config: &mut WireGuardExitConfig) {
     config.interface = config.interface.trim().to_string();
     if config.interface.is_empty() {
@@ -613,6 +629,9 @@ impl Default for AppConfig {
             autoconnect: default_autoconnect(),
             fips_peer_endpoints: HashMap::new(),
             fips_advertise_endpoint: default_fips_advertise_endpoint(),
+            mesh_mtu_profile: String::new(),
+            mesh_underlay_udp_mtu: 0,
+            mesh_tunnel_mtu: 0,
             exit_node: String::new(),
             exit_node_leak_protection: false,
             close_to_tray_on_close: default_close_to_tray_on_close(),
@@ -693,7 +712,8 @@ impl AppConfig {
         to_write.canonicalize_user_facing_pubkeys();
 
         let raw = toml::to_string_pretty(&to_write).with_context(|| "failed to encode TOML")?;
-        fs::write(path, raw).with_context(|| format!("failed to write {}", path.display()))?;
+        write_config_file(path, raw.as_bytes())
+            .with_context(|| format!("failed to write {}", path.display()))?;
         Ok(())
     }
 
@@ -715,6 +735,7 @@ impl AppConfig {
                 .unwrap_or_else(default_node_name);
         }
 
+        self.mesh_mtu_profile = self.mesh_mtu_profile.trim().to_ascii_lowercase();
         self.magic_dns_suffix = normalize_magic_dns_suffix(&self.magic_dns_suffix);
         normalize_wireguard_exit_config(&mut self.wireguard_exit);
 
@@ -1401,6 +1422,7 @@ impl AppConfig {
                 .filter_map(|member| normalize_nostr_pubkey(member).ok())
                 .any(|member| member == own_pubkey)
         });
+        let own_join_completed = own_pubkey.is_some() && own_in_shared_roster;
         let participants = if own_in_shared_roster {
             normalize_shared_roster_participants(participants, own_pubkey.as_deref())?
         } else {
@@ -1428,10 +1450,14 @@ impl AppConfig {
         }
         network.shared_roster_updated_at = signed_at;
         network.shared_roster_signed_by = normalized_signed_by;
-        network.outbound_join_request = normalize_outbound_join_request(
-            network.outbound_join_request.take(),
-            &network.participants,
-        );
+        network.outbound_join_request = if own_join_completed {
+            None
+        } else {
+            normalize_outbound_join_request(
+                network.outbound_join_request.take(),
+                &network.participants,
+            )
+        };
         network.inbound_join_requests = normalize_inbound_join_requests(
             std::mem::take(&mut network.inbound_join_requests),
             &network.participants,
@@ -1812,6 +1838,69 @@ const MAX_SHARED_ROSTER_FUTURE_SECS: u64 = 600;
 
 fn next_shared_roster_updated_at(previous: u64) -> u64 {
     current_unix_timestamp().max(previous.saturating_add(1))
+}
+
+#[cfg(unix)]
+fn write_config_file(path: &Path, raw: &[u8]) -> std::io::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("config");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let mut temp_path = None;
+    let mut temp_file = None;
+    for attempt in 0..128u32 {
+        let candidate = parent.join(format!(
+            ".{file_name}.tmp-{}-{nonce}-{attempt}",
+            std::process::id()
+        ));
+        match OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&candidate)
+        {
+            Ok(file) => {
+                temp_path = Some(candidate);
+                temp_file = Some(file);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    let temp_path = temp_path.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "failed to allocate unique config temp file",
+        )
+    })?;
+    let mut file = temp_file.expect("temp file set with temp path");
+    if let Err(error) = file.write_all(raw) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error);
+    }
+    if let Err(error) = file.sync_all() {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error);
+    }
+    drop(file);
+    if let Err(error) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error);
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn write_config_file(path: &Path, raw: &[u8]) -> std::io::Result<()> {
+    fs::write(path, raw)
 }
 
 #[cfg(test)]

@@ -12,7 +12,9 @@ use std::net::ToSocketAddrs;
 use std::process::Command as ProcessCommand;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use anyhow::{Context, Result, anyhow};
+use anyhow::Context;
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+use anyhow::{Result, anyhow};
 #[cfg(target_os = "linux")]
 use netdev::get_interfaces;
 #[cfg(target_os = "linux")]
@@ -557,7 +559,7 @@ pub(crate) fn linux_exit_node_source_cidr(tunnel_ip: &str) -> Option<String> {
     Some(format!("{}.{}.{}.0/24", octets[0], octets[1], octets[2]))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LinuxExitNodeIpFamily {
     V4,
@@ -566,12 +568,14 @@ pub(crate) enum LinuxExitNodeIpFamily {
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(all(test, target_os = "windows"), allow(dead_code))]
 pub(crate) struct LinuxExitNodeDefaultRouteFamilies {
     pub(crate) ipv4: bool,
     pub(crate) ipv6: bool,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg_attr(all(test, target_os = "windows"), allow(dead_code))]
 pub(crate) fn linux_exit_node_default_route_families(
     routes: &[String],
 ) -> LinuxExitNodeDefaultRouteFamilies {
@@ -589,8 +593,65 @@ pub(crate) fn linux_exit_node_firewall_binary(family: LinuxExitNodeIpFamily) -> 
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(crate) fn linux_exit_node_forward_in_rule(
+    tunnel_iface: &str,
+    outbound_iface: &str,
+    tunnel_source_cidr: &str,
+    family: LinuxExitNodeIpFamily,
+) -> Vec<String> {
+    vec![
+        "FORWARD".to_string(),
+        "-i".to_string(),
+        tunnel_iface.to_string(),
+        "-o".to_string(),
+        outbound_iface.to_string(),
+        "-s".to_string(),
+        tunnel_source_cidr.to_string(),
+        "-m".to_string(),
+        "comment".to_string(),
+        "--comment".to_string(),
+        match family {
+            LinuxExitNodeIpFamily::V4 => "nvpn-exit-forward-in",
+            LinuxExitNodeIpFamily::V6 => "nvpn-exit6-forward-in",
+        }
+        .to_string(),
+        "-j".to_string(),
+        "ACCEPT".to_string(),
+    ]
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn linux_exit_node_forward_out_rule(
+    tunnel_iface: &str,
+    outbound_iface: &str,
+    family: LinuxExitNodeIpFamily,
+) -> Vec<String> {
+    vec![
+        "FORWARD".to_string(),
+        "-i".to_string(),
+        outbound_iface.to_string(),
+        "-o".to_string(),
+        tunnel_iface.to_string(),
+        "-m".to_string(),
+        "conntrack".to_string(),
+        "--ctstate".to_string(),
+        "RELATED,ESTABLISHED".to_string(),
+        "-m".to_string(),
+        "comment".to_string(),
+        "--comment".to_string(),
+        match family {
+            LinuxExitNodeIpFamily::V4 => "nvpn-exit-forward-out",
+            LinuxExitNodeIpFamily::V6 => "nvpn-exit6-forward-out",
+        }
+        .to_string(),
+        "-j".to_string(),
+        "ACCEPT".to_string(),
+    ]
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn linux_exit_node_legacy_forward_in_rule(
     iface: &str,
     family: LinuxExitNodeIpFamily,
 ) -> Vec<String> {
@@ -611,8 +672,8 @@ pub(crate) fn linux_exit_node_forward_in_rule(
     ]
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) fn linux_exit_node_forward_out_rule(
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn linux_exit_node_legacy_forward_out_rule(
     iface: &str,
     family: LinuxExitNodeIpFamily,
 ) -> Vec<String> {
@@ -654,6 +715,33 @@ pub(crate) fn linux_exit_node_ipv4_masquerade_rule(
         "nvpn-exit-masq".to_string(),
         "-j".to_string(),
         "MASQUERADE".to_string(),
+    ]
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn linux_wireguard_exit_inbound_drop_rule(
+    wireguard_iface: &str,
+    tunnel_iface: &str,
+    tunnel_source_cidr: &str,
+) -> Vec<String> {
+    vec![
+        "FORWARD".to_string(),
+        "-i".to_string(),
+        wireguard_iface.to_string(),
+        "-o".to_string(),
+        tunnel_iface.to_string(),
+        "-d".to_string(),
+        tunnel_source_cidr.to_string(),
+        "-m".to_string(),
+        "conntrack".to_string(),
+        "--ctstate".to_string(),
+        "NEW,INVALID".to_string(),
+        "-m".to_string(),
+        "comment".to_string(),
+        "--comment".to_string(),
+        "nvpn-wg-upstream-inbound-drop".to_string(),
+        "-j".to_string(),
+        "DROP".to_string(),
     ]
 }
 
@@ -714,6 +802,31 @@ pub(crate) fn linux_iptables_ensure_rule(
 }
 
 #[cfg(target_os = "linux")]
+pub(crate) fn linux_iptables_ensure_rule_at_front(
+    family: LinuxExitNodeIpFamily,
+    table: Option<&str>,
+    rule: &[String],
+) -> Result<()> {
+    if linux_iptables_rule_exists(family, table, rule)? {
+        return Ok(());
+    }
+
+    let Some((chain, args)) = rule.split_first() else {
+        return Err(anyhow!("iptables rule is missing a chain"));
+    };
+
+    let mut command = ProcessCommand::new(linux_exit_node_firewall_binary(family));
+    if let Some(table) = table {
+        command.arg("-t").arg(table);
+    }
+    command.arg("-I").arg(chain).arg("1");
+    for arg in args {
+        command.arg(arg);
+    }
+    run_checked(&mut command)
+}
+
+#[cfg(target_os = "linux")]
 pub(crate) fn linux_iptables_delete_rule(
     family: LinuxExitNodeIpFamily,
     table: Option<&str>,
@@ -735,13 +848,16 @@ pub(crate) fn linux_iptables_delete_rule(
 }
 
 #[cfg(any(test, not(target_os = "windows")))]
+#[cfg_attr(all(test, target_os = "windows"), allow(dead_code))]
 pub(crate) fn apply_local_interface_network_with_mtu(
     iface: &str,
     address: &str,
     route_targets: &[String],
     mtu: u16,
 ) -> Result<()> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     let mtu = mtu.to_string();
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     let mtu = mtu.as_str();
     #[cfg(target_os = "linux")]
     {
@@ -832,7 +948,7 @@ pub(crate) fn apply_local_interface_network_with_mtu(
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    let _ = (iface, address, route_targets);
+    let _ = (iface, address, route_targets, mtu);
 
     #[allow(unreachable_code)]
     Err(anyhow!(
@@ -891,5 +1007,114 @@ mod tests {
         assert!(!linux_route_target_is_ipv4("::/0"));
         assert!(linux_route_target_is_ipv6("::/0"));
         assert!(!linux_route_target_is_ipv6("10.44.0.0/16"));
+    }
+
+    #[test]
+    fn wireguard_upstream_inbound_drop_rule_blocks_new_mesh_forwards() {
+        assert_eq!(
+            linux_wireguard_exit_inbound_drop_rule("nvpn-wg-exit", "nvpn0", "10.44.0.0/16"),
+            vec![
+                "FORWARD",
+                "-i",
+                "nvpn-wg-exit",
+                "-o",
+                "nvpn0",
+                "-d",
+                "10.44.0.0/16",
+                "-m",
+                "conntrack",
+                "--ctstate",
+                "NEW,INVALID",
+                "-m",
+                "comment",
+                "--comment",
+                "nvpn-wg-upstream-inbound-drop",
+                "-j",
+                "DROP",
+            ]
+        );
+    }
+
+    #[test]
+    fn exit_node_forward_rules_are_scoped_to_mesh_source_and_outbound_iface() {
+        assert_eq!(
+            linux_exit_node_forward_in_rule(
+                "utun100",
+                "enp41s0",
+                "10.44.0.0/16",
+                LinuxExitNodeIpFamily::V4
+            ),
+            vec![
+                "FORWARD",
+                "-i",
+                "utun100",
+                "-o",
+                "enp41s0",
+                "-s",
+                "10.44.0.0/16",
+                "-m",
+                "comment",
+                "--comment",
+                "nvpn-exit-forward-in",
+                "-j",
+                "ACCEPT",
+            ]
+        );
+        assert_eq!(
+            linux_exit_node_forward_out_rule("utun100", "enp41s0", LinuxExitNodeIpFamily::V4),
+            vec![
+                "FORWARD",
+                "-i",
+                "enp41s0",
+                "-o",
+                "utun100",
+                "-m",
+                "conntrack",
+                "--ctstate",
+                "RELATED,ESTABLISHED",
+                "-m",
+                "comment",
+                "--comment",
+                "nvpn-exit-forward-out",
+                "-j",
+                "ACCEPT",
+            ]
+        );
+    }
+
+    #[test]
+    fn legacy_exit_node_forward_rules_match_old_unscoped_rules_for_cleanup() {
+        assert_eq!(
+            linux_exit_node_legacy_forward_in_rule("utun100", LinuxExitNodeIpFamily::V6),
+            vec![
+                "FORWARD",
+                "-i",
+                "utun100",
+                "-m",
+                "comment",
+                "--comment",
+                "nvpn-exit6-forward-in",
+                "-j",
+                "ACCEPT",
+            ]
+        );
+        assert_eq!(
+            linux_exit_node_legacy_forward_out_rule("utun100", LinuxExitNodeIpFamily::V6),
+            vec![
+                "FORWARD",
+                "-o",
+                "utun100",
+                "-m",
+                "conntrack",
+                "--ctstate",
+                "RELATED,ESTABLISHED",
+                "-m",
+                "comment",
+                "--comment",
+                "nvpn-exit6-forward-out",
+                "-j",
+                "ACCEPT",
+            ]
+        );
     }
 }

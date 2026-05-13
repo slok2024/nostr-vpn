@@ -26,7 +26,7 @@
 //!     daemon path; the runtime owns reader+writer tasks that talk to
 //!     the OS tun directly.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::os::raw::c_int;
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,6 +45,12 @@ use crate::config::WireGuardExitConfig;
 
 pub const MAX_WG_PACKET: usize = 65_535;
 const TIMER_TICK: Duration = Duration::from_millis(250);
+
+type TunPacket = Vec<u8>;
+type TunPacketRx = mpsc::Receiver<TunPacket>;
+type TunPacketTx = mpsc::Sender<TunPacket>;
+type TunIo = (TunPacketRx, TunPacketTx);
+type TunTaskHandles = (JoinHandle<()>, JoinHandle<()>);
 
 /// Default time the daemon / mobile runtime waits for the WG handshake
 /// to complete before giving up. Acts as the implicit watchdog: by
@@ -87,8 +93,8 @@ impl WgUpstreamRuntime {
     /// `tun_in_rx` and reads plaintext packets out of `tun_out_tx`.
     pub async fn start_with_channels(
         config: &WireGuardExitConfig,
-        tun_in_rx: mpsc::Receiver<Vec<u8>>,
-        tun_out_tx: mpsc::Sender<Vec<u8>>,
+        tun_in_rx: TunPacketRx,
+        tun_out_tx: TunPacketTx,
     ) -> Result<Self> {
         Self::start_with_io(config, Some((tun_in_rx, tun_out_tx)), None).await
     }
@@ -102,8 +108,8 @@ impl WgUpstreamRuntime {
     /// on mobile without the boringtun `device` feature.
     pub async fn start_with_io(
         config: &WireGuardExitConfig,
-        tun_io: Option<(mpsc::Receiver<Vec<u8>>, mpsc::Sender<Vec<u8>>)>,
-        tun_handles: Option<(JoinHandle<()>, JoinHandle<()>)>,
+        tun_io: Option<TunIo>,
+        tun_handles: Option<TunTaskHandles>,
     ) -> Result<Self> {
         log_android_info("wg-upstream: start_with_io entered");
         let private = decode_private_key(&config.private_key)?;
@@ -114,9 +120,10 @@ impl WgUpstreamRuntime {
             "wg-upstream: keys decoded, upstream resolved to {upstream}"
         ));
 
-        let udp = UdpSocket::bind("0.0.0.0:0")
+        let bind_addr = udp_bind_addr_for_upstream(upstream);
+        let udp = UdpSocket::bind(bind_addr)
             .await
-            .context("bind upstream WG udp socket")?;
+            .with_context(|| format!("bind upstream WG udp socket on {bind_addr}"))?;
         let udp_socket_fd = raw_udp_socket_fd(&udp);
         log_android_info(&format!(
             "wg-upstream: udp socket bound, fd={udp_socket_fd}"
@@ -263,8 +270,8 @@ async fn run_pump(
     mut tunn: Tunn,
     udp: Arc<UdpSocket>,
     upstream: SocketAddr,
-    tun_in_rx: Option<mpsc::Receiver<Vec<u8>>>,
-    tun_out_tx: Option<mpsc::Sender<Vec<u8>>>,
+    tun_in_rx: Option<TunPacketRx>,
+    tun_out_tx: Option<TunPacketTx>,
     handshake: Arc<HandshakeState>,
 ) {
     log_android_info(&format!(
@@ -595,6 +602,19 @@ fn raw_udp_socket_fd(_socket: &UdpSocket) -> c_int {
     -1
 }
 
+fn udp_bind_addr_for_upstream(upstream: SocketAddr) -> SocketAddr {
+    match upstream {
+        SocketAddr::V4(addr) if addr.ip().is_loopback() => {
+            SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0).into()
+        }
+        SocketAddr::V4(_) => SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into(),
+        SocketAddr::V6(addr) if addr.ip().is_loopback() => {
+            SocketAddrV6::new(Ipv6Addr::LOCALHOST, 0, 0, 0).into()
+        }
+        SocketAddr::V6(_) => SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into(),
+    }
+}
+
 // Direct OS-log bridges so the WG pump's diagnostic messages surface
 // during device testing — Rust stderr/stdout is redirected to
 // /dev/null on Android and inside an iOS app extension, and the
@@ -668,6 +688,30 @@ unsafe extern "C" {
 mod tests {
     use super::*;
     use crate::config::parse_wireguard_exit_config;
+
+    #[test]
+    fn upstream_udp_bind_uses_loopback_for_loopback_peer() {
+        assert_eq!(
+            udp_bind_addr_for_upstream("127.0.0.1:51820".parse().unwrap()),
+            "127.0.0.1:0".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(
+            udp_bind_addr_for_upstream("[::1]:51820".parse().unwrap()),
+            "[::1]:0".parse::<SocketAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn upstream_udp_bind_preserves_non_loopback_ip_family() {
+        assert_eq!(
+            udp_bind_addr_for_upstream("198.51.100.10:51820".parse().unwrap()),
+            "0.0.0.0:0".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(
+            udp_bind_addr_for_upstream("[2001:db8::1]:51820".parse().unwrap()),
+            "[::]:0".parse::<SocketAddr>().unwrap()
+        );
+    }
 
     fn random_keypair() -> (StaticSecret, PublicKey, String, String) {
         // Deterministic but unique per call. boringtun + x25519-dalek

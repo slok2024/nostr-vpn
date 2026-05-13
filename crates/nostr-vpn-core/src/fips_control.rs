@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 use crate::join_requests::MeshJoinRequest;
@@ -27,6 +29,8 @@ pub struct PeerCapabilities {
 
 const FIPS_CONTROL_MAGIC: &[u8] = b"NVPN-FIPS-CTRL\0";
 const FIPS_CONTROL_VERSION: u8 = 1;
+pub const FIPS_CONTROL_DIRECT_FRAME_LIMIT: usize = 1100;
+pub const FIPS_CONTROL_FRAGMENT_CHUNK_LEN: usize = 700;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -52,6 +56,12 @@ pub enum FipsControlFrame {
         network_id: String,
         capabilities: PeerCapabilities,
     },
+    Fragment {
+        id: String,
+        index: u16,
+        total: u16,
+        data: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +82,30 @@ pub fn encode_fips_control_frame(frame: &FipsControlFrame) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+pub fn encode_fips_control_messages(frame: &FipsControlFrame) -> Result<Vec<Vec<u8>>> {
+    let encoded = encode_fips_control_frame(frame)?;
+    if encoded.len() <= FIPS_CONTROL_DIRECT_FRAME_LIMIT {
+        return Ok(vec![encoded]);
+    }
+
+    let total = encoded.len().div_ceil(FIPS_CONTROL_FRAGMENT_CHUNK_LEN);
+    let total = u16::try_from(total).context("FIPS control frame has too many fragments")?;
+    let id = fips_control_fragment_id(&encoded);
+    encoded
+        .chunks(FIPS_CONTROL_FRAGMENT_CHUNK_LEN)
+        .enumerate()
+        .map(|(index, chunk)| {
+            let fragment = FipsControlFrame::Fragment {
+                id: id.clone(),
+                index: u16::try_from(index).context("FIPS control fragment index overflow")?,
+                total,
+                data: URL_SAFE_NO_PAD.encode(chunk),
+            };
+            encode_fips_control_frame(&fragment)
+        })
+        .collect()
+}
+
 pub fn decode_fips_control_frame(data: &[u8]) -> Result<Option<FipsControlFrame>> {
     let Some(payload) = data.strip_prefix(FIPS_CONTROL_MAGIC) else {
         return Ok(None);
@@ -84,6 +118,10 @@ pub fn decode_fips_control_frame(data: &[u8]) -> Result<Option<FipsControlFrame>
         return Ok(None);
     }
     Ok(Some(envelope.frame))
+}
+
+fn fips_control_fragment_id(data: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(data))
 }
 
 pub fn roster_control_frame(
@@ -168,6 +206,34 @@ mod tests {
             .expect("decode")
             .expect("control frame");
         assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn large_control_frame_fragments_under_direct_limit() {
+        let roster = NetworkRoster {
+            network_name: "Network 1".to_string(),
+            participants: (0..12).map(|value| format!("{value:064x}")).collect(),
+            admins: vec!["f".repeat(64)],
+            aliases: (0..12)
+                .map(|value| (format!("{value:064x}"), format!("node-{value}")))
+                .collect(),
+            signed_at: 123,
+        };
+        let frame = FipsControlFrame::Roster {
+            network_id: "mesh".to_string(),
+            roster,
+        };
+
+        let messages = encode_fips_control_messages(&frame).expect("fragment");
+
+        assert!(messages.len() > 1);
+        for message in messages {
+            assert!(message.len() <= FIPS_CONTROL_DIRECT_FRAME_LIMIT);
+            assert!(matches!(
+                decode_fips_control_frame(&message).expect("decode"),
+                Some(FipsControlFrame::Fragment { .. })
+            ));
+        }
     }
 
     #[test]

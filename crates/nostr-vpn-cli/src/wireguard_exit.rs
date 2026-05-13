@@ -2,9 +2,10 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use nostr_vpn_core::config::WireGuardExitConfig;
@@ -388,20 +389,41 @@ pub(crate) fn linux_wireguard_exit_policy_rule_exists(
 }
 
 fn write_temp_secret_file(iface: &str, suffix: &str, secret: &str) -> Result<PathBuf> {
-    let path = std::env::temp_dir().join(format!("nvpn-{iface}-{suffix}-{}", std::process::id()));
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&path)
-        .with_context(|| format!("failed to create {}", path.display()))?;
-    file.write_all(secret.trim().as_bytes())
-        .with_context(|| format!("failed to write {}", path.display()))?;
-    file.write_all(b"\n")
-        .with_context(|| format!("failed to write {}", path.display()))?;
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
-        .with_context(|| format!("failed to restrict {}", path.display()))?;
-    Ok(path)
+    let temp_dir = std::env::temp_dir();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    for attempt in 0..128u32 {
+        let path = temp_dir.join(format!(
+            "nvpn-{iface}-{suffix}-{}-{nonce}-{attempt}",
+            std::process::id()
+        ));
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true).mode(0o600);
+        let mut file = match options.open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| format!("failed to create {}", path.display()));
+            }
+        };
+        if let Err(error) = file.write_all(secret.trim().as_bytes()) {
+            let _ = fs::remove_file(&path);
+            return Err(error).with_context(|| format!("failed to write {}", path.display()));
+        }
+        if let Err(error) = file.write_all(b"\n") {
+            let _ = fs::remove_file(&path);
+            return Err(error).with_context(|| format!("failed to write {}", path.display()));
+        }
+        file.flush()
+            .with_context(|| format!("failed to flush {}", path.display()))?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("failed to restrict {}", path.display()))?;
+        return Ok(path);
+    }
+    Err(anyhow!(
+        "failed to allocate unique temp secret file for {iface}"
+    ))
 }
 
 fn linux_iface_name_is_safe(iface: &str) -> bool {
@@ -416,7 +438,10 @@ fn linux_iface_name_is_safe(iface: &str) -> bool {
 mod tests {
     use std::net::Ipv4Addr;
 
-    use super::{linux_wireguard_exit_policy_rule_exists, wireguard_exit_endpoint_ipv4_hosts};
+    use super::{
+        linux_wireguard_exit_policy_rule_exists, wireguard_exit_endpoint_ipv4_hosts,
+        write_temp_secret_file,
+    };
 
     #[test]
     fn policy_rule_parser_matches_exact_managed_rule() {
@@ -442,5 +467,30 @@ mod tests {
             wireguard_exit_endpoint_ipv4_hosts("198.51.100.20:51830"),
             vec!["198.51.100.20".parse::<Ipv4Addr>().unwrap()]
         );
+    }
+
+    #[test]
+    fn temp_secret_files_are_unique_and_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let first = write_temp_secret_file("nvpn-test", "key", "secret-a").expect("first secret");
+        let second = write_temp_secret_file("nvpn-test", "key", "secret-b").expect("second secret");
+
+        assert_ne!(first, second);
+        assert_eq!(
+            std::fs::read_to_string(&first).expect("read first"),
+            "secret-a\n"
+        );
+        assert_eq!(
+            std::fs::metadata(&first)
+                .expect("first metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        let _ = std::fs::remove_file(first);
+        let _ = std::fs::remove_file(second);
     }
 }

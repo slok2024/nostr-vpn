@@ -205,7 +205,7 @@ fn importing_current_invite_queues_join_request_to_admin() {
     let admin_hex = normalize_nostr_pubkey(&admin_npub).expect("normalize admin");
     let invite = serde_json::json!({
         "v": 3,
-        "network_id": "8d4f34f5425bc50e",
+        "networkId": "8d4f34f5425bc50e",
         "admins": [admin_npub],
         "relays": ["wss://temp.iris.to"]
     })

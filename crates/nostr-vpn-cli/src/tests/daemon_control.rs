@@ -69,6 +69,30 @@ fn read_daemon_state_trims_nul_padding() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[cfg(unix)]
+#[test]
+fn atomic_runtime_write_creates_private_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("nvpn-runtime-mode-test-{nonce}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let path = dir.join("staged-config.toml");
+
+    write_runtime_file_atomically(&path, b"secret = true\n").expect("write runtime file");
+    let mode = fs::metadata(&path)
+        .expect("runtime metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+
+    assert_eq!(mode, 0o600);
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn daemon_control_request_projects_desired_vpn_state_immediately() {
     let nonce = SystemTime::now()
@@ -499,7 +523,8 @@ fn macos_ifconfig_has_ipv4_matches_exact_interface_address() {
 
 #[test]
 fn daemon_runtime_state_tracks_live_endpoint_and_listen_port() {
-    let config = AppConfig::generated();
+    let mut config = AppConfig::generated();
+    config.node.endpoint = "198.51.100.10:51820".to_string();
     let mut tunnel_runtime = crate::CliTunnelRuntime::new("utun100");
     tunnel_runtime.active_listen_port = Some(53083);
     let state = crate::build_daemon_runtime_state(

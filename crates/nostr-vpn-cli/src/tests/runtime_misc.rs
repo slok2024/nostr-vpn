@@ -1,4 +1,5 @@
 use crate::*;
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -21,6 +22,18 @@ fn daemon_vpn_idle_status_distinguishes_waiting_from_paused() {
     );
     assert_eq!(daemon_vpn_idle_status(false, 0, false), "Paused");
     assert_eq!(daemon_vpn_idle_status(true, 2, false), "Paused");
+}
+
+#[cfg(feature = "embedded-fips")]
+#[test]
+fn fips_roster_publish_keeps_disconnected_recipients_pending() {
+    let connected = HashSet::from(["alice".to_string()]);
+    let recipients = vec!["alice".to_string(), "bob".to_string()];
+
+    let (ready, pending) = split_ready_fips_roster_recipients(recipients, &connected);
+
+    assert_eq!(ready, vec!["alice".to_string()]);
+    assert_eq!(pending, HashSet::from(["bob".to_string()]));
 }
 
 #[test]
@@ -66,6 +79,16 @@ fn wall_time_jump_detection_ignores_busy_loop_delays() {
         observed_at + Duration::from_secs(MAJOR_LINK_CHANGE_TIME_JUMP_SECS + 5),
         MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
     ));
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn runtime_exit_node_routes_do_not_advertise_ipv6_default() {
+    let mut app = AppConfig::generated();
+    app.node.advertise_exit_node = true;
+
+    assert_eq!(runtime_exit_node_default_routes(), vec!["0.0.0.0/0"]);
+    assert_eq!(runtime_effective_advertised_routes(&app), vec!["0.0.0.0/0"]);
 }
 
 #[cfg(target_os = "macos")]

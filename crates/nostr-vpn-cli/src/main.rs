@@ -8,6 +8,11 @@ mod macos_network;
 #[cfg(any(target_os = "macos", test))]
 mod macos_service;
 mod network_signaling;
+#[cfg(all(
+    feature = "embedded-fips",
+    any(target_os = "linux", target_os = "macos")
+))]
+mod pipeline_profile;
 mod platform_routing;
 mod service_management;
 mod session_runtime;
@@ -42,8 +47,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use nostr_vpn_core::config::{
-    AppConfig, derive_mesh_tunnel_ip, maybe_autoconfigure_node, normalize_advertised_route,
-    normalize_nostr_pubkey, normalize_runtime_network_id, parse_wireguard_exit_config,
+    AppConfig, derive_mesh_tunnel_ip, exit_node_default_routes, maybe_autoconfigure_node,
+    normalize_advertised_route, normalize_nostr_pubkey, normalize_runtime_network_id,
+    parse_wireguard_exit_config,
 };
 use nostr_vpn_core::control::PeerAnnouncement;
 use nostr_vpn_core::data_plane::MeshPeerStatus;
@@ -1604,10 +1610,28 @@ fn default_wg_test_tun_name() -> String {
     "utun".to_string()
 }
 
-fn runtime_effective_advertised_routes(app: &AppConfig) -> Vec<String> {
+pub(crate) fn runtime_exit_node_default_routes() -> Vec<String> {
+    #[allow(unused_mut)]
+    let mut routes = exit_node_default_routes();
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        routes.retain(|route| route != "::/0");
+    }
+    #[cfg(all(
+        not(target_os = "linux"),
+        not(target_os = "macos"),
+        not(target_os = "windows")
+    ))]
+    {
+        routes.retain(|route| !is_default_exit_node_route(route));
+    }
+    routes
+}
+
+pub(crate) fn runtime_effective_advertised_routes(app: &AppConfig) -> Vec<String> {
     #[allow(unused_mut)]
     let mut routes = app.effective_advertised_routes();
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         routes.retain(|route| route != "::/0");
     }
@@ -2147,10 +2171,15 @@ fn runtime_signal_ipv4(detected_ipv4: Option<Ipv4Addr>, tunnel_ip: &str) -> Opti
 }
 
 fn local_signal_endpoint(app: &AppConfig, listen_port: u16) -> String {
+    let detected_ipv4 = if endpoint_prefers_runtime_local_ipv4(&app.node.endpoint) {
+        detect_runtime_primary_ipv4()
+    } else {
+        None
+    };
     runtime_local_signal_endpoint(
         &app.node.endpoint,
         listen_port,
-        runtime_signal_ipv4(detect_runtime_primary_ipv4(), &app.node.tunnel_ip),
+        runtime_signal_ipv4(detected_ipv4, &app.node.tunnel_ip),
     )
 }
 
@@ -2578,8 +2607,9 @@ fn pending_fips_join_request_recipients(app: &AppConfig) -> Vec<String> {
 async fn publish_fips_active_network_roster(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
+    pending_recipients: &mut HashSet<String>,
 ) -> Result<usize> {
-    publish_fips_active_network_roster_to(runtime, app, &[]).await
+    publish_fips_active_network_roster_to(runtime, app, &[], pending_recipients).await
 }
 
 #[cfg(feature = "embedded-fips")]
@@ -2589,7 +2619,7 @@ async fn broadcast_local_fips_capabilities(
 ) -> Result<usize> {
     let network = app.active_network();
     let capabilities = PeerCapabilities {
-        advertised_routes: app.effective_advertised_routes(),
+        advertised_routes: runtime_effective_advertised_routes(app),
         signed_at: unix_timestamp(),
     };
     runtime
@@ -2602,6 +2632,7 @@ async fn publish_fips_active_network_roster_to(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
     extra_recipients: &[String],
+    pending_recipients: &mut HashSet<String>,
 ) -> Result<usize> {
     let network = app.active_network();
     let own_pubkey = match app.own_nostr_pubkey_hex() {
@@ -2626,12 +2657,15 @@ async fn publish_fips_active_network_roster_to(
     };
     let mut recipients = app.active_network_signal_pubkeys_hex();
     recipients.extend(extra_recipients.iter().cloned());
+    recipients.extend(pending_recipients.drain());
     recipients.retain(|recipient| recipient != &own_pubkey);
     recipients.sort();
     recipients.dedup();
 
+    let connected = connected_fips_peer_pubkeys(runtime);
+    let (ready_recipients, mut retry) = split_ready_fips_roster_recipients(recipients, &connected);
     let mut sent = 0usize;
-    for recipient in recipients {
+    for recipient in ready_recipients {
         match runtime
             .send_roster(&recipient, &shared.network_id, roster.clone())
             .await
@@ -2639,10 +2673,41 @@ async fn publish_fips_active_network_roster_to(
             Ok(()) => sent += 1,
             Err(error) => {
                 eprintln!("fips: roster send to {recipient} failed: {error}");
+                retry.insert(recipient);
             }
         }
     }
+    *pending_recipients = retry;
     Ok(sent)
+}
+
+#[cfg(feature = "embedded-fips")]
+fn connected_fips_peer_pubkeys(
+    runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
+) -> HashSet<String> {
+    runtime
+        .peer_statuses()
+        .into_iter()
+        .filter(|peer| peer.connected)
+        .map(|peer| peer.pubkey)
+        .collect()
+}
+
+#[cfg(feature = "embedded-fips")]
+fn split_ready_fips_roster_recipients(
+    recipients: Vec<String>,
+    connected: &HashSet<String>,
+) -> (Vec<String>, HashSet<String>) {
+    let mut ready = Vec::new();
+    let mut pending = HashSet::new();
+    for recipient in recipients {
+        if connected.contains(&recipient) {
+            ready.push(recipient);
+        } else {
+            pending.insert(recipient);
+        }
+    }
+    (ready, pending)
 }
 
 fn ipv4_is_local_only(ip: Ipv4Addr) -> bool {

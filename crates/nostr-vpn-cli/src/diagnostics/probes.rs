@@ -93,11 +93,21 @@ pub(super) fn parse_http_response(response: &str) -> Option<(u16, String)> {
     Some((status, body.to_string()))
 }
 
-pub(super) fn probe_nat_pmp_server(server: SocketAddr, timeout: Duration) -> ProbeStatus {
-    let bind_addr = match server {
+fn udp_client_bind_addr_for_server(server: SocketAddr) -> SocketAddr {
+    match server {
+        SocketAddr::V4(addr) if addr.ip().is_loopback() => {
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+        }
         SocketAddr::V4(_) => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
+        SocketAddr::V6(addr) if addr.ip().is_loopback() => {
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 0, 0, 0))
+        }
         SocketAddr::V6(_) => SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
-    };
+    }
+}
+
+pub(super) fn probe_nat_pmp_server(server: SocketAddr, timeout: Duration) -> ProbeStatus {
+    let bind_addr = udp_client_bind_addr_for_server(server);
     let socket = match UdpSocket::bind(bind_addr) {
         Ok(socket) => socket,
         Err(error) => return ProbeStatus::new(ProbeState::Error, error.to_string()),
@@ -127,10 +137,7 @@ pub(super) fn probe_pcp_server(
     client_ip: Option<IpAddr>,
     timeout: Duration,
 ) -> ProbeStatus {
-    let bind_addr = match server {
-        SocketAddr::V4(_) => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
-        SocketAddr::V6(_) => SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
-    };
+    let bind_addr = udp_client_bind_addr_for_server(server);
     let socket = match UdpSocket::bind(bind_addr) {
         Ok(socket) => socket,
         Err(error) => return ProbeStatus::new(ProbeState::Error, error.to_string()),
@@ -169,8 +176,7 @@ pub(super) fn probe_pcp_server(
 }
 
 pub(super) fn probe_upnp_ssdp_server(server: SocketAddr, timeout: Duration) -> ProbeStatus {
-    let socket = match UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)))
-    {
+    let socket = match UdpSocket::bind(udp_client_bind_addr_for_server(server)) {
         Ok(socket) => socket,
         Err(error) => return ProbeStatus::new(ProbeState::Error, error.to_string()),
     };

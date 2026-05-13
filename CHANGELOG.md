@@ -2,16 +2,65 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased
+## 4.0.12 - 2026-05-13
 
 ### Changed
 
+- **Bumped fips-endpoint to `02c00a0` — Darwin connected-UDP and tunnel
+  reliability refresh.** The macOS private mesh now installs per-peer connected
+  UDP sockets by default after fixing the listener/peer `SO_REUSE*` mismatch
+  that made earlier Darwin connected-socket tests unstable. On the MacBook
+  Wi-Fi to Ethernet-mini path, the best same-window sample improved to about
+  256 Mbit/s forward and 404 Mbit/s reverse; reverse is now Tailscale-level in
+  current samples, while the forward direction remains packet-rate limited by
+  the Darwin Wi-Fi sender path.
 - Restored the private mesh default MTU budget to the IPv6-safe
   `MESH_UNDERLAY_UDP_MTU=1280` / `MESH_TUNNEL_MTU=1150`. Larger
   LAN-sized frames can work on direct Ethernet/Wi-Fi paths, but should
   be enabled only after blackhole-safe per-path probing or an explicit
   operator override; making 1420 the global default is too optimistic
   for NAT traversal and nested tunnels.
+- Added an explicit private mesh MTU test lever:
+  `mesh_mtu_profile = "lan"` (or `NVPN_MESH_MTU_PROFILE=lan`) selects
+  a 1420-byte underlay / 1290-byte tunnel budget for clean LAN paths,
+  while `mesh_underlay_udp_mtu`, `mesh_tunnel_mtu`,
+  `NVPN_MESH_UNDERLAY_UDP_MTU`, and `NVPN_MESH_TUNNEL_MTU` allow
+  bounded manual overrides.
+- Private FIPS mesh packet routing now moves owned packet buffers through the
+  send/receive hot path instead of cloning each packet at the nvpn mesh layer.
+- FIPS macOS sending now defaults to the hash-by-send-target worker path instead
+  of the per-flow ordered sender thread. Live MacBook Wi-Fi to Ethernet-mini
+  testing improved the weak direction from about 103-109 Mbit/s to about
+  147 Mbit/s while keeping reverse around 350 Mbit/s; the ordered path remains
+  available for A/B runs with `FIPS_MACOS_ORDERED_SENDER=1`.
+- FIPS macOS worker drain size can now be A/B tested with
+  `FIPS_MACOS_WORKER_BATCH`; the default remains 32 after smaller batches
+  regressed local Wi-Fi/Ethernet throughput.
+- Added runtime-only pipeline tracing and recorded the MacBook/mini and mini
+  Docker performance experiments in `docs/EXPERIMENTS.md`.
+
+### Fixed
+
+- Windows WireGuard-upstream test/routing now supports the WinTun default-route
+  path, including endpoint bypass, optional probe ping, hold/cleanup behavior,
+  and safer script defaults for the Windows VM e2e helper.
+- Completed join requests are cleared after roster updates so stale join state
+  does not persist after the network accepts the request.
+- LAN pairing workers now stay alive while the UI arms broadcast/discovery,
+  fixing a startup race; LAN pairing, WG-upstream, and diagnostics test paths
+  now use loopback-only sockets so local release checks do not trigger macOS
+  firewall prompts.
+- Private FIPS mesh session recovery now forces a fresh path after stale FSP
+  sessions or route churn, reducing long-lived dead-link states after peer
+  restart or network roaming.
+- macOS/Linux private FIPS mesh writes to the TUN device now wait for fd
+  writability and retry on `WouldBlock` instead of using boringtun's helper
+  that collapses every write error to `0`. This avoids silent utun drops under
+  sustained reverse UDP load on macOS.
+- FIPS direct UDP worker sends on non-Linux now honor the bulk-data
+  `drop_on_backpressure` policy instead of retrying every endpoint data packet
+  indefinitely under Darwin UDP send pressure; mixed/control batches still retry
+  so rekeys and handshakes are not stranded.
 
 ## 4.0.11 - 2026-05-11
 

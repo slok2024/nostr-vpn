@@ -42,6 +42,7 @@ info:
     @echo
     @echo "Checks"
     @echo "  just test"
+    @echo "  just security-regressions"
     @echo "  just e2e"
     @echo "  just e2e-connect"
     @echo "  just e2e-active-network"
@@ -128,6 +129,11 @@ release-publish:
 
 test:
     cargo test
+
+security-regressions:
+    cargo test -p nostr-vpn-cli platform_routing
+    cargo test -p nostr-vpn-app-core mobile_config
+    ./scripts/e2e-wireguard-exit-docker.sh
 
 e2e:
     ./scripts/e2e-docker.sh

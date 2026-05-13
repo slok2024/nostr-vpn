@@ -11,7 +11,7 @@ exclude = ["linux"]
 resolver = "2"
 
 [workspace.package]
-version = "4.0.11"
+version = "4.0.12"
 edition = "2024"
 license = "MIT"
 authors = ["sirius"]
@@ -24,7 +24,7 @@ base64 = "0.22"
 boringtun = "0.7"
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = { git = "https://github.com/mmalmi/fips.git", rev = "8510193" }
+fips-endpoint = { git = "https://github.com/mmalmi/fips.git", rev = "3740a682a7bb7392a548b462c378108aa5bbe5c9" }
 futures = "0.3"
 hex = "0.4"
 hickory-proto = "0.25"

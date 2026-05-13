@@ -11,6 +11,11 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY --from=fips . /app/fips
 
+# The compose file passes the sibling fips checkout as a BuildKit context.
+# Patch the locked git dependency to that local context so perf/e2e images
+# exercise the code under test instead of the last pinned upstream revision.
+RUN printf '\n[patch."https://github.com/mmalmi/fips.git"]\nfips-core = { path = "/app/fips/crates/fips-core" }\nfips-endpoint = { path = "/app/fips/crates/fips-endpoint" }\nfips-identity = { path = "/app/fips/crates/fips-identity" }\n' >> Cargo.toml
+
 # BuildKit cache mounts: persist the cargo registry, git checkouts, and
 # target/ across builds. Without this, every source change re-downloads
 # every dep + recompiles the whole graph (~3 min). With it, an incremental

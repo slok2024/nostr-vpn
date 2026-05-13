@@ -105,6 +105,17 @@ impl FipsMeshRuntime {
         })
     }
 
+    pub fn route_outbound_packet_owned(&self, packet: Vec<u8>) -> Option<OutgoingFipsPacket> {
+        let destination = packet_destination(&packet)?;
+        let peer = self.select_peer_for_ip(destination)?;
+
+        Some(OutgoingFipsPacket {
+            participant_pubkey: peer.participant_pubkey.clone(),
+            endpoint_npub: peer.endpoint_npub.clone(),
+            bytes: packet,
+        })
+    }
+
     pub fn receive_endpoint_data(
         &self,
         source_npub: Option<&str>,
@@ -138,6 +149,38 @@ impl FipsMeshRuntime {
         Some(PrivatePacket {
             source_pubkey: peer.participant_pubkey.clone(),
             bytes: data.to_vec(),
+        })
+    }
+
+    pub fn receive_endpoint_data_owned(
+        &self,
+        source_npub: Option<&str>,
+        data: Vec<u8>,
+    ) -> Option<PrivatePacket> {
+        let source_npub = source_npub?.trim();
+        if source_npub.is_empty() {
+            return None;
+        }
+
+        let packet_source = packet_source(&data)?;
+        let peer = self.select_peer_for_ip(packet_source)?;
+        if peer.endpoint_npub.as_str() != source_npub {
+            return None;
+        }
+        if !self.local_routes.is_empty() {
+            let packet_destination = packet_destination(&data)?;
+            if !self
+                .local_routes
+                .iter()
+                .any(|route| route.matches(packet_destination))
+            {
+                return None;
+            }
+        }
+
+        Some(PrivatePacket {
+            source_pubkey: peer.participant_pubkey.clone(),
+            bytes: data,
         })
     }
 
@@ -437,6 +480,14 @@ mod tests {
         assert_eq!(outgoing.participant_pubkey, specific.participant_pubkey);
         assert_eq!(outgoing.endpoint_npub, specific.endpoint_npub);
         assert_eq!(outgoing.bytes, packet);
+
+        let outgoing = runtime
+            .route_outbound_packet_owned(packet.clone())
+            .expect("owned packet should route");
+
+        assert_eq!(outgoing.participant_pubkey, specific.participant_pubkey);
+        assert_eq!(outgoing.endpoint_npub, specific.endpoint_npub);
+        assert_eq!(outgoing.bytes, packet);
     }
 
     #[test]
@@ -459,6 +510,13 @@ mod tests {
         let received = runtime
             .receive_endpoint_data(Some(&peer.endpoint_npub), &packet)
             .expect("source npub and packet source should be admitted");
+
+        assert_eq!(received.source_pubkey, peer.participant_pubkey);
+        assert_eq!(received.bytes, packet);
+
+        let received = runtime
+            .receive_endpoint_data_owned(Some(&peer.endpoint_npub), packet.clone())
+            .expect("owned source npub and packet source should be admitted");
 
         assert_eq!(received.source_pubkey, peer.participant_pubkey);
         assert_eq!(received.bytes, packet);

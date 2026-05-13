@@ -76,6 +76,21 @@ fn maybe_log_fips_mesh_count(
     }
 }
 
+#[cfg(feature = "embedded-fips")]
+async fn flush_pending_fips_roster_recipients(
+    runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
+    app: &AppConfig,
+    pending_recipients: &mut HashSet<String>,
+) {
+    if pending_recipients.is_empty() {
+        return;
+    }
+    match publish_fips_active_network_roster(runtime, app, pending_recipients).await {
+        Ok(_) => {}
+        Err(error) => eprintln!("fips: queued roster publish failed: {error}"),
+    }
+}
+
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn reset_tunnel_runtime_after_macos_underlay_repair(
     tunnel_runtime: &mut CliTunnelRuntime,
@@ -171,6 +186,8 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
     announce_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut tunnel_heartbeat_interval = tokio::time::interval(Duration::from_secs(2));
     tunnel_heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    #[cfg(feature = "embedded-fips")]
+    let mut pending_fips_roster_recipients: HashSet<String> = HashSet::new();
 
     let mut last_mesh_count = 0_usize;
     loop {
@@ -188,6 +205,12 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
                     if let Err(error) = runtime.refresh_link_statuses().await {
                         eprintln!("fips: peer link snapshot failed: {error}");
                     }
+                    flush_pending_fips_roster_recipients(
+                        runtime,
+                        &app,
+                        &mut pending_fips_roster_recipients,
+                    )
+                    .await;
                     let _ = runtime.drain_events();
                     if let Err(error) = runtime.refresh_peer_dependent_routes().await {
                         eprintln!("fips: peer route refresh failed: {error}");
@@ -204,7 +227,11 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
             _ = announce_interval.tick() => {
                 #[cfg(feature = "embedded-fips")]
                 if let Some(runtime) = fips_tunnel_runtime.as_ref() {
-                    if let Err(error) = publish_fips_active_network_roster(runtime, &app).await {
+                    if let Err(error) = publish_fips_active_network_roster(
+                        runtime,
+                        &app,
+                        &mut pending_fips_roster_recipients,
+                    ).await {
                         eprintln!("fips: roster publish failed: {error}");
                     }
                     if let Err(error) = broadcast_local_fips_capabilities(runtime, &app).await {
@@ -275,6 +302,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let _ = fs::remove_file(daemon_control_file_path(&config_path));
     #[cfg(feature = "embedded-fips")]
     let mut fips_join_request_sends: HashMap<String, u64> = HashMap::new();
+    #[cfg(feature = "embedded-fips")]
+    let mut pending_fips_roster_recipients: HashSet<String> = HashSet::new();
     let iface = args.iface.clone();
     let mut tunnel_runtime = CliTunnelRuntime::new(iface.clone());
     let mut network_snapshot = capture_network_snapshot();
@@ -377,7 +406,11 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             _ = announce_interval.tick() => {
                 #[cfg(feature = "embedded-fips")]
                 if let Some(runtime) = fips_tunnel_runtime.as_ref() {
-                    if let Err(error) = publish_fips_active_network_roster(runtime, &app).await {
+                    if let Err(error) = publish_fips_active_network_roster(
+                        runtime,
+                        &app,
+                        &mut pending_fips_roster_recipients,
+                    ).await {
                         eprintln!("fips: roster publish failed: {error}");
                     }
                     if let Err(error) = broadcast_local_fips_capabilities(runtime, &app).await {
@@ -398,6 +431,12 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         if let Err(error) = runtime.refresh_link_statuses().await {
                             eprintln!("fips: peer link snapshot failed: {error}");
                         }
+                        flush_pending_fips_roster_recipients(
+                            runtime,
+                            &app,
+                            &mut pending_fips_roster_recipients,
+                        )
+                        .await;
                         if let Err(error) = send_pending_fips_join_requests(
                             runtime,
                             &app,
@@ -421,6 +460,12 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     if let Err(error) = runtime.refresh_link_statuses().await {
                         eprintln!("fips: peer link snapshot failed: {error}");
                     }
+                    flush_pending_fips_roster_recipients(
+                        runtime,
+                        &app,
+                        &mut pending_fips_roster_recipients,
+                    )
+                    .await;
                     if let Err(error) = send_pending_fips_join_requests(
                         runtime,
                         &app,
@@ -741,6 +786,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             runtime,
                             &app,
                             &pre_sync_fips_roster_recipients,
+                            &mut pending_fips_roster_recipients,
                         )
                         .await
                     {
@@ -766,7 +812,12 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     if publish_fips_roster_after_control
                         && let Some(runtime) = fips_tunnel_runtime.as_ref()
                     {
-                        if let Err(error) = publish_fips_active_network_roster(runtime, &app).await
+                        if let Err(error) = publish_fips_active_network_roster(
+                            runtime,
+                            &app,
+                            &mut pending_fips_roster_recipients,
+                        )
+                        .await
                         {
                             eprintln!(
                                 "fips: roster publish failed after control request: {error}"

@@ -1,42 +1,68 @@
 #![allow(dead_code)]
 
 use anyhow::{Context, Result, anyhow};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use fips_endpoint::{
-    Config, ConnectPolicy, FipsEndpoint, FipsEndpointError, FipsEndpointPeer, NostrDiscoveryPolicy,
-    PeerAddress, PeerConfig as FipsPeerConfig, TransportInstances, UdpConfig,
+    Config, ConnectPolicy, FipsEndpoint, FipsEndpointError, FipsEndpointMessage, FipsEndpointPeer,
+    NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig, TransportInstances, UdpConfig,
 };
 use nostr_sdk::prelude::{PublicKey, ToBech32};
 use nostr_vpn_core::config::{
-    AppConfig, WireGuardExitConfig, derive_mesh_tunnel_ip, exit_node_default_routes,
-    normalize_nostr_pubkey,
+    AppConfig, WireGuardExitConfig, derive_mesh_tunnel_ip, normalize_nostr_pubkey,
 };
 use nostr_vpn_core::data_plane::{MeshPeerStatus, PrivatePacket};
 use nostr_vpn_core::fips_control::{
     FipsControlFrame, NetworkRoster, PeerCapabilities, decode_fips_control_frame,
-    encode_fips_control_frame,
+    encode_fips_control_frame, encode_fips_control_messages,
 };
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
 use nostr_vpn_core::join_requests::MeshJoinRequest;
 use std::collections::HashMap;
 use std::fs;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::fs::File;
+#[cfg(target_os = "macos")]
+use std::io::IoSlice;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::io::{self, Write};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::mem::ManuallyDrop;
 #[cfg(target_os = "linux")]
 use std::net::Ipv4Addr;
 use std::net::{SocketAddr, SocketAddrV4};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::Arc;
-use std::sync::RwLock;
 #[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, RwLock};
 #[cfg(target_os = "windows")]
 use std::thread::{self, JoinHandle as ThreadJoinHandle};
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use tokio::io::Interest;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use tokio::io::unix::AsyncFd;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use tokio::sync::mpsc;
 
 const FIPS_PEER_ONLINE_GRACE_SECS: u64 = 45;
 const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
 const FIPS_PEER_CAPS_GRACE_SECS: u64 = 600;
+const FIPS_CONTROL_FRAGMENT_TTL_SECS: u64 = 120;
+const FIPS_CONTROL_MAX_FRAGMENTS: u16 = 128;
+const FIPS_CONTROL_MAX_REASSEMBLED_LEN: usize = 128 * 1024;
+const MESH_LAN_UNDERLAY_UDP_MTU: u16 = 1420;
+const MESH_LAN_TUNNEL_MTU: u16 = 1290;
+const MESH_MIN_UNDERLAY_UDP_MTU: u16 = 1280;
+const MESH_MIN_TUNNEL_MTU: u16 = 576;
+const MESH_MAX_MTU: u16 = 9000;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const FIPS_TUN_READ_BURST: usize = 64;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const FIPS_MESH_SEND_BURST: usize = 64;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use boringtun::device::{Error as TunError, tun::TunSocket};
@@ -55,6 +81,126 @@ pub(crate) struct FipsPrivateMeshRuntime {
     presence: RwLock<HashMap<String, FipsPeerPresence>>,
     link_status: RwLock<HashMap<String, FipsEndpointPeer>>,
     peer_capabilities: RwLock<HashMap<String, PeerCapabilitiesEntry>>,
+    control_fragments: Mutex<ControlFragmentBuffer>,
+}
+
+#[derive(Default)]
+struct ControlFragmentBuffer {
+    entries: HashMap<ControlFragmentKey, PendingControlFragment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ControlFragmentKey {
+    source_npub: String,
+    id: String,
+}
+
+struct PendingControlFragment {
+    total: u16,
+    received_at: u64,
+    chunks: Vec<Option<Vec<u8>>>,
+    received_len: usize,
+}
+
+impl ControlFragmentBuffer {
+    fn push(
+        &mut self,
+        source_npub: &str,
+        id: String,
+        index: u16,
+        total: u16,
+        data: String,
+        now: u64,
+    ) -> Result<Option<Vec<u8>>> {
+        if total == 0 || total > FIPS_CONTROL_MAX_FRAGMENTS || index >= total {
+            return Ok(None);
+        }
+
+        self.entries.retain(|_, entry| {
+            now.saturating_sub(entry.received_at) <= FIPS_CONTROL_FRAGMENT_TTL_SECS
+        });
+
+        let Ok(decoded) = URL_SAFE_NO_PAD.decode(data.as_bytes()) else {
+            return Ok(None);
+        };
+        if decoded.len() > nostr_vpn_core::fips_control::FIPS_CONTROL_FRAGMENT_CHUNK_LEN {
+            return Ok(None);
+        }
+
+        let key = ControlFragmentKey {
+            source_npub: source_npub.to_string(),
+            id,
+        };
+        let entry = self
+            .entries
+            .entry(key.clone())
+            .or_insert_with(|| PendingControlFragment {
+                total,
+                received_at: now,
+                chunks: vec![None; usize::from(total)],
+                received_len: 0,
+            });
+        if entry.total != total {
+            *entry = PendingControlFragment {
+                total,
+                received_at: now,
+                chunks: vec![None; usize::from(total)],
+                received_len: 0,
+            };
+        }
+        entry.received_at = now;
+
+        let slot = &mut entry.chunks[usize::from(index)];
+        if let Some(existing) = slot.as_ref() {
+            entry.received_len = entry.received_len.saturating_sub(existing.len());
+        }
+        entry.received_len += decoded.len();
+        if entry.received_len > FIPS_CONTROL_MAX_REASSEMBLED_LEN {
+            self.entries.remove(&key);
+            return Ok(None);
+        }
+        *slot = Some(decoded);
+
+        if !entry.chunks.iter().all(|chunk| chunk.is_some()) {
+            return Ok(None);
+        }
+
+        let entry = self
+            .entries
+            .remove(&key)
+            .expect("complete fragment entry should exist");
+        let mut reassembled = Vec::with_capacity(entry.received_len);
+        for chunk in entry.chunks.into_iter().flatten() {
+            reassembled.extend_from_slice(&chunk);
+        }
+        Ok(Some(reassembled))
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct BorrowedTunFd(RawFd);
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl AsRawFd for BorrowedTunFd {
+    fn as_raw_fd(&self) -> RawFd {
+        self.0
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct TunPipelinePacket {
+    bytes: Vec<u8>,
+    queued_at: Option<std::time::Instant>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl TunPipelinePacket {
+    fn new(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            queued_at: crate::pipeline_profile::stamp(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -63,6 +209,94 @@ struct FipsPeerPresence {
     tx_bytes: u64,
     rx_bytes: u64,
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MeshMtu {
+    underlay_udp: u16,
+    tunnel: u16,
+}
+
+fn private_mesh_mtu_from_app(app: Option<&AppConfig>) -> MeshMtu {
+    let env_profile_raw = std::env::var("NVPN_MESH_MTU_PROFILE").ok();
+    let env_profile = env_profile_raw.as_deref().and_then(non_empty_str);
+    let config_profile = app.and_then(|app| non_empty_str(&app.mesh_mtu_profile));
+    let env_underlay = parse_mtu_env("NVPN_MESH_UNDERLAY_UDP_MTU");
+    let config_underlay = app.and_then(|app| non_zero_u16(app.mesh_underlay_udp_mtu));
+    let env_tunnel = parse_mtu_env("NVPN_MESH_TUNNEL_MTU");
+    let config_tunnel = app.and_then(|app| non_zero_u16(app.mesh_tunnel_mtu));
+
+    resolve_private_mesh_mtu(
+        env_profile.or(config_profile),
+        env_underlay.or(config_underlay),
+        env_tunnel.or(config_tunnel),
+    )
+}
+
+fn resolve_private_mesh_mtu(
+    profile: Option<&str>,
+    underlay_override: Option<u16>,
+    tunnel_override: Option<u16>,
+) -> MeshMtu {
+    let mut mtu = match normalized_mtu_profile(profile).as_deref() {
+        Some("lan") => MeshMtu {
+            underlay_udp: MESH_LAN_UNDERLAY_UDP_MTU,
+            tunnel: MESH_LAN_TUNNEL_MTU,
+        },
+        _ => MeshMtu {
+            underlay_udp: nostr_vpn_core::MESH_UNDERLAY_UDP_MTU,
+            tunnel: nostr_vpn_core::MESH_TUNNEL_MTU,
+        },
+    };
+
+    if let Some(underlay_udp) = clamp_mtu(underlay_override, MESH_MIN_UNDERLAY_UDP_MTU) {
+        mtu.underlay_udp = underlay_udp;
+        if tunnel_override.is_none() {
+            mtu.tunnel = tunnel_mtu_for_underlay(underlay_udp);
+        }
+    }
+    if let Some(tunnel) = clamp_mtu(tunnel_override, MESH_MIN_TUNNEL_MTU) {
+        mtu.tunnel = tunnel;
+    }
+
+    let max_tunnel = tunnel_mtu_for_underlay(mtu.underlay_udp);
+    if mtu.tunnel > max_tunnel {
+        mtu.tunnel = max_tunnel;
+    }
+    mtu
+}
+
+fn normalized_mtu_profile(profile: Option<&str>) -> Option<String> {
+    let profile = profile?.trim();
+    if profile.is_empty() {
+        return None;
+    }
+    Some(profile.to_ascii_lowercase())
+}
+
+fn parse_mtu_env(name: &str) -> Option<u16> {
+    std::env::var(name).ok()?.trim().parse::<u16>().ok()
+}
+
+fn non_empty_str(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
+}
+
+fn non_zero_u16(value: u16) -> Option<u16> {
+    (value != 0).then_some(value)
+}
+
+fn clamp_mtu(value: Option<u16>, min: u16) -> Option<u16> {
+    value.map(|mtu| mtu.clamp(min, MESH_MAX_MTU))
+}
+
+fn tunnel_mtu_for_underlay(underlay_udp_mtu: u16) -> u16 {
+    let tunnel_headroom =
+        nostr_vpn_core::MESH_UNDERLAY_UDP_MTU.saturating_sub(nostr_vpn_core::MESH_TUNNEL_MTU);
+    underlay_udp_mtu
+        .saturating_sub(tunnel_headroom)
+        .max(MESH_MIN_TUNNEL_MTU)
 }
 
 #[derive(Debug, Clone)]
@@ -129,7 +363,12 @@ impl FipsPrivateMeshRuntime {
     ) -> Result<Self> {
         let scope = format!("nostr-vpn:{}", network_id.as_ref().trim());
         let endpoint_peers = fips_endpoint_peers_from_mesh(&peers, Vec::new());
-        let config = fips_endpoint_config(&scope, &endpoint_peers, None);
+        let config = fips_endpoint_config(
+            &scope,
+            &endpoint_peers,
+            None,
+            private_mesh_mtu_from_app(None),
+        );
         Self::bind_with_config(identity_nsec, scope, peers, config, Vec::new()).await
     }
 
@@ -156,6 +395,7 @@ impl FipsPrivateMeshRuntime {
             presence: RwLock::new(HashMap::new()),
             link_status: RwLock::new(HashMap::new()),
             peer_capabilities: RwLock::new(HashMap::new()),
+            control_fragments: Mutex::new(ControlFragmentBuffer::default()),
         })
     }
 
@@ -183,94 +423,158 @@ impl FipsPrivateMeshRuntime {
         Ok(true)
     }
 
+    pub(crate) async fn send_tunnel_packet_owned(&self, packet: Vec<u8>) -> Result<bool> {
+        let outgoing = {
+            self.mesh
+                .read()
+                .map_err(|_| anyhow!("FIPS mesh route table lock poisoned"))?
+                .route_outbound_packet_owned(packet)
+        };
+        let Some(outgoing) = outgoing else {
+            return Ok(false);
+        };
+
+        let bytes_len = outgoing.bytes.len();
+        self.endpoint
+            .send(outgoing.endpoint_npub, outgoing.bytes)
+            .await
+            .context("failed to send private packet over FIPS endpoint data")?;
+        self.note_tx(&outgoing.participant_pubkey, bytes_len)?;
+        Ok(true)
+    }
+
     pub(crate) async fn recv_mesh_event(&self) -> Result<Option<FipsPrivateMeshEvent>> {
         loop {
             let Some(message) = self.endpoint.recv().await else {
                 return Ok(None);
             };
 
-            if let Some(frame) = decode_fips_control_frame(&message.data)? {
-                let source_pubkey = {
-                    let mesh = self
-                        .mesh
-                        .read()
-                        .map_err(|_| anyhow!("FIPS mesh route table lock poisoned"))?;
-                    control_frame_source_pubkey(&mesh, message.source_npub.as_deref(), &frame)
-                };
-                let Some(source_pubkey) = source_pubkey else {
-                    continue;
-                };
-                let now = unix_timestamp();
-                self.note_rx(&source_pubkey, message.data.len(), now)?;
-                match frame {
-                    FipsControlFrame::Ping {
-                        network_id,
-                        sent_at,
-                    } => {
-                        let reply = FipsControlFrame::Pong {
-                            network_id,
-                            sent_at,
-                            replied_at: now,
-                        };
-                        if let Some(source_npub) = message.source_npub {
-                            let encoded = encode_fips_control_frame(&reply)?;
-                            if let Err(error) = self.endpoint.send(source_npub, encoded).await {
-                                eprintln!("fips: failed to reply to peer ping: {error}");
-                            }
-                        }
-                        return Ok(Some(FipsPrivateMeshEvent::Presence {
-                            participant_pubkey: source_pubkey,
-                            last_seen_at: now,
-                        }));
-                    }
-                    FipsControlFrame::Pong { .. } => {
-                        return Ok(Some(FipsPrivateMeshEvent::Presence {
-                            participant_pubkey: source_pubkey,
-                            last_seen_at: now,
-                        }));
-                    }
-                    FipsControlFrame::JoinRequest {
-                        requested_at,
-                        request,
-                    } => {
-                        return Ok(Some(FipsPrivateMeshEvent::JoinRequest {
-                            sender_pubkey: source_pubkey,
-                            requested_at,
-                            request,
-                        }));
-                    }
-                    FipsControlFrame::Roster { network_id, roster } => {
-                        return Ok(Some(FipsPrivateMeshEvent::Roster {
-                            sender_pubkey: source_pubkey,
-                            network_id,
-                            roster,
-                        }));
-                    }
-                    FipsControlFrame::Capabilities {
-                        network_id,
-                        capabilities,
-                    } => {
-                        self.record_peer_capabilities(&source_pubkey, &capabilities, now)?;
-                        return Ok(Some(FipsPrivateMeshEvent::Capabilities {
-                            sender_pubkey: source_pubkey,
-                            network_id,
-                            capabilities,
-                        }));
-                    }
-                }
-            }
-
-            if let Some(packet) = self
-                .mesh
-                .read()
-                .map_err(|_| anyhow!("FIPS mesh route table lock poisoned"))?
-                .receive_endpoint_data(message.source_npub.as_deref(), &message.data)
-            {
-                let now = unix_timestamp();
-                self.note_rx(&packet.source_pubkey, message.data.len(), now)?;
-                return Ok(Some(FipsPrivateMeshEvent::Packet(packet)));
+            if let Some(event) = self.endpoint_message_to_mesh_event(message).await? {
+                return Ok(Some(event));
             }
         }
+    }
+
+    async fn endpoint_message_to_mesh_event(
+        &self,
+        message: FipsEndpointMessage,
+    ) -> Result<Option<FipsPrivateMeshEvent>> {
+        if let Some(frame) = self.decode_endpoint_control_frame(&message)? {
+            let source_pubkey = {
+                let mesh = self
+                    .mesh
+                    .read()
+                    .map_err(|_| anyhow!("FIPS mesh route table lock poisoned"))?;
+                control_frame_source_pubkey(&mesh, message.source_npub.as_deref(), &frame)
+            };
+            let Some(source_pubkey) = source_pubkey else {
+                return Ok(None);
+            };
+            let now = unix_timestamp();
+            self.note_rx(&source_pubkey, message.data.len(), now)?;
+            match frame {
+                FipsControlFrame::Ping {
+                    network_id,
+                    sent_at,
+                } => {
+                    let reply = FipsControlFrame::Pong {
+                        network_id,
+                        sent_at,
+                        replied_at: now,
+                    };
+                    if let Some(source_npub) = message.source_npub {
+                        let encoded = encode_fips_control_frame(&reply)?;
+                        if let Err(error) = self.endpoint.send(source_npub, encoded).await {
+                            eprintln!("fips: failed to reply to peer ping: {error}");
+                        }
+                    }
+                    return Ok(Some(FipsPrivateMeshEvent::Presence {
+                        participant_pubkey: source_pubkey,
+                        last_seen_at: now,
+                    }));
+                }
+                FipsControlFrame::Pong { .. } => {
+                    return Ok(Some(FipsPrivateMeshEvent::Presence {
+                        participant_pubkey: source_pubkey,
+                        last_seen_at: now,
+                    }));
+                }
+                FipsControlFrame::JoinRequest {
+                    requested_at,
+                    request,
+                } => {
+                    return Ok(Some(FipsPrivateMeshEvent::JoinRequest {
+                        sender_pubkey: source_pubkey,
+                        requested_at,
+                        request,
+                    }));
+                }
+                FipsControlFrame::Roster { network_id, roster } => {
+                    return Ok(Some(FipsPrivateMeshEvent::Roster {
+                        sender_pubkey: source_pubkey,
+                        network_id,
+                        roster,
+                    }));
+                }
+                FipsControlFrame::Capabilities {
+                    network_id,
+                    capabilities,
+                } => {
+                    self.record_peer_capabilities(&source_pubkey, &capabilities, now)?;
+                    return Ok(Some(FipsPrivateMeshEvent::Capabilities {
+                        sender_pubkey: source_pubkey,
+                        network_id,
+                        capabilities,
+                    }));
+                }
+                FipsControlFrame::Fragment { .. } => return Ok(None),
+            }
+        }
+
+        let data_len = message.data.len();
+        if let Some(packet) = self
+            .mesh
+            .read()
+            .map_err(|_| anyhow!("FIPS mesh route table lock poisoned"))?
+            .receive_endpoint_data_owned(message.source_npub.as_deref(), message.data)
+        {
+            let now = unix_timestamp();
+            self.note_rx(&packet.source_pubkey, data_len, now)?;
+            return Ok(Some(FipsPrivateMeshEvent::Packet(packet)));
+        }
+
+        Ok(None)
+    }
+
+    fn decode_endpoint_control_frame(
+        &self,
+        message: &FipsEndpointMessage,
+    ) -> Result<Option<FipsControlFrame>> {
+        let Some(frame) = decode_fips_control_frame(&message.data)? else {
+            return Ok(None);
+        };
+        let FipsControlFrame::Fragment {
+            id,
+            index,
+            total,
+            data,
+        } = frame
+        else {
+            return Ok(Some(frame));
+        };
+
+        let Some(source_npub) = message.source_npub.as_deref() else {
+            return Ok(None);
+        };
+        let Some(reassembled) = self
+            .control_fragments
+            .lock()
+            .map_err(|_| anyhow!("FIPS control fragment buffer lock poisoned"))?
+            .push(source_npub, id, index, total, data, unix_timestamp())?
+        else {
+            return Ok(None);
+        };
+        decode_fips_control_frame(&reassembled)
     }
 
     #[cfg(test)]
@@ -316,7 +620,11 @@ impl FipsPrivateMeshRuntime {
                 status.link_bytes_sent = peer_link.bytes_sent;
                 status.link_bytes_recv = peer_link.bytes_recv;
             }
-            status.connected = presence_connected;
+            let link_connected = peer_link.is_some();
+            if link_connected {
+                status.last_seen_at = Some(now);
+            }
+            status.connected = link_connected || presence_connected;
             status.error = if status.connected {
                 None
             } else {
@@ -515,18 +823,23 @@ impl FipsPrivateMeshRuntime {
     }
 
     async fn send_control_frame(&self, participant: &str, frame: &FipsControlFrame) -> Result<()> {
-        let endpoint_npub = self
-            .mesh
-            .read()
-            .map_err(|_| anyhow!("FIPS mesh route table lock poisoned"))?
-            .peer_endpoint_npub(participant)
-            .ok_or_else(|| anyhow!("no FIPS endpoint peer for {participant}"))?;
-        let encoded = encode_fips_control_frame(frame)?;
-        self.endpoint
-            .send(endpoint_npub, encoded.clone())
-            .await
-            .with_context(|| format!("failed to send FIPS control frame to {participant}"))?;
-        self.note_tx(participant, encoded.len())?;
+        let endpoint_npub = {
+            let mesh = self
+                .mesh
+                .read()
+                .map_err(|_| anyhow!("FIPS mesh route table lock poisoned"))?;
+            control_frame_destination_npub(&mesh, participant)?
+        };
+        let messages = encode_fips_control_messages(frame)?;
+        let mut sent_len = 0usize;
+        for encoded in messages {
+            sent_len += encoded.len();
+            self.endpoint
+                .send(endpoint_npub.clone(), encoded)
+                .await
+                .with_context(|| format!("failed to send FIPS control frame to {participant}"))?;
+        }
+        self.note_tx(participant, sent_len)?;
         Ok(())
     }
 
@@ -594,6 +907,19 @@ fn control_frame_source_pubkey(
     })
 }
 
+fn control_frame_destination_npub(mesh: &FipsMeshRuntime, participant: &str) -> Result<String> {
+    if let Some(endpoint_npub) = mesh.peer_endpoint_npub(participant) {
+        return Ok(endpoint_npub);
+    }
+
+    let participant_pubkey = normalize_nostr_pubkey(participant)
+        .with_context(|| format!("invalid FIPS control frame recipient {participant}"))?;
+    PublicKey::parse(&participant_pubkey)
+        .ok()
+        .and_then(|pubkey| pubkey.to_bech32().ok())
+        .ok_or_else(|| anyhow!("invalid FIPS control frame recipient {participant}"))
+}
+
 #[derive(Debug, Clone)]
 struct FipsEndpointTransportConfig {
     listen_port: u16,
@@ -614,6 +940,7 @@ fn fips_endpoint_config(
     scope: &str,
     peers: &[FipsEndpointPeerTransportConfig],
     transport: Option<&FipsEndpointTransportConfig>,
+    mesh_mtu: MeshMtu,
 ) -> Config {
     let mut config = Config::new();
     config.node.control.enabled = false;
@@ -645,10 +972,10 @@ fn fips_endpoint_config(
         external_addr,
         outbound_only: Some(transport.is_none()),
         accept_connections: Some(transport.is_some()),
-        // Underlay MTU is the single-source constant in nostr-vpn-core. The
-        // tunnel-side MTU (MESH_TUNNEL_MTU) is sized so the encrypted wire
-        // image fits inside this budget; keep them paired.
-        mtu: Some(nostr_vpn_core::MESH_UNDERLAY_UDP_MTU),
+        // The safe default remains IPv6-minimum sized for NAT traversal and
+        // nested tunnels. Clean-LAN tests must opt into a larger paired budget
+        // through config or NVPN_MESH_* env overrides.
+        mtu: Some(mesh_mtu.underlay_udp),
         ..UdpConfig::default()
     });
     config.peers = peers
@@ -755,6 +1082,7 @@ pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) local_advertised_routes: Vec<String>,
     pub(crate) wireguard_exit: WireGuardExitConfig,
     pub(crate) exit_node_leak_protection: bool,
+    mesh_mtu: MeshMtu,
     #[cfg(target_os = "linux")]
     pub(crate) control_plane_bypass_hosts: Vec<Ipv4Addr>,
 }
@@ -784,7 +1112,7 @@ impl FipsPrivateTunnelConfig {
                 .or_default()
                 .push(allowed_ip);
             if app.exit_node == participant {
-                let exit_routes = exit_node_default_routes();
+                let exit_routes = crate::runtime_exit_node_default_routes();
                 route_targets.extend(exit_routes.iter().cloned());
                 route_by_participant
                     .entry(participant)
@@ -832,9 +1160,10 @@ impl FipsPrivateTunnelConfig {
             peers,
             endpoint_peers,
             route_targets,
-            local_advertised_routes: app.effective_advertised_routes(),
+            local_advertised_routes: crate::runtime_effective_advertised_routes(app),
             wireguard_exit: app.wireguard_exit.clone(),
             exit_node_leak_protection: app.exit_node_leak_protection,
+            mesh_mtu: private_mesh_mtu_from_app(Some(app)),
             #[cfg(target_os = "linux")]
             control_plane_bypass_hosts: crate::control_plane_bypass_ipv4_hosts(app),
         })
@@ -908,6 +1237,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl FipsPrivateTunnelRuntime {
     pub(crate) async fn start(config: FipsPrivateTunnelConfig) -> Result<Self> {
+        crate::pipeline_profile::maybe_spawn_reporter();
         let scope = format!("nostr-vpn:{}", config.network_id.trim());
         let transport = FipsEndpointTransportConfig {
             listen_port: config.listen_port,
@@ -917,8 +1247,12 @@ impl FipsPrivateTunnelRuntime {
             nostr_relays: config.nostr_relays.clone(),
             share_local_candidates: config.share_local_candidates,
         };
-        let endpoint_config =
-            fips_endpoint_config(&scope, &config.endpoint_peers, Some(&transport));
+        let endpoint_config = fips_endpoint_config(
+            &scope,
+            &config.endpoint_peers,
+            Some(&transport),
+            config.mesh_mtu,
+        );
         let local_allowed_ips = config.local_allowed_ips();
         let mesh = Arc::new(
             FipsPrivateMeshRuntime::bind_with_config(
@@ -937,21 +1271,42 @@ impl FipsPrivateTunnelRuntime {
                 .context("failed to set FIPS tunnel nonblocking")?,
         );
         let iface = tun.name().context("failed to read FIPS tunnel name")?;
+        let tun_fd = Arc::new(
+            AsyncFd::with_interest(
+                BorrowedTunFd(tun.as_raw_fd()),
+                Interest::READABLE | Interest::WRITABLE,
+            )
+            .context("failed to register FIPS tunnel fd with reactor")?,
+        );
 
-        let (packet_tx, mut packet_rx) = mpsc::channel::<Vec<u8>>(1024);
+        let (packet_tx, mut packet_rx) = mpsc::channel::<TunPipelinePacket>(1024);
         let (event_tx, event_rx) = mpsc::channel::<FipsPrivateMeshEvent>(1024);
-        let tun_read_task = spawn_tun_read_task(Arc::clone(&tun), packet_tx);
+        let tun_read_task = spawn_tun_read_task(Arc::clone(&tun), Arc::clone(&tun_fd), packet_tx);
         let mesh_send_task = {
             let mesh = Arc::clone(&mesh);
             tokio::spawn(async move {
                 while let Some(packet) = packet_rx.recv().await {
-                    if let Err(error) = mesh.send_tunnel_packet(&packet).await {
-                        eprintln!("fips: failed to send tunnel packet: {error}");
+                    send_mesh_packet_or_log(&mesh, packet).await;
+
+                    let mut drained = 1;
+                    while drained < FIPS_MESH_SEND_BURST {
+                        match packet_rx.try_recv() {
+                            Ok(packet) => {
+                                send_mesh_packet_or_log(&mesh, packet).await;
+                                drained += 1;
+                            }
+                            Err(mpsc::error::TryRecvError::Empty) => break,
+                            Err(mpsc::error::TryRecvError::Disconnected) => return,
+                        }
+                    }
+
+                    if drained == FIPS_MESH_SEND_BURST {
+                        tokio::task::yield_now().await;
                     }
                 }
             })
         };
-        let mesh_recv_task = spawn_mesh_recv_task(Arc::clone(&mesh), tun, event_tx);
+        let mesh_recv_task = spawn_mesh_recv_task(Arc::clone(&mesh), tun_fd, event_tx);
 
         let mut runtime = Self {
             iface,
@@ -998,6 +1353,7 @@ impl FipsPrivateTunnelRuntime {
             || self.config.nostr_relays != config.nostr_relays
             || self.config.share_local_candidates != config.share_local_candidates
             || self.config.endpoint_peers != config.endpoint_peers
+            || self.config.mesh_mtu.underlay_udp != config.mesh_mtu.underlay_udp
     }
 
     pub(crate) async fn apply_config(&mut self, config: FipsPrivateTunnelConfig) -> Result<()> {
@@ -1115,7 +1471,7 @@ impl FipsPrivateTunnelRuntime {
                 &self.iface,
                 &config.local_address,
                 &config.route_targets,
-                nostr_vpn_core::MESH_TUNNEL_MTU,
+                config.mesh_mtu.tunnel,
             )
             .with_context(|| format!("failed to configure FIPS tunnel interface {}", self.iface))?;
             self.reconcile_macos_wg_upstream(&config.wireguard_exit)
@@ -1249,7 +1605,7 @@ impl FipsPrivateTunnelRuntime {
             &self.iface,
             &config.local_address,
             &route_targets,
-            nostr_vpn_core::MESH_TUNNEL_MTU,
+            config.mesh_mtu.tunnel,
         )
         .with_context(|| format!("failed to configure FIPS tunnel interface {}", self.iface))?;
         if let Err(error) = crate::flush_linux_route_cache() {
@@ -1388,18 +1744,17 @@ impl FipsPrivateTunnelRuntime {
         exit_node_leak_protection: bool,
     ) {
         let mut route_families = crate::linux_exit_node_default_route_families(routes);
-        // WG upstream selected as this device's own egress (Mullvad/Proton-style):
-        // bring up the tunnel and replace this node's default route even when we
-        // are not advertising ourselves as an exit for the mesh.
-        if !route_families.ipv4 && wireguard_exit.enabled && wireguard_exit.configured() {
-            route_families.ipv4 = true;
+        if route_families.ipv6 {
+            eprintln!(
+                "fips: IPv6 exit-node forwarding is disabled until nvpn has IPv6 mesh source filtering"
+            );
+            route_families.ipv6 = false;
         }
-        if !route_families.ipv4 && !route_families.ipv6 {
-            self.reconcile_linux_exit_node_forwarding_cleanup();
-            return;
-        }
-
-        let ipv4_tunnel_source_cidr = if route_families.ipv4 {
+        // WG upstream as this host's own egress does not imply mesh
+        // exit-node forwarding. Only advertised default routes should
+        // turn on ip_forward/NAT below.
+        let needs_ipv4_tunnel_source = route_families.ipv4 || wireguard_exit.enabled;
+        let ipv4_tunnel_source_cidr = if needs_ipv4_tunnel_source {
             let Some(tunnel_source_cidr) = crate::linux_exit_node_source_cidr(local_address) else {
                 eprintln!("fips: invalid IPv4 tunnel address '{local_address}'");
                 self.reconcile_linux_exit_node_forwarding_cleanup();
@@ -1410,7 +1765,7 @@ impl FipsPrivateTunnelRuntime {
             None
         };
 
-        let wireguard_exit_iface = if route_families.ipv4 && wireguard_exit.enabled {
+        let wireguard_exit_iface = if wireguard_exit.enabled {
             let Some(source_cidr) = ipv4_tunnel_source_cidr.as_deref() else {
                 self.reconcile_linux_exit_node_forwarding_cleanup();
                 return;
@@ -1420,11 +1775,21 @@ impl FipsPrivateTunnelRuntime {
                     if !crate::linux_wireguard_exit_ipv6_default(wireguard_exit) {
                         route_families.ipv6 = false;
                     }
+                    if let Err(error) =
+                        self.apply_linux_wireguard_exit_upstream(wireguard_exit, source_cidr)
+                    {
+                        eprintln!("fips: failed to configure WireGuard exit upstream: {error}");
+                        self.cleanup_linux_exit_node_forwarding_rules();
+                        self.cleanup_linux_wireguard_exit_upstream();
+                        self.block_linux_wireguard_exit_if_strict(exit_node_leak_protection);
+                        return;
+                    }
                     Some((iface, source_cidr.to_string()))
                 }
                 Err(error) => {
                     eprintln!("fips: WireGuard exit upstream is not ready: {error}");
-                    self.reconcile_linux_exit_node_forwarding_cleanup();
+                    self.cleanup_linux_exit_node_forwarding_rules();
+                    self.cleanup_linux_wireguard_exit_upstream();
                     self.block_linux_wireguard_exit_if_strict(
                         exit_node_leak_protection && wireguard_exit.enabled,
                     );
@@ -1432,8 +1797,14 @@ impl FipsPrivateTunnelRuntime {
                 }
             }
         } else {
+            self.cleanup_linux_wireguard_exit_upstream();
             None
         };
+
+        if !route_families.ipv4 && !route_families.ipv6 {
+            self.cleanup_linux_exit_node_forwarding_rules();
+            return;
+        }
 
         let ipv4_outbound_iface = if route_families.ipv4 {
             if let Some((iface, _)) = wireguard_exit_iface.as_ref() {
@@ -1443,7 +1814,7 @@ impl FipsPrivateTunnelRuntime {
                     Ok(route) => Some(route.dev),
                     Err(error) => {
                         eprintln!("fips: failed to resolve default IPv4 route device: {error}");
-                        self.reconcile_linux_exit_node_forwarding_cleanup();
+                        self.cleanup_linux_exit_node_forwarding_rules();
                         return;
                     }
                 }
@@ -1452,23 +1823,10 @@ impl FipsPrivateTunnelRuntime {
             None
         };
 
-        let ipv6_outbound_iface = if route_families.ipv6 {
-            match crate::linux_default_ipv6_route() {
-                Ok(route) => Some(route.dev),
-                Err(error) => {
-                    eprintln!(
-                        "fips: skipping IPv6 forwarding (default route unavailable): {error}"
-                    );
-                    route_families.ipv6 = false;
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        let ipv6_outbound_iface = None;
 
         if !route_families.ipv4 && !route_families.ipv6 {
-            self.reconcile_linux_exit_node_forwarding_cleanup();
+            self.cleanup_linux_exit_node_forwarding_rules();
             return;
         }
 
@@ -1476,30 +1834,10 @@ impl FipsPrivateTunnelRuntime {
             && self.exit_node_runtime.ipv6_outbound_iface == ipv6_outbound_iface
             && self.exit_node_runtime.ipv4_tunnel_source_cidr == ipv4_tunnel_source_cidr;
         if already_configured {
-            if let Some((_, source_cidr)) = wireguard_exit_iface.as_ref()
-                && let Err(error) =
-                    self.apply_linux_wireguard_exit_upstream(wireguard_exit, source_cidr)
-            {
-                eprintln!("fips: failed to refresh WireGuard exit upstream: {error}");
-                self.reconcile_linux_exit_node_forwarding_cleanup();
-                self.block_linux_wireguard_exit_if_strict(exit_node_leak_protection);
-            } else if wireguard_exit_iface.is_none() {
-                self.cleanup_linux_wireguard_exit_upstream();
-            }
             return;
         }
 
-        self.reconcile_linux_exit_node_forwarding_cleanup();
-
-        if let Some((_, source_cidr)) = wireguard_exit_iface.as_ref()
-            && let Err(error) =
-                self.apply_linux_wireguard_exit_upstream(wireguard_exit, source_cidr)
-        {
-            eprintln!("fips: failed to configure WireGuard exit upstream: {error}");
-            self.reconcile_linux_exit_node_forwarding_cleanup();
-            self.block_linux_wireguard_exit_if_strict(exit_node_leak_protection);
-            return;
-        }
+        self.cleanup_linux_exit_node_forwarding_rules();
 
         self.exit_node_runtime.ipv4_outbound_iface = ipv4_outbound_iface.clone();
         self.exit_node_runtime.ipv6_outbound_iface = ipv6_outbound_iface.clone();
@@ -1514,37 +1852,14 @@ impl FipsPrivateTunnelRuntime {
                             crate::write_linux_ip_forward(crate::LinuxExitNodeIpFamily::V4, true)
                     {
                         eprintln!("fips: failed to enable IPv4 forwarding: {error}");
-                        self.reconcile_linux_exit_node_forwarding_cleanup();
+                        self.cleanup_linux_exit_node_forwarding_rules();
                         return;
                     }
                 }
                 Err(error) => {
                     eprintln!("fips: failed to read IPv4 forwarding state: {error}");
-                    self.reconcile_linux_exit_node_forwarding_cleanup();
+                    self.cleanup_linux_exit_node_forwarding_rules();
                     return;
-                }
-            }
-        }
-
-        if route_families.ipv6 {
-            match crate::read_linux_ip_forward(crate::LinuxExitNodeIpFamily::V6) {
-                Ok(previous) => {
-                    self.exit_node_runtime.ipv6_forward_was_enabled = Some(previous);
-                    if !previous
-                        && let Err(error) =
-                            crate::write_linux_ip_forward(crate::LinuxExitNodeIpFamily::V6, true)
-                    {
-                        eprintln!("fips: skipping IPv6 forwarding setup: {error}");
-                        self.exit_node_runtime.ipv6_forward_was_enabled = None;
-                        self.exit_node_runtime.ipv6_outbound_iface = None;
-                        route_families.ipv6 = false;
-                    }
-                }
-                Err(error) => {
-                    eprintln!("fips: skipping IPv6 forwarding state check: {error}");
-                    self.exit_node_runtime.ipv6_forward_was_enabled = None;
-                    self.exit_node_runtime.ipv6_outbound_iface = None;
-                    route_families.ipv6 = false;
                 }
             }
         }
@@ -1553,24 +1868,28 @@ impl FipsPrivateTunnelRuntime {
             ipv4_outbound_iface.as_deref(),
             ipv4_tunnel_source_cidr.as_deref(),
         ) {
+            self.cleanup_linux_legacy_exit_node_forwarding_rules();
             let forward_in = crate::linux_exit_node_forward_in_rule(
                 &self.iface,
+                outbound_iface,
+                tunnel_source_cidr,
                 crate::LinuxExitNodeIpFamily::V4,
             );
             let forward_out = crate::linux_exit_node_forward_out_rule(
                 &self.iface,
+                outbound_iface,
                 crate::LinuxExitNodeIpFamily::V4,
             );
             let masquerade =
                 crate::linux_exit_node_ipv4_masquerade_rule(outbound_iface, tunnel_source_cidr);
 
-            if let Err(error) = crate::linux_iptables_ensure_rule(
+            if let Err(error) = crate::linux_iptables_ensure_rule_at_front(
                 crate::LinuxExitNodeIpFamily::V4,
                 None,
                 &forward_in,
             )
             .and_then(|()| {
-                crate::linux_iptables_ensure_rule(
+                crate::linux_iptables_ensure_rule_at_front(
                     crate::LinuxExitNodeIpFamily::V4,
                     None,
                     &forward_out,
@@ -1584,38 +1903,12 @@ impl FipsPrivateTunnelRuntime {
                 )
             }) {
                 eprintln!("fips: failed to install IPv4 exit firewall rules: {error}");
-                self.reconcile_linux_exit_node_forwarding_cleanup();
+                self.cleanup_linux_exit_node_forwarding_rules();
                 return;
             }
         }
 
-        if route_families.ipv6 {
-            let forward_in = crate::linux_exit_node_forward_in_rule(
-                &self.iface,
-                crate::LinuxExitNodeIpFamily::V6,
-            );
-            let forward_out = crate::linux_exit_node_forward_out_rule(
-                &self.iface,
-                crate::LinuxExitNodeIpFamily::V6,
-            );
-
-            if let Err(error) = crate::linux_iptables_ensure_rule(
-                crate::LinuxExitNodeIpFamily::V6,
-                None,
-                &forward_in,
-            )
-            .and_then(|()| {
-                crate::linux_iptables_ensure_rule(
-                    crate::LinuxExitNodeIpFamily::V6,
-                    None,
-                    &forward_out,
-                )
-            }) {
-                eprintln!("fips: skipping IPv6 exit firewall rules: {error}");
-                self.exit_node_runtime.ipv6_outbound_iface = None;
-                self.exit_node_runtime.ipv6_forward_was_enabled = None;
-            }
-        }
+        self.cleanup_linux_legacy_exit_node_forwarding_rules();
     }
 
     #[cfg(target_os = "linux")]
@@ -1641,8 +1934,46 @@ impl FipsPrivateTunnelRuntime {
             self.original_default_route.as_deref(),
         )?;
         runtime.created_interface |= preserve_created_interface;
+        if let Err(error) = self.ensure_linux_wireguard_exit_inbound_guard(&runtime) {
+            crate::cleanup_linux_wireguard_exit_upstream(&runtime);
+            return Err(error);
+        }
         self.exit_node_runtime.wireguard_exit = Some(runtime);
         Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn ensure_linux_wireguard_exit_inbound_guard(
+        &self,
+        runtime: &crate::LinuxWireGuardExitRuntime,
+    ) -> Result<()> {
+        let drop_inbound = crate::linux_wireguard_exit_inbound_drop_rule(
+            &runtime.interface,
+            &self.iface,
+            &runtime.source_cidr,
+        );
+        crate::linux_iptables_ensure_rule_at_front(
+            crate::LinuxExitNodeIpFamily::V4,
+            None,
+            &drop_inbound,
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    fn cleanup_linux_wireguard_exit_inbound_guard(
+        &self,
+        runtime: &crate::LinuxWireGuardExitRuntime,
+    ) {
+        let drop_inbound = crate::linux_wireguard_exit_inbound_drop_rule(
+            &runtime.interface,
+            &self.iface,
+            &runtime.source_cidr,
+        );
+        if let Err(error) =
+            crate::linux_iptables_delete_rule(crate::LinuxExitNodeIpFamily::V4, None, &drop_inbound)
+        {
+            eprintln!("fips: failed to remove WireGuard inbound guard rule: {error}");
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -1659,21 +1990,25 @@ impl FipsPrivateTunnelRuntime {
         let Some(runtime) = self.exit_node_runtime.wireguard_exit.take() else {
             return;
         };
+        self.cleanup_linux_wireguard_exit_inbound_guard(&runtime);
         crate::cleanup_linux_wireguard_exit_upstream(&runtime);
     }
 
     #[cfg(target_os = "linux")]
-    fn reconcile_linux_exit_node_forwarding_cleanup(&mut self) {
+    fn cleanup_linux_exit_node_forwarding_rules(&mut self) {
         if let (Some(outbound_iface), Some(tunnel_source_cidr)) = (
             self.exit_node_runtime.ipv4_outbound_iface.as_deref(),
             self.exit_node_runtime.ipv4_tunnel_source_cidr.as_deref(),
         ) {
             let forward_in = crate::linux_exit_node_forward_in_rule(
                 &self.iface,
+                outbound_iface,
+                tunnel_source_cidr,
                 crate::LinuxExitNodeIpFamily::V4,
             );
             let forward_out = crate::linux_exit_node_forward_out_rule(
                 &self.iface,
+                outbound_iface,
                 crate::LinuxExitNodeIpFamily::V4,
             );
             let masquerade =
@@ -1702,31 +2037,7 @@ impl FipsPrivateTunnelRuntime {
             }
         }
 
-        if self.exit_node_runtime.ipv6_outbound_iface.is_some() {
-            let forward_in = crate::linux_exit_node_forward_in_rule(
-                &self.iface,
-                crate::LinuxExitNodeIpFamily::V6,
-            );
-            let forward_out = crate::linux_exit_node_forward_out_rule(
-                &self.iface,
-                crate::LinuxExitNodeIpFamily::V6,
-            );
-
-            if let Err(error) = crate::linux_iptables_delete_rule(
-                crate::LinuxExitNodeIpFamily::V6,
-                None,
-                &forward_out,
-            ) {
-                eprintln!("fips: failed to remove IPv6 forward-out rule: {error}");
-            }
-            if let Err(error) = crate::linux_iptables_delete_rule(
-                crate::LinuxExitNodeIpFamily::V6,
-                None,
-                &forward_in,
-            ) {
-                eprintln!("fips: failed to remove IPv6 forward-in rule: {error}");
-            }
-        }
+        self.cleanup_linux_legacy_exit_node_forwarding_rules();
 
         if self.exit_node_runtime.ipv4_forward_was_enabled == Some(false)
             && let Err(error) =
@@ -1741,6 +2052,29 @@ impl FipsPrivateTunnelRuntime {
             eprintln!("fips: failed to restore IPv6 forwarding state: {error}");
         }
 
+        self.exit_node_runtime.ipv4_outbound_iface = None;
+        self.exit_node_runtime.ipv6_outbound_iface = None;
+        self.exit_node_runtime.ipv4_tunnel_source_cidr = None;
+        self.exit_node_runtime.ipv4_forward_was_enabled = None;
+        self.exit_node_runtime.ipv6_forward_was_enabled = None;
+    }
+
+    #[cfg(target_os = "linux")]
+    fn cleanup_linux_legacy_exit_node_forwarding_rules(&self) {
+        for family in [
+            crate::LinuxExitNodeIpFamily::V4,
+            crate::LinuxExitNodeIpFamily::V6,
+        ] {
+            let forward_in = crate::linux_exit_node_legacy_forward_in_rule(&self.iface, family);
+            let forward_out = crate::linux_exit_node_legacy_forward_out_rule(&self.iface, family);
+            let _ = crate::linux_iptables_delete_rule(family, None, &forward_out);
+            let _ = crate::linux_iptables_delete_rule(family, None, &forward_in);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn reconcile_linux_exit_node_forwarding_cleanup(&mut self) {
+        self.cleanup_linux_exit_node_forwarding_rules();
         self.cleanup_linux_wireguard_exit_upstream();
         self.exit_node_runtime = crate::LinuxExitNodeRuntime::default();
     }
@@ -1758,33 +2092,15 @@ impl FipsPrivateTunnelRuntime {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn spawn_tun_read_task(tun: Arc<TunSocket>, packet_tx: mpsc::Sender<Vec<u8>>) -> JoinHandle<()> {
-    use std::os::unix::io::{AsRawFd, RawFd};
-    use tokio::io::Interest;
-    use tokio::io::unix::AsyncFd;
-
-    // Wrapper so AsyncFd can borrow the tun fd without taking ownership. Closing
-    // is the responsibility of the underlying TunSocket via its own Drop impl;
-    // AsyncFd only registers/deregisters the fd in the kernel reactor.
-    struct BorrowedTunFd(RawFd);
-    impl AsRawFd for BorrowedTunFd {
-        fn as_raw_fd(&self) -> RawFd {
-            self.0
-        }
-    }
-
+fn spawn_tun_read_task(
+    tun: Arc<TunSocket>,
+    tun_fd: Arc<AsyncFd<BorrowedTunFd>>,
+    packet_tx: mpsc::Sender<TunPipelinePacket>,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let async_fd =
-            match AsyncFd::with_interest(BorrowedTunFd(tun.as_raw_fd()), Interest::READABLE) {
-                Ok(fd) => fd,
-                Err(error) => {
-                    eprintln!("fips: failed to register tun fd with reactor: {error}");
-                    return;
-                }
-            };
         let mut buf = vec![0_u8; 65_535];
         loop {
-            let mut guard = match async_fd.readable().await {
+            let mut guard = match tun_fd.readable().await {
                 Ok(guard) => guard,
                 Err(error) => {
                     eprintln!("fips: tun reactor await failed: {error}");
@@ -1792,55 +2108,97 @@ fn spawn_tun_read_task(tun: Arc<TunSocket>, packet_tx: mpsc::Sender<Vec<u8>>) ->
                 }
             };
 
-            match tun.read(&mut buf) {
-                Ok([]) => {
-                    // 0-byte read on a readable fd means "no packet right now";
-                    // clear ready so the next readable().await blocks on the
-                    // kernel instead of busy-looping.
-                    guard.clear_ready();
-                }
-                Ok(packet) => {
-                    let bytes = packet.to_vec();
-                    if packet_tx.send(bytes).await.is_err() {
+            let mut drained = 0;
+            let mut pending_send = None;
+            let mut sleep_after_error = false;
+            loop {
+                let read_result = {
+                    let _t = crate::pipeline_profile::Timer::start(
+                        crate::pipeline_profile::Stage::TunRead,
+                    );
+                    tun.read(&mut buf)
+                };
+                match read_result {
+                    Ok([]) => {
+                        // 0-byte read on a readable fd means "no packet right now";
+                        // clear ready so the next readable().await blocks on the
+                        // kernel instead of busy-looping.
+                        guard.clear_ready();
                         break;
                     }
-                    // Don't clear_ready: kernel may have queued more packets.
-                    // Next iteration's read either drains them or returns
-                    // EWOULDBLOCK and clears below.
+                    Ok(packet) => {
+                        let bytes = packet.to_vec();
+                        match packet_tx.try_send(TunPipelinePacket::new(bytes)) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(packet)) => {
+                                pending_send = Some(packet);
+                                break;
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => return,
+                        }
+                        drained += 1;
+                        if drained >= FIPS_TUN_READ_BURST {
+                            break;
+                        }
+                        // Keep reading while the fd is hot. BoringTun and
+                        // wireguard-go both batch TUN-side work; without this
+                        // bounded drain we pay a scheduler/channel round trip
+                        // for every packet on the MacBook sender path.
+                    }
+                    Err(error) if temporary_tun_read_error(&error) => {
+                        guard.clear_ready();
+                        break;
+                    }
+                    Err(error) => {
+                        eprintln!("fips: tunnel read failed: {error}");
+                        guard.clear_ready();
+                        sleep_after_error = true;
+                        break;
+                    }
                 }
-                Err(error) if temporary_tun_read_error(&error) => {
-                    guard.clear_ready();
-                }
-                Err(error) => {
-                    eprintln!("fips: tunnel read failed: {error}");
-                    sleep(Duration::from_millis(100)).await;
-                }
+            }
+            drop(guard);
+
+            if let Some(packet) = pending_send
+                && packet_tx.send(packet).await.is_err()
+            {
+                break;
+            }
+
+            if sleep_after_error {
+                sleep(Duration::from_millis(100)).await;
+            }
+
+            if drained >= FIPS_TUN_READ_BURST {
+                tokio::task::yield_now().await;
             }
         }
     })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn send_mesh_packet_or_log(mesh: &FipsPrivateMeshRuntime, packet: TunPipelinePacket) {
+    crate::pipeline_profile::record_since(
+        crate::pipeline_profile::Stage::TunToMeshQueueWait,
+        packet.queued_at,
+    );
+    let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshSend);
+    if let Err(error) = mesh.send_tunnel_packet_owned(packet.bytes).await {
+        eprintln!("fips: failed to send tunnel packet: {error}");
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn spawn_mesh_recv_task(
     mesh: Arc<FipsPrivateMeshRuntime>,
-    tun: Arc<TunSocket>,
+    tun_fd: Arc<AsyncFd<BorrowedTunFd>>,
     event_tx: mpsc::Sender<FipsPrivateMeshEvent>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
             match mesh.recv_mesh_event().await {
-                Ok(Some(FipsPrivateMeshEvent::Packet(packet))) => {
-                    // Hot path. Write to TUN inline and DON'T forward the
-                    // Packet event upstream — the only consumer in
-                    // drain_events discards `let _ = packet.source_pubkey`,
-                    // so forwarding it costs a per-packet mpsc.send().await
-                    // (full tokio task wakeup) for nothing. Control-frame
-                    // events still propagate so daemon control logic sees
-                    // them.
-                    write_packet_to_tun(&tun, &packet.bytes);
-                }
                 Ok(Some(event)) => {
-                    if event_tx.send(event).await.is_err() {
+                    if !forward_mesh_event_to_tun(event, &tun_fd, &event_tx).await {
                         break;
                     }
                 }
@@ -1855,15 +2213,91 @@ fn spawn_mesh_recv_task(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn write_packet_to_tun(tun: &TunSocket, packet: &[u8]) {
+async fn forward_mesh_event_to_tun(
+    event: FipsPrivateMeshEvent,
+    tun_fd: &AsyncFd<BorrowedTunFd>,
+    event_tx: &mpsc::Sender<FipsPrivateMeshEvent>,
+) -> bool {
+    match event {
+        FipsPrivateMeshEvent::Packet(packet) => {
+            // Hot path. Write to TUN inline and DON'T forward the Packet event
+            // upstream: the control-loop consumer discards packet events. The
+            // raw fd write below still waits on utun writability instead of
+            // silently dropping `EWOULDBLOCK` like boringtun's helper does.
+            write_packet_to_tun(tun_fd, &packet.bytes).await;
+            true
+        }
+        event => event_tx.send(event).await.is_ok(),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn write_packet_to_tun(tun_fd: &AsyncFd<BorrowedTunFd>, packet: &[u8]) {
+    let Some(address_family) = tunnel_packet_address_family(packet) else {
+        return;
+    };
+
+    let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::TunWrite);
+    loop {
+        match raw_write_packet_to_tun(tun_fd.get_ref().as_raw_fd(), packet, address_family) {
+            Ok(()) => return,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                match tun_fd.writable().await {
+                    Ok(mut guard) => guard.clear_ready(),
+                    Err(error) => {
+                        eprintln!("fips: tunnel write reactor await failed: {error}");
+                        return;
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!("fips: failed to write tunnel packet: {error}");
+                return;
+            }
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn tunnel_packet_address_family(packet: &[u8]) -> Option<u8> {
     match packet.first().map(|byte| byte >> 4) {
-        Some(4) => {
-            let _ = tun.write4(packet);
-        }
-        Some(6) => {
-            let _ = tun.write6(packet);
-        }
-        _ => {}
+        #[cfg(target_os = "macos")]
+        Some(4) => Some(2),
+        #[cfg(target_os = "macos")]
+        Some(6) => Some(30),
+        #[cfg(target_os = "linux")]
+        Some(4) | Some(6) => Some(0),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn raw_write_packet_to_tun(fd: RawFd, packet: &[u8], address_family: u8) -> io::Result<()> {
+    let header = [0_u8, 0, 0, address_family];
+    let mut file = ManuallyDrop::new(unsafe { File::from_raw_fd(fd) });
+    let written = file.write_vectored(&[IoSlice::new(&header), IoSlice::new(packet)])?;
+    if written == header.len() + packet.len() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::WriteZero,
+            "short tunnel packet write",
+        ))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn raw_write_packet_to_tun(fd: RawFd, packet: &[u8], _address_family: u8) -> io::Result<()> {
+    let mut file = ManuallyDrop::new(unsafe { File::from_raw_fd(fd) });
+    let written = file.write(packet)?;
+    if written == packet.len() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::WriteZero,
+            "short tunnel packet write",
+        ))
     }
 }
 
@@ -1910,8 +2344,12 @@ impl FipsPrivateTunnelRuntime {
             nostr_relays: config.nostr_relays.clone(),
             share_local_candidates: config.share_local_candidates,
         };
-        let endpoint_config =
-            fips_endpoint_config(&scope, &config.endpoint_peers, Some(&transport));
+        let endpoint_config = fips_endpoint_config(
+            &scope,
+            &config.endpoint_peers,
+            Some(&transport),
+            config.mesh_mtu,
+        );
         let mesh = Arc::new(
             FipsPrivateMeshRuntime::bind_with_config(
                 config.identity_nsec.clone(),
@@ -1943,7 +2381,7 @@ impl FipsPrivateTunnelRuntime {
                             describe_ip_packet(&packet)
                         );
                     }
-                    match mesh.send_tunnel_packet(&packet).await {
+                    match mesh.send_tunnel_packet_owned(packet).await {
                         Ok(true) => {}
                         Ok(false) => {
                             if debug {
@@ -2006,6 +2444,7 @@ impl FipsPrivateTunnelRuntime {
             || self.config.advertise_endpoint != config.advertise_endpoint
             || self.config.stun_servers != config.stun_servers
             || self.config.endpoint_peers != config.endpoint_peers
+            || self.config.mesh_mtu.underlay_udp != config.mesh_mtu.underlay_udp
     }
 
     pub(crate) async fn apply_config(&mut self, config: FipsPrivateTunnelConfig) -> Result<()> {
@@ -2158,7 +2597,7 @@ fn start_windows_fips_wintun(
         .or_else(|_| Adapter::create(&wintun, &config.iface, "NostrVPN", None))
         .with_context(|| format!("failed to open or create wintun adapter {}", config.iface))?;
     adapter
-        .set_mtu(nostr_vpn_core::MESH_TUNNEL_MTU as usize)
+        .set_mtu(config.mesh_mtu.tunnel as usize)
         .with_context(|| format!("failed to set MTU on wintun adapter {}", config.iface))?;
     let parsed_address = crate::windows_tunnel::windows_interface_address(&config.local_address)?;
     adapter
@@ -2363,9 +2802,9 @@ fn unix_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        FIPS_NOSTR_DISCOVERY_APP, FipsEndpointTransportConfig, FipsPrivateMeshRuntime,
-        FipsPrivateTunnelConfig, control_frame_source_pubkey, fips_endpoint_config,
-        fips_endpoint_peers_from_mesh,
+        ControlFragmentBuffer, FIPS_NOSTR_DISCOVERY_APP, FipsEndpointTransportConfig,
+        FipsPrivateMeshRuntime, FipsPrivateTunnelConfig, control_frame_destination_npub,
+        control_frame_source_pubkey, fips_endpoint_config, fips_endpoint_peers_from_mesh,
     };
     use fips_endpoint::{
         Config, ConnectPolicy, PeerConfig as FipsPeerConfig, TransportInstances, UdpConfig,
@@ -2373,8 +2812,9 @@ mod tests {
     use nostr_sdk::prelude::{Keys, ToBech32};
     use nostr_vpn_core::config::{AppConfig, derive_mesh_tunnel_ip};
     use nostr_vpn_core::data_plane::MeshPeerStatus;
-    use nostr_vpn_core::fips_control::FipsControlFrame;
-    use nostr_vpn_core::fips_control::NetworkRoster;
+    use nostr_vpn_core::fips_control::{
+        FipsControlFrame, NetworkRoster, decode_fips_control_frame, encode_fips_control_messages,
+    };
     use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
     use nostr_vpn_core::join_requests::MeshJoinRequest;
     use std::collections::HashMap;
@@ -2419,6 +2859,102 @@ mod tests {
             rx_bytes: 0,
             error: None,
         }
+    }
+
+    #[test]
+    fn fragmented_control_frames_reassemble_to_original_frame() {
+        let roster = NetworkRoster {
+            network_name: "Network 1".to_string(),
+            participants: (0..12).map(|value| format!("{value:064x}")).collect(),
+            admins: vec!["f".repeat(64)],
+            aliases: (0..12)
+                .map(|value| (format!("{value:064x}"), format!("node-{value}")))
+                .collect(),
+            signed_at: 123,
+        };
+        let frame = FipsControlFrame::Roster {
+            network_id: "mesh".to_string(),
+            roster,
+        };
+        let messages = encode_fips_control_messages(&frame).expect("fragment messages");
+        let mut buffer = ControlFragmentBuffer::default();
+        let mut reassembled = None;
+
+        for message in messages {
+            let decoded = decode_fips_control_frame(&message)
+                .expect("decode fragment")
+                .expect("fragment frame");
+            let FipsControlFrame::Fragment {
+                id,
+                index,
+                total,
+                data,
+            } = decoded
+            else {
+                panic!("expected fragment");
+            };
+            reassembled = buffer
+                .push("npub1source", id, index, total, data, 1)
+                .expect("push fragment")
+                .or(reassembled);
+        }
+
+        let decoded = decode_fips_control_frame(&reassembled.expect("reassembled frame"))
+            .expect("decode reassembled")
+            .expect("control frame");
+        assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn private_mesh_mtu_defaults_to_safe_budget() {
+        let mtu = super::resolve_private_mesh_mtu(None, None, None);
+
+        assert_eq!(
+            mtu,
+            super::MeshMtu {
+                underlay_udp: nostr_vpn_core::MESH_UNDERLAY_UDP_MTU,
+                tunnel: nostr_vpn_core::MESH_TUNNEL_MTU,
+            }
+        );
+    }
+
+    #[test]
+    fn private_mesh_mtu_lan_profile_uses_larger_paired_budget() {
+        let mtu = super::resolve_private_mesh_mtu(Some(" LAN "), None, None);
+
+        assert_eq!(
+            mtu,
+            super::MeshMtu {
+                underlay_udp: 1420,
+                tunnel: 1290,
+            }
+        );
+    }
+
+    #[test]
+    fn private_mesh_mtu_underlay_override_derives_tunnel_budget() {
+        let mtu = super::resolve_private_mesh_mtu(None, Some(1500), None);
+
+        assert_eq!(
+            mtu,
+            super::MeshMtu {
+                underlay_udp: 1500,
+                tunnel: 1370,
+            }
+        );
+    }
+
+    #[test]
+    fn private_mesh_mtu_caps_tunnel_to_underlay_budget() {
+        let mtu = super::resolve_private_mesh_mtu(None, Some(1280), Some(1420));
+
+        assert_eq!(
+            mtu,
+            super::MeshMtu {
+                underlay_udp: 1280,
+                tunnel: 1150,
+            }
+        );
     }
 
     #[test]
@@ -2475,6 +3011,19 @@ mod tests {
         assert_eq!(
             control_frame_source_pubkey(&mesh, Some(&unknown_npub), &join_request),
             Some(unknown_pubkey)
+        );
+    }
+
+    #[test]
+    fn control_frame_destinations_can_target_pending_join_requester() {
+        let keys = Keys::generate();
+        let requester_pubkey = keys.public_key().to_hex();
+        let requester_npub = keys.public_key().to_bech32().expect("npub");
+        let mesh = FipsMeshRuntime::new(Vec::new());
+
+        assert_eq!(
+            control_frame_destination_npub(&mesh, &requester_pubkey).expect("destination npub"),
+            requester_npub
         );
     }
 
@@ -2561,10 +3110,10 @@ mod tests {
 
         assert!(bob_peer.allowed_ips.contains(&bob_tunnel_ip));
         assert!(bob_peer.allowed_ips.contains(&"0.0.0.0/0".to_string()));
-        assert!(bob_peer.allowed_ips.contains(&"::/0".to_string()));
+        assert!(!bob_peer.allowed_ips.contains(&"::/0".to_string()));
         assert!(!carol_peer.allowed_ips.contains(&"0.0.0.0/0".to_string()));
         assert!(config.route_targets.contains(&"0.0.0.0/0".to_string()));
-        assert!(config.route_targets.contains(&"::/0".to_string()));
+        assert!(!config.route_targets.contains(&"::/0".to_string()));
     }
 
     fn direct_udp_endpoint_config(
@@ -2714,7 +3263,12 @@ mod tests {
         )
         .expect("peer config");
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new());
-        let config = fips_endpoint_config("nostr-vpn:test", &endpoint_peers, None);
+        let config = fips_endpoint_config(
+            "nostr-vpn:test",
+            &endpoint_peers,
+            None,
+            super::resolve_private_mesh_mtu(None, None, None),
+        );
 
         assert!(!config.node.control.enabled);
         assert!(!config.dns.enabled);
@@ -2759,7 +3313,12 @@ mod tests {
         };
 
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new());
-        let config = fips_endpoint_config("nostr-vpn:test", &endpoint_peers, Some(&transport));
+        let config = fips_endpoint_config(
+            "nostr-vpn:test",
+            &endpoint_peers,
+            Some(&transport),
+            super::resolve_private_mesh_mtu(None, None, None),
+        );
 
         assert!(config.node.discovery.nostr.enabled);
         assert!(config.node.discovery.nostr.advertise);
@@ -2818,7 +3377,12 @@ mod tests {
             share_local_candidates: false,
         };
 
-        let config = fips_endpoint_config("nostr-vpn:test", &endpoint_peers, Some(&transport));
+        let config = fips_endpoint_config(
+            "nostr-vpn:test",
+            &endpoint_peers,
+            Some(&transport),
+            super::resolve_private_mesh_mtu(None, None, None),
+        );
 
         assert!(config.node.discovery.nostr.enabled);
         assert!(!config.node.discovery.nostr.advertise);

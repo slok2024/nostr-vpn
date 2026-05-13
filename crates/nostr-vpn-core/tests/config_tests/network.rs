@@ -89,6 +89,7 @@ fn custom_node_name_is_preserved() {
 #[test]
 fn default_network_id_stays_placeholder_without_participants() {
     let mut config = AppConfig::generated();
+    keep_endpoint_autoconfig_off(&mut config);
 
     maybe_autoconfigure_node(&mut config);
 
@@ -158,6 +159,7 @@ fn tunnel_ip_stays_stable_when_roster_changes_if_network_id_is_fixed() {
     config.nostr.public_key = own_hex.clone();
     set_default_network_participants(&mut config, vec![high.clone()]);
     config.node.tunnel_ip = "10.44.0.1/32".to_string();
+    keep_endpoint_autoconfig_off(&mut config);
 
     maybe_autoconfigure_node(&mut config);
     let first_ip = config.node.tunnel_ip.clone();
@@ -221,6 +223,59 @@ fn save_omits_legacy_lan_discovery_flag() {
 
     assert!(!raw.contains("lan_discovery_enabled"));
     assert!(!raw.contains("auto_disconnect_relays_when_mesh_ready"));
+}
+
+#[cfg(unix)]
+#[test]
+fn save_creates_private_config_file_on_unix() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = unique_temp_config_path("private-config-mode");
+    let config = AppConfig::generated();
+
+    config.save(&path).expect("save config");
+    let mode = fs::metadata(&path)
+        .expect("config metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    let _ = fs::remove_file(&path);
+
+    assert_eq!(mode, 0o600);
+}
+
+#[cfg(unix)]
+#[test]
+fn save_replaces_config_symlink_instead_of_following_it() {
+    use std::os::unix::fs::symlink;
+
+    let dir = std::env::temp_dir().join(format!(
+        "nostr-vpn-config-symlink-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let target = dir.join("target");
+    let link = dir.join("config.toml");
+    fs::write(&target, "do-not-overwrite").expect("write target");
+    symlink(&target, &link).expect("create symlink");
+
+    AppConfig::generated().save(&link).expect("save config");
+
+    assert_eq!(
+        fs::read_to_string(&target).expect("read target"),
+        "do-not-overwrite"
+    );
+    assert!(
+        !fs::symlink_metadata(&link)
+            .expect("link metadata")
+            .file_type()
+            .is_symlink()
+    );
+
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -368,12 +423,14 @@ fn reciprocal_participant_configs_share_effective_network_id() {
     alice_config.nostr.secret_key = alice.secret_key().to_secret_hex();
     alice_config.nostr.public_key = alice_hex.clone();
     set_default_network_participants(&mut alice_config, vec![bob_hex.clone()]);
+    keep_endpoint_autoconfig_off(&mut alice_config);
     maybe_autoconfigure_node(&mut alice_config);
 
     let mut bob_config = AppConfig::generated();
     bob_config.nostr.secret_key = bob.secret_key().to_secret_hex();
     bob_config.nostr.public_key = bob_hex.clone();
     set_default_network_participants(&mut bob_config, vec![alice_hex.clone()]);
+    keep_endpoint_autoconfig_off(&mut bob_config);
     maybe_autoconfigure_node(&mut bob_config);
 
     assert_ne!(alice_config.effective_network_id(), "nostr-vpn");

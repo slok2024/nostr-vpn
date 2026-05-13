@@ -5,9 +5,11 @@ use nostr_vpn_core::config::{
     AppConfig, NetworkConfig, PendingOutboundJoinRequest, maybe_autoconfigure_node,
     normalize_nostr_pubkey, normalize_runtime_network_id,
 };
-pub(crate) use nostr_vpn_core::invite::{NetworkInvite, encode_network_invite, parse_network_invite};
 #[cfg(test)]
 pub(crate) use nostr_vpn_core::invite::NETWORK_INVITE_PREFIX;
+pub(crate) use nostr_vpn_core::invite::{
+    NetworkInvite, encode_network_invite, parse_network_invite,
+};
 use serde_json::json;
 
 use super::{

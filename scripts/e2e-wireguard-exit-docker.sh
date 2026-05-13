@@ -12,8 +12,11 @@
 # node-a has no path to internet-target at all. Any successful ping proves
 # traffic is going through the WG upstream tunnel.
 #
-# Pass criteria: pings from node-a to internet-target arrive with source IP =
-# wg-upstream's public-side IP (after MASQUERADE), not node-a's bridge IP.
+# Pass criteria:
+#   - pings from node-a to internet-target arrive with source IP =
+#     wg-upstream's public-side IP (after MASQUERADE), not node-a's bridge IP.
+#   - a hostile/permissive upstream cannot initiate packets into node-b's
+#     nvpn tunnel IP through node-a's WG client.
 
 set -euo pipefail
 
@@ -30,6 +33,7 @@ WG_LISTEN_PORT="51820"
 WG_TUNNEL_NET="10.99.99.0/24"
 WG_SERVER_TUNNEL_IP="10.99.99.1"
 WG_CLIENT_TUNNEL_IP="10.99.99.2"
+MESH_TUNNEL_NET="10.44.0.0/16"
 
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -60,10 +64,16 @@ dump_debug() {
   "${COMPOSE[@]}" exec -T node-a sh -lc "ip -4 route show table 51888 || true" || true
   echo "--- node-a: wg show ---"
   "${COMPOSE[@]}" exec -T node-a sh -lc "wg show || true" || true
+  echo "--- node-a: iptables filter ---"
+  "${COMPOSE[@]}" exec -T node-a sh -lc "iptables -S || true" || true
   echo "--- node-a: nvpn status ---"
   "${COMPOSE[@]}" exec -T node-a sh -lc "nvpn status --json --discover-secs 0 || true" || true
   echo "--- node-a: daemon log tail ---"
   "${COMPOSE[@]}" exec -T node-a sh -lc "tail -n 200 /root/.config/nvpn/daemon.log 2>/dev/null || true" || true
+  echo "--- node-b: nvpn status ---"
+  "${COMPOSE[@]}" exec -T node-b sh -lc "nvpn status --json --discover-secs 0 || true" || true
+  echo "--- node-b: iptables filter ---"
+  "${COMPOSE[@]}" exec -T node-b sh -lc "iptables -S || true; iptables -L nvpn-wg-ingress-counts -v -n -x || true" || true
   echo "--- wg-upstream: wg show ---"
   "${COMPOSE[@]}" exec -T wg-upstream sh -lc "wg show || true" || true
   echo "--- wg-upstream: iptables nat ---"
@@ -79,6 +89,10 @@ on_exit() {
   exit "$exit_code"
 }
 trap on_exit EXIT
+
+compact_json() {
+  tr -d '\n\r\t '
+}
 
 nostr_pubkey_from_config() {
   local node="$1"
@@ -147,8 +161,9 @@ ip link del wg0 2>/dev/null || true
 ip link add dev wg0 type wireguard
 ip address add ${WG_SERVER_TUNNEL_IP}/24 dev wg0
 wg set wg0 listen-port ${WG_LISTEN_PORT} private-key /etc/wireguard/server.key
-wg set wg0 peer ${CLIENT_PUB} allowed-ips ${WG_CLIENT_TUNNEL_IP}/32
+wg set wg0 peer ${CLIENT_PUB} allowed-ips ${WG_CLIENT_TUNNEL_IP}/32,${MESH_TUNNEL_NET}
 ip link set wg0 up
+ip route replace ${MESH_TUNNEL_NET} dev wg0
 
 iptables -P FORWARD ACCEPT
 iptables -A FORWARD -i wg0 -j ACCEPT
@@ -232,6 +247,44 @@ if [[ -z "$WG_IFACE" ]]; then
   exit 1
 fi
 
+ALICE_STATUS=""
+BOB_STATUS=""
+BOB_TUNNEL_IP=""
+for _ in $(seq 1 80); do
+  ALICE_STATUS="$("${COMPOSE[@]}" exec -T node-a nvpn status --json --discover-secs 0 | tr -d '\r')"
+  BOB_STATUS="$("${COMPOSE[@]}" exec -T node-b nvpn status --json --discover-secs 0 | tr -d '\r')"
+  ALICE_COMPACT="$(printf '%s' "$ALICE_STATUS" | compact_json)"
+  BOB_COMPACT="$(printf '%s' "$BOB_STATUS" | compact_json)"
+  BOB_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-b nvpn ip | tr -d '\r')"
+
+  if grep -q '"status_source":"daemon"' <<<"$ALICE_COMPACT" \
+    && grep -q '"status_source":"daemon"' <<<"$BOB_COMPACT" \
+    && grep -q '"running":true' <<<"$ALICE_COMPACT" \
+    && grep -q '"running":true' <<<"$BOB_COMPACT" \
+    && grep -q '"mesh_ready":true' <<<"$ALICE_COMPACT" \
+    && grep -q '"mesh_ready":true' <<<"$BOB_COMPACT" \
+    && [[ -n "$BOB_TUNNEL_IP" ]]; then
+    break
+  fi
+  sleep 1
+done
+
+printf 'NODE-A STATUS\n%s\n' "$ALICE_STATUS"
+printf 'NODE-B STATUS\n%s\n' "$BOB_STATUS"
+
+ALICE_COMPACT="$(printf '%s' "$ALICE_STATUS" | compact_json)"
+BOB_COMPACT="$(printf '%s' "$BOB_STATUS" | compact_json)"
+grep -q '"status_source":"daemon"' <<<"$ALICE_COMPACT"
+grep -q '"status_source":"daemon"' <<<"$BOB_COMPACT"
+grep -q '"running":true' <<<"$ALICE_COMPACT"
+grep -q '"running":true' <<<"$BOB_COMPACT"
+grep -q '"mesh_ready":true' <<<"$ALICE_COMPACT"
+grep -q '"mesh_ready":true' <<<"$BOB_COMPACT"
+if [[ -z "$BOB_TUNNEL_IP" ]]; then
+  echo "wireguard-exit e2e failed: unable to resolve node-b tunnel IP" >&2
+  exit 1
+fi
+
 DEFAULT_ROUTE="$("${COMPOSE[@]}" exec -T node-a sh -lc "ip route show default | head -n1 | tr -d '\r'")"
 if ! grep -q "dev $WG_IFACE" <<<"$DEFAULT_ROUTE"; then
   echo "wireguard-exit e2e failed: node-a default route did not switch to the WG upstream" >&2
@@ -288,4 +341,46 @@ if [[ -n "$COUNT_DIRECT" && "$COUNT_DIRECT" != "0" ]]; then
   exit 1
 fi
 
-echo "wireguard-exit docker e2e passed: node-a's own traffic egressed via the WG upstream (${COUNT_VIA_WG} icmp pkts seen with WG-upstream source)"
+# Step 6: security regression guard. Simulate the worst case: a permissive
+# local forward policy and a hostile upstream that routes the whole nvpn mesh
+# range toward node-a's WG client. Even then, packets initiated by the upstream
+# must not enter the mesh or reach node-b.
+"${COMPOSE[@]}" exec -T node-a sh -lc "
+sysctl -w net.ipv4.ip_forward=1 >/dev/null
+iptables -P FORWARD ACCEPT
+iptables -S FORWARD | grep -q 'nvpn-wg-upstream-inbound-drop'
+" >/dev/null
+
+"${COMPOSE[@]}" exec -T node-b sh -lc "
+iptables -F nvpn-wg-ingress-counts 2>/dev/null || iptables -N nvpn-wg-ingress-counts
+iptables -A nvpn-wg-ingress-counts -s ${WG_SERVER_TUNNEL_IP} -d ${BOB_TUNNEL_IP} -p icmp -j RETURN
+iptables -C INPUT -j nvpn-wg-ingress-counts 2>/dev/null || iptables -I INPUT -j nvpn-wg-ingress-counts
+iptables -Z nvpn-wg-ingress-counts
+" >/dev/null
+
+"${COMPOSE[@]}" exec -T wg-upstream ping \
+  -c 5 \
+  -W 1 \
+  -I "${WG_SERVER_TUNNEL_IP}" \
+  "${BOB_TUNNEL_IP}" >/tmp/nvpn-wg-ingress-ping.log 2>&1 || true
+
+COUNT_UPSTREAM_TO_B="$("${COMPOSE[@]}" exec -T node-b sh -lc "iptables -L nvpn-wg-ingress-counts -v -n -x | awk -v ip='${WG_SERVER_TUNNEL_IP}' '\$0 ~ ip { print \$1 }' | head -n1" | tr -d '\r')"
+
+echo "--- upstream -> node-b tunnel ping log (expected to fail) ---"
+cat /tmp/nvpn-wg-ingress-ping.log
+echo "--- node-a WG inbound guard rule ---"
+"${COMPOSE[@]}" exec -T node-a sh -lc "iptables -S FORWARD | grep 'nvpn-wg-upstream-inbound-drop'" | tr -d '\r'
+echo "--- node-b ingress packet counts ---"
+"${COMPOSE[@]}" exec -T node-b iptables -L nvpn-wg-ingress-counts -v -n -x | tr -d '\r'
+
+if [[ -z "$COUNT_UPSTREAM_TO_B" ]]; then
+  echo "wireguard-exit e2e failed: unable to read node-b ingress packet counter" >&2
+  exit 1
+fi
+
+if [[ "$COUNT_UPSTREAM_TO_B" != "0" ]]; then
+  echo "wireguard-exit e2e failed: node-b saw ${COUNT_UPSTREAM_TO_B} ICMP packets initiated by the WG upstream" >&2
+  exit 1
+fi
+
+echo "wireguard-exit docker e2e passed: node-a egressed via WG (${COUNT_VIA_WG} icmp pkts), and WG upstream ingress could not reach node-b"

@@ -5,7 +5,13 @@ global `~/.claude/CLAUDE.md` instructions.
 
 ## Development notes
 
-For nvpn performance work, build only the daemon (`cargo build -p nostr-vpn-cli --bin nvpn --release`), install/ad-hoc-sign that binary on each test machine, then compare `iperf3` over LAN/Tailscale/nvpn in both directions (`-R`) on macOS and Linux.
+For nvpn performance work, build only the daemon (`cargo build -p nostr-vpn-cli --bin nvpn --release`), install/ad-hoc-sign that binary on each test machine, then compare `iperf3` over LAN/Tailscale/nvpn in both directions (`-R`) on macOS and Linux; use `mesh_mtu_profile = "lan"` or `NVPN_MESH_MTU_PROFILE=lan` only for explicit clean-LAN MTU trials.
+
+Ad-hoc signing is sufficient for replacing the macOS daemon binary during development, but clear extended attributes before signing/copying (`xattr -c`) and use `launchctl bootout` + `bootstrap` if launchd reports `OS_REASON_CODESIGNING`; restarting the system LaunchDaemon still requires elevated `launchctl kickstart -k system/to.nostrvpn.nvpn` unless a narrow passwordless sudo rule is installed for that restart.
+
+For macOS launchd env-var A/Bs, edit `EnvironmentVariables` and then `launchctl bootout` + `bootstrap`; `kickstart` restarts the daemon but may keep the old loaded plist environment. Keep launchd pointed at the signed daemon binary used for testing rather than a stale app resource copy.
+
+Before remote bench automation, make sure the SSH key is loaded into the agent (for example with `ssh-add --apple-use-keychain <key>` from an interactive shell on macOS); `BatchMode=yes` fails if the key is only in Keychain and user interaction is unavailable.
 
 ## Before tagging a release
 

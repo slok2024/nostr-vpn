@@ -329,6 +329,12 @@ Notes:
 
 ## Docker end-to-end coverage
 
+Run the focused security regression kit:
+
+```sh
+just security-regressions
+```
+
 Docker e2e scripts under [`scripts/`](scripts):
 
 - `./scripts/e2e-docker.sh`
@@ -341,6 +347,9 @@ Docker e2e scripts under [`scripts/`](scripts):
   Verifies that peers with a shared mesh ID can still connect when one node has extra configured participants.
 - `./scripts/e2e-exit-node-docker.sh`
   Verifies exit-node advertisement, selection, tunnel traffic to the chosen exit node, and default-route traffic crossing the exit path to an external target. Set `NVPN_EXIT_NODE_E2E_PUBLIC_IP=9.9.9.9` (or another reachable public IP) to also prove a real internet hop routes through the tunnel.
+- `./scripts/e2e-wireguard-exit-docker.sh`
+  Verifies WireGuard-upstream egress and guards against upstream-initiated ingress into nvpn peers, including a hostile upstream route for the mesh tunnel range.
+
 These flows are Linux-oriented because they require real tunnel devices and container networking privileges.
 
 ## Desktop update end-to-end coverage

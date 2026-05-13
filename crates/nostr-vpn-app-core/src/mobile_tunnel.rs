@@ -41,7 +41,7 @@ pub(crate) struct MobileTunnelConfig {
     #[serde(default)]
     pub(crate) share_local_candidates: bool,
     /// When the user has WG upstream enabled + configured, the OS-side
-    /// (NEPacketTunnelProvider on iOS, VpnService on Android) is
+    /// (`NEPacketTunnelProvider` on iOS, `VpnService` on Android) is
     /// expected to:
     ///   * include `0.0.0.0/0` in the tunnel's includedRoutes (so all
     ///     non-mesh outbound traffic enters the tun and we can forward
@@ -184,7 +184,7 @@ impl MobileTunnelConfig {
 /// configs with literal IPs, so this is fine for the common case.
 fn wireguard_endpoint_host_ip(endpoint: &str) -> Option<std::net::IpAddr> {
     let trimmed = endpoint.trim();
-    let host = trimmed.rsplit_once(':').map(|(h, _)| h).unwrap_or(trimmed);
+    let host = trimmed.rsplit_once(':').map_or(trimmed, |(h, _)| h);
     let host = host.trim_start_matches('[').trim_end_matches(']');
     host.parse().ok()
 }
@@ -241,6 +241,7 @@ impl MobileTunnel {
         })
     }
 
+    #[allow(clippy::large_futures, clippy::too_many_lines)]
     async fn start_async(config: MobileTunnelConfig) -> Result<MobileTunnelStarted> {
         let scope = format!("nostr-vpn:{}", config.network_id.trim());
         let endpoint = FipsEndpoint::builder()
@@ -332,16 +333,16 @@ impl MobileTunnel {
                     // status to the UI.
                     if let Some(runtime_ref) = wg_runtime.as_ref() {
                         let timeout = DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT;
-                        if !runtime_ref.wait_for_handshake(timeout).await {
+                        if runtime_ref.wait_for_handshake(timeout).await {
+                            tracing::info!(
+                                ?upstream,
+                                "wg-upstream: mobile tunnel handshake completed"
+                            );
+                        } else {
                             tracing::warn!(
                                 ?upstream,
                                 "wg-upstream: no handshake within {timeout:?} on mobile tunnel; \
                                  traffic will queue until upstream becomes reachable"
-                            );
-                        } else {
-                            tracing::info!(
-                                ?upstream,
-                                "wg-upstream: mobile tunnel handshake completed"
                             );
                         }
                     }
@@ -692,6 +693,69 @@ mod tests {
                 .iter()
                 .any(|route| route == "0.0.0.0/0")
         );
+    }
+
+    #[test]
+    fn mobile_config_wireguard_exit_keeps_mesh_peer_routes_narrow() {
+        let mut app = AppConfig::generated();
+        app.ensure_defaults();
+        let own = app.own_nostr_pubkey_hex().expect("own pubkey");
+        let peer = "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc";
+        app.networks = vec![NetworkConfig {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            enabled: true,
+            network_id: "test".to_string(),
+            participants: vec![peer.to_string()],
+            admins: vec![own],
+            listen_for_join_requests: true,
+            invite_inviter: String::new(),
+            outbound_join_request: None,
+            inbound_join_requests: Vec::new(),
+            shared_roster_updated_at: 0,
+            shared_roster_signed_by: String::new(),
+        }];
+        app.wireguard_exit = WireGuardExitConfig {
+            enabled: true,
+            address: "10.99.99.2/32".to_string(),
+            private_key: "client-private-key".to_string(),
+            peer_public_key: "server-public-key".to_string(),
+            endpoint: "198.51.100.20:51820".to_string(),
+            allowed_ips: vec!["0.0.0.0/0".to_string()],
+            ..WireGuardExitConfig::default()
+        };
+
+        let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
+
+        assert_eq!(config.peers.len(), 1);
+        assert!(
+            config
+                .route_targets
+                .iter()
+                .any(|route| route == "0.0.0.0/0")
+        );
+        assert!(
+            !config
+                .route_targets
+                .iter()
+                .any(|route| route == "10.44.0.0/16")
+        );
+
+        let peer_routes = config
+            .route_targets
+            .iter()
+            .filter(|route| route.as_str() != "0.0.0.0/0")
+            .collect::<Vec<_>>();
+        assert_eq!(peer_routes.len(), 1);
+        assert!(peer_routes[0].starts_with("10."));
+        assert!(peer_routes[0].ends_with("/32"));
+        assert_eq!(config.peers[0].allowed_ips, vec![peer_routes[0].clone()]);
+
+        let wg_config = config.wireguard_exit.as_ref().expect("wg config");
+        assert_eq!(wg_config.allowed_ips, vec!["0.0.0.0/0"]);
+        assert_eq!(wg_config.persistent_keepalive_secs, 25);
+        assert_eq!(config.excluded_routes, vec!["198.51.100.20/32"]);
+        assert_eq!(config.dns_servers, vec!["10.64.0.1"]);
     }
 
     #[test]

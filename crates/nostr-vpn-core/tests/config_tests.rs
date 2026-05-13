@@ -15,6 +15,10 @@ fn set_default_network_participants(config: &mut AppConfig, participants: Vec<St
     }
 }
 
+fn keep_endpoint_autoconfig_off(config: &mut AppConfig) {
+    config.node.endpoint = "198.51.100.10:51820".to_string();
+}
+
 fn unique_temp_config_path(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "nostr-vpn-{name}-{}-{}.toml",

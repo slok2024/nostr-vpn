@@ -26,9 +26,8 @@
 //! WG endpoints today.
 
 // 16-bit ones-complement folding (RFC 1071/1624) is the canonical
-// idiom for IP/UDP/TCP checksum updates: every `as u16` truncation
-// here is intentional, every `as u32` widens for accumulation. Same
-// pattern appears in every TCP/IP stack ever written.
+// idiom for IP/UDP/TCP checksum updates. The `as u16` truncations are
+// intentional after folding; this pattern appears in every TCP/IP stack.
 #![allow(clippy::cast_possible_truncation)]
 
 use std::net::Ipv4Addr;
@@ -100,25 +99,21 @@ fn rewrite_ipv4_address(packet: &mut [u8], old: Ipv4Addr, new: Ipv4Addr, field: 
     let protocol = packet[9];
     let payload = &mut packet[ihl..];
     match protocol {
-        6 => {
-            if payload.len() >= 18 {
-                let tcp_check = u16::from_be_bytes([payload[16], payload[17]]);
-                let new_tcp_check = update_checksum(tcp_check, current, new_octets);
-                payload[16..18].copy_from_slice(&new_tcp_check.to_be_bytes());
-            }
+        6 if payload.len() >= 18 => {
+            let tcp_check = u16::from_be_bytes([payload[16], payload[17]]);
+            let new_tcp_check = update_checksum(tcp_check, current, new_octets);
+            payload[16..18].copy_from_slice(&new_tcp_check.to_be_bytes());
         }
-        17 => {
-            if payload.len() >= 8 {
-                let udp_check = u16::from_be_bytes([payload[6], payload[7]]);
-                if udp_check != 0 {
-                    let new_udp_check = update_checksum(udp_check, current, new_octets);
-                    let final_check = if new_udp_check == 0 {
-                        0xffff
-                    } else {
-                        new_udp_check
-                    };
-                    payload[6..8].copy_from_slice(&final_check.to_be_bytes());
-                }
+        17 if payload.len() >= 8 => {
+            let udp_check = u16::from_be_bytes([payload[6], payload[7]]);
+            if udp_check != 0 {
+                let new_udp_check = update_checksum(udp_check, current, new_octets);
+                let final_check = if new_udp_check == 0 {
+                    0xffff
+                } else {
+                    new_udp_check
+                };
+                payload[6..8].copy_from_slice(&final_check.to_be_bytes());
             }
         }
         _ => {}
@@ -132,11 +127,11 @@ fn rewrite_ipv4_address(packet: &mut [u8], old: Ipv4Addr, new: Ipv4Addr, field: 
 /// TCP/UDP checksums, since the only contribution of an IP address
 /// to the latter is the same 4 bytes in the pseudo-header.
 fn update_checksum(old_check: u16, old: [u8; 4], new: [u8; 4]) -> u16 {
-    let mut sum: u32 = (!old_check) as u32;
-    sum += (!u16::from_be_bytes([old[0], old[1]])) as u32;
-    sum += (!u16::from_be_bytes([old[2], old[3]])) as u32;
-    sum += u16::from_be_bytes([new[0], new[1]]) as u32;
-    sum += u16::from_be_bytes([new[2], new[3]]) as u32;
+    let mut sum: u32 = u32::from(!old_check);
+    sum += u32::from(!u16::from_be_bytes([old[0], old[1]]));
+    sum += u32::from(!u16::from_be_bytes([old[2], old[3]]));
+    sum += u32::from(u16::from_be_bytes([new[0], new[1]]));
+    sum += u32::from(u16::from_be_bytes([new[2], new[3]]));
     while sum > 0xffff {
         sum = (sum & 0xffff) + (sum >> 16);
     }
@@ -180,7 +175,7 @@ mod tests {
                 i += 2;
                 continue;
             }
-            sum += u16::from_be_bytes([header[i], header[i + 1]]) as u32;
+            sum += u32::from(u16::from_be_bytes([header[i], header[i + 1]]));
             i += 2;
         }
         while sum > 0xffff {
@@ -191,14 +186,14 @@ mod tests {
 
     fn compute_udp_checksum(packet: &[u8], src: Ipv4Addr, dst: Ipv4Addr) -> u16 {
         let udp = &packet[20..];
-        let udp_len = u16::from_be_bytes([udp[4], udp[5]]) as u32;
+        let udp_len = u32::from(u16::from_be_bytes([udp[4], udp[5]]));
         let mut sum: u32 = 0;
         let s = src.octets();
         let d = dst.octets();
-        sum += u16::from_be_bytes([s[0], s[1]]) as u32;
-        sum += u16::from_be_bytes([s[2], s[3]]) as u32;
-        sum += u16::from_be_bytes([d[0], d[1]]) as u32;
-        sum += u16::from_be_bytes([d[2], d[3]]) as u32;
+        sum += u32::from(u16::from_be_bytes([s[0], s[1]]));
+        sum += u32::from(u16::from_be_bytes([s[2], s[3]]));
+        sum += u32::from(u16::from_be_bytes([d[0], d[1]]));
+        sum += u32::from(u16::from_be_bytes([d[2], d[3]]));
         sum += 17;
         sum += udp_len;
         let mut i = 0;
@@ -207,11 +202,11 @@ mod tests {
                 i += 2;
                 continue;
             }
-            sum += u16::from_be_bytes([udp[i], udp[i + 1]]) as u32;
+            sum += u32::from(u16::from_be_bytes([udp[i], udp[i + 1]]));
             i += 2;
         }
         if i < udp.len() {
-            sum += (udp[i] as u32) << 8;
+            sum += u32::from(udp[i]) << 8;
         }
         while sum > 0xffff {
             sum = (sum & 0xffff) + (sum >> 16);

@@ -10,6 +10,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::process::Command as ProcessCommand;
 use std::sync::Arc;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
@@ -22,8 +23,10 @@ use wintun::Session as WintunSession;
 use nostr_vpn_core::config::WireGuardExitConfig;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use nostr_vpn_core::wg_upstream::MAX_WG_PACKET;
+pub use nostr_vpn_core::wg_upstream::WgUpstreamRuntime;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub use nostr_vpn_core::wg_upstream::{
-    DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT, WgUpstreamRuntime, WireGuardExitFingerprint,
+    DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT, WireGuardExitFingerprint,
 };
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -686,10 +689,8 @@ fn run_checked(command: &mut ProcessCommand) -> Result<()> {
 // whenever the config changes.
 // ---------------------------------------------------------------------------
 
-// `DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT` and `WireGuardExitFingerprint`
-// are re-exported from `nostr_vpn_core::wg_upstream` at the top of
-// this module so the daemon-side code below can keep referring to
-// them by short names without duplicating definitions.
+// The daemon-side code below keeps the shared WG fingerprint and
+// handshake timeout definitions close to the platform routing glue.
 
 #[cfg(target_os = "macos")]
 pub struct DaemonWgUpstream {
