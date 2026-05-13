@@ -16,6 +16,7 @@ mod pipeline_profile;
 mod platform_routing;
 mod service_management;
 mod session_runtime;
+mod updater;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 mod wg_upstream_runtime;
 #[cfg(any(target_os = "windows", test))]
@@ -45,7 +46,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use nostr_vpn_core::config::{
     AppConfig, derive_mesh_tunnel_ip, exit_node_default_routes, maybe_autoconfigure_node,
     normalize_advertised_route, normalize_nostr_pubkey, normalize_runtime_network_id,
@@ -203,6 +204,8 @@ enum Command {
     },
     /// Show the running CLI version.
     Version(VersionArgs),
+    /// Update this `nvpn` binary from the latest published release.
+    Update(UpdateArgs),
     /// Install `nvpn` into a platform-appropriate default PATH location.
     InstallCli(InstallCliArgs),
     /// Remove an `nvpn` binary previously installed into PATH.
@@ -338,6 +341,30 @@ struct InstallCliArgs {
 struct VersionArgs {
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Args)]
+struct UpdateArgs {
+    /// Only check whether an update is available.
+    #[arg(long)]
+    check: bool,
+    /// Destination binary to update (defaults to the currently running executable).
+    #[arg(long)]
+    path: Option<PathBuf>,
+    /// Install even when the latest release is not newer than this binary.
+    #[arg(long)]
+    force: bool,
+    /// Release manifest source to query.
+    #[arg(long, value_enum, default_value = "auto")]
+    source: UpdateSource,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum UpdateSource {
+    Auto,
+    Github,
+    #[value(alias = "htree")]
+    Hashtree,
 }
 
 #[derive(Debug, Args)]
@@ -749,6 +776,9 @@ async fn run_command(command: Command) -> Result<()> {
         }
         Command::Version(args) => {
             print_version(args)?;
+        }
+        Command::Update(args) => {
+            updater::run_update(args)?;
         }
         Command::InstallCli(args) => {
             install_cli(args)?;

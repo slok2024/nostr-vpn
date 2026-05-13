@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.0.13 - 2026-05-13
+
+### Added
+
+- Added `nvpn update`, a self-updater for the CLI/daemon binary. It checks the
+  GitHub release API first, falls back to the htree/upload release manifest,
+  selects the matching platform CLI archive, and replaces the current binary by
+  default.
+
+### Fixed
+
+- macOS and Linux GUI update checks now prefer the GitHub release API with short
+  request timeouts, keeping the htree/upload manifest as a fallback instead of
+  letting update checks sit on a slow manifest request for tens of seconds.
+- Service repair now preserves the existing config file owner/group when it
+  rewrites the user config from an elevated daemon-install path. This prevents
+  macOS repair from turning `~/Library/Application Support/nvpn/config.toml`
+  into a root-owned `0600` file that the GUI cannot read.
+
 ## 4.0.12 - 2026-05-13
 
 ### Changed

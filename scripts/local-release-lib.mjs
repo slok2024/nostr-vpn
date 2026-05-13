@@ -238,10 +238,10 @@ export function bumpCargoPackageVersion(cargoTomlText, version) {
     throw new Error('Could not find [package] table in Cargo.toml')
   }
   const original = match[0]
-  const replaced = original.replace(/(\nversion\s*=\s*")[^"]+(")/, `$1${semver}$2`)
-  if (replaced === original) {
+  if (!/(\nversion\s*=\s*")[^"]+(")/.test(original)) {
     throw new Error('Could not find version field inside [package] table')
   }
+  const replaced = original.replace(/(\nversion\s*=\s*")[^"]+(")/, `$1${semver}$2`)
   return cargoTomlText.replace(original, replaced)
 }
 

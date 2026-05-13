@@ -7,7 +7,13 @@ use std::thread;
 
 use serde::Deserialize;
 
-const DEFAULT_MANIFEST_URL: &str = "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json";
+const GITHUB_LATEST_RELEASE_URL: &str =
+    "https://api.github.com/repos/mmalmi/nostr-vpn/releases/latest";
+const HTREE_MANIFEST_URL: &str = "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json";
+const UPDATE_CONNECT_TIMEOUT_SECS: &str = "4";
+const UPDATE_TOTAL_TIMEOUT_SECS: &str = "8";
+const UPDATE_DOWNLOAD_TIMEOUT_SECS: &str = "180";
+const UPDATE_USER_AGENT: &str = "nvpn-updater";
 
 #[derive(Clone, Debug, Default)]
 pub struct UpdateState {
@@ -44,6 +50,7 @@ pub struct UpdateCheck {
 
 #[derive(Debug, Deserialize)]
 struct ReleaseManifest {
+    #[serde(alias = "tag_name")]
     tag: String,
     assets: Vec<ManifestAsset>,
 }
@@ -51,6 +58,7 @@ struct ReleaseManifest {
 #[derive(Debug, Deserialize)]
 struct ManifestAsset {
     name: String,
+    #[serde(alias = "browser_download_url")]
     path: String,
 }
 
@@ -69,31 +77,61 @@ pub fn download(asset: ReleaseAsset, sender: Sender<UpdateEvent>) {
 }
 
 pub fn check_blocking(current_version: &str) -> Result<UpdateCheck, String> {
-    let manifest_url = manifest_url();
-    fetch_manifest(&manifest_url).and_then(|manifest| {
-        let tag = manifest.tag.clone();
-        Ok(UpdateCheck {
-            asset: preferred_linux_asset(&manifest, &manifest_url),
-            newer: version_is_newer(&tag, current_version),
-            tag,
-        })
-    })
+    let manifest_urls = manifest_urls();
+    let mut last_error = None;
+    for manifest_url in manifest_urls {
+        match fetch_manifest(&manifest_url) {
+            Ok(manifest) => {
+                let tag = manifest.tag.clone();
+                return Ok(UpdateCheck {
+                    asset: preferred_linux_asset(&manifest, &manifest_url),
+                    newer: version_is_newer(&tag, current_version),
+                    tag,
+                });
+            }
+            Err(error) => {
+                last_error = Some(error);
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "No update manifest URL configured".to_string()))
 }
 
 pub fn download_blocking(asset: &ReleaseAsset) -> Result<PathBuf, String> {
     download_asset(asset)
 }
 
-fn manifest_url() -> String {
-    std::env::var("NVPN_UPDATE_MANIFEST_URL")
+fn manifest_urls() -> Vec<String> {
+    if let Some(override_url) = std::env::var("NVPN_UPDATE_MANIFEST_URL")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_MANIFEST_URL.to_string())
+    {
+        return vec![override_url];
+    }
+    vec![
+        GITHUB_LATEST_RELEASE_URL.to_string(),
+        HTREE_MANIFEST_URL.to_string(),
+    ]
 }
 
 fn fetch_manifest(manifest_url: &str) -> Result<ReleaseManifest, String> {
-    let output = Command::new("curl")
-        .args(["-fsSL", "--max-time", "45", manifest_url])
+    let mut command = Command::new("curl");
+    command.args([
+        "-fsSL",
+        "--connect-timeout",
+        UPDATE_CONNECT_TIMEOUT_SECS,
+        "--max-time",
+        UPDATE_TOTAL_TIMEOUT_SECS,
+    ]);
+    if manifest_url.contains("api.github.com") {
+        command
+            .arg("-H")
+            .arg("Accept: application/vnd.github+json")
+            .arg("-H")
+            .arg(format!("User-Agent: {UPDATE_USER_AGENT}"));
+    }
+    let output = command
+        .arg(manifest_url)
         .output()
         .map_err(|error| format!("Could not run curl: {error}"))?;
     if !output.status.success() {
@@ -167,8 +205,10 @@ fn download_asset(asset: &ReleaseAsset) -> Result<PathBuf, String> {
 
     let output = Command::new("curl")
         .arg("-fL")
+        .arg("--connect-timeout")
+        .arg(UPDATE_CONNECT_TIMEOUT_SECS)
         .arg("--max-time")
-        .arg("180")
+        .arg(UPDATE_DOWNLOAD_TIMEOUT_SECS)
         .arg("-o")
         .arg(&destination)
         .arg(&asset.url)
@@ -262,9 +302,28 @@ mod tests {
                 },
             ],
         };
-        let asset = preferred_linux_asset(&manifest, DEFAULT_MANIFEST_URL).expect("asset");
+        let asset = preferred_linux_asset(&manifest, HTREE_MANIFEST_URL).expect("asset");
         assert_eq!(asset.name, preferred_test_asset_name());
         assert!(asset.url.ends_with("/assets/app"));
+    }
+
+    #[test]
+    fn parses_github_release_manifest() {
+        let manifest: ReleaseManifest = serde_json::from_str(
+            r#"{
+                "tag_name": "v4.0.12",
+                "assets": [
+                    {
+                        "name": "nostr-vpn-v4.0.12-linux-x64.deb",
+                        "browser_download_url": "https://example.invalid/app.deb"
+                    }
+                ]
+            }"#,
+        )
+        .expect("manifest");
+
+        assert_eq!(manifest.tag, "v4.0.12");
+        assert_eq!(manifest.assets[0].path, "https://example.invalid/app.deb");
     }
 
     #[cfg(target_arch = "x86_64")]

@@ -1842,10 +1842,15 @@ fn next_shared_roster_updated_at(previous: u64) -> u64 {
 
 #[cfg(unix)]
 fn write_config_file(path: &Path, raw: &[u8]) -> std::io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
+    let existing_owner = fs::metadata(path)
+        .ok()
+        .map(|metadata| (metadata.uid(), metadata.gid()));
     let file_name = path
         .file_name()
         .and_then(|value| value.to_str())
@@ -1894,6 +1899,12 @@ fn write_config_file(path: &Path, raw: &[u8]) -> std::io::Result<()> {
     if let Err(error) = fs::rename(&temp_path, path) {
         let _ = fs::remove_file(&temp_path);
         return Err(error);
+    }
+    if let Some((uid, gid)) = existing_owner {
+        let metadata = fs::metadata(path)?;
+        if metadata.uid() != uid || metadata.gid() != gid {
+            std::os::unix::fs::chown(path, Some(uid), Some(gid))?;
+        }
     }
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))
 }

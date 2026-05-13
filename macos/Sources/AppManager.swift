@@ -5,7 +5,10 @@ import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
+private let githubUpdateManifestUrl = URL(string: "https://api.github.com/repos/mmalmi/nostr-vpn/releases/latest")!
 private let defaultUpdateManifestUrl = URL(string: "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json")!
+private let updateRequestTimeout: TimeInterval = 8
+private let updateUserAgent = "nvpn-updater"
 
 @MainActor
 final class AppManager: ObservableObject {
@@ -41,9 +44,13 @@ final class AppManager: ObservableObject {
     private var startupUrlsDrained = false
     private var startupUpdateCheckDone = false
     private var updateAssetUrl: URL?
-    private let updateManifestUrl = ProcessInfo.processInfo.environment["NVPN_UPDATE_MANIFEST_URL"]
-        .flatMap(URL.init(string:))
-        ?? defaultUpdateManifestUrl
+    private let updateManifestUrls: [URL] = {
+        if let overrideUrl = ProcessInfo.processInfo.environment["NVPN_UPDATE_MANIFEST_URL"]
+            .flatMap(URL.init(string:)) {
+            return [overrideUrl]
+        }
+        return [githubUpdateManifestUrl, defaultUpdateManifestUrl]
+    }()
     let launchedHidden: Bool
 
     init() {
@@ -535,23 +542,26 @@ final class AppManager: ObservableObject {
     }
 
     private func fetchUpdateCheck() async throws -> UpdateCheck {
-        let manifestUrl = await MainActor.run { self.updateManifestUrl }
-        let data = try await loadUpdateData(from: manifestUrl)
-        let manifest: ReleaseManifest
-        do {
-            manifest = try JSONDecoder().decode(ReleaseManifest.self, from: data)
-        } catch {
-            throw UpdateFetchError.malformedManifest
+        let manifestUrls = await MainActor.run { self.updateManifestUrls }
+        var lastError: Error?
+        for manifestUrl in manifestUrls {
+            do {
+                let data = try await loadUpdateData(from: manifestUrl)
+                let manifest = try JSONDecoder().decode(ReleaseManifest.self, from: data)
+                let currentVersion = await MainActor.run { self.state.appVersion }
+                let asset = manifest.preferredMacAsset()
+                let assetUrl = asset.flatMap { URL(string: $0.path, relativeTo: manifestUrl)?.absoluteURL }
+                return UpdateCheck(
+                    manifest: manifest,
+                    asset: asset,
+                    assetUrl: assetUrl,
+                    isNewer: versionIsNewer(manifest.tag, than: currentVersion)
+                )
+            } catch {
+                lastError = error is DecodingError ? UpdateFetchError.malformedManifest : error
+            }
         }
-        let currentVersion = await MainActor.run { self.state.appVersion }
-        let asset = manifest.preferredMacAsset()
-        let assetUrl = asset.flatMap { URL(string: $0.path, relativeTo: manifestUrl)?.absoluteURL }
-        return UpdateCheck(
-            manifest: manifest,
-            asset: asset,
-            assetUrl: assetUrl,
-            isNewer: versionIsNewer(manifest.tag, than: currentVersion)
-        )
+        throw lastError ?? UpdateFetchError.malformedManifest
     }
 
     @MainActor
@@ -721,6 +731,27 @@ struct ReleaseManifest: Decodable {
     let tag: String
     let assets: [ReleaseAsset]
 
+    private enum CodingKeys: String, CodingKey {
+        case tag
+        case tagName = "tag_name"
+        case assets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let tag = try container.decodeIfPresent(String.self, forKey: .tag) {
+            self.tag = tag
+        } else if let tag = try container.decodeIfPresent(String.self, forKey: .tagName) {
+            self.tag = tag
+        } else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.tag,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Missing release tag")
+            )
+        }
+        self.assets = try container.decode([ReleaseAsset].self, forKey: .assets)
+    }
+
     func preferredMacAsset() -> ReleaseAsset? {
         assets.first { $0.name.hasSuffix("-macos-arm64.app.tar.gz") }
             ?? assets.first { $0.name.hasSuffix("-macos-arm64.dmg") }
@@ -731,6 +762,27 @@ struct ReleaseManifest: Decodable {
 struct ReleaseAsset: Decodable {
     let name: String
     let path: String
+
+    private enum CodingKeys: String, CodingKey {
+        case name
+        case path
+        case browserDownloadUrl = "browser_download_url"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.name = try container.decode(String.self, forKey: .name)
+        if let path = try container.decodeIfPresent(String.self, forKey: .path) {
+            self.path = path
+        } else if let path = try container.decodeIfPresent(String.self, forKey: .browserDownloadUrl) {
+            self.path = path
+        } else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.path,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Missing release asset URL")
+            )
+        }
+    }
 }
 
 struct UpdateCheck {
@@ -824,8 +876,7 @@ func runUpdateE2ECommandIfRequested() {
 
 private func runUpdateE2ECommand(install: Bool) -> [String: Any] {
     do {
-        let manifestUrl = configuredUpdateManifestUrl()
-        let data = try loadUpdateDataBlocking(from: manifestUrl)
+        let (manifestUrl, data) = try loadConfiguredUpdateManifestBlocking()
         let manifest = try JSONDecoder().decode(ReleaseManifest.self, from: data)
         let currentVersion = ProcessInfo.processInfo.environment["NVPN_UPDATE_E2E_CURRENT_VERSION"]
             ?? Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
@@ -864,30 +915,47 @@ private func runUpdateE2ECommand(install: Bool) -> [String: Any] {
     }
 }
 
-private func configuredUpdateManifestUrl() -> URL {
-    ProcessInfo.processInfo.environment["NVPN_UPDATE_MANIFEST_URL"]
-        .flatMap(URL.init(string:))
-        ?? defaultUpdateManifestUrl
+private func configuredUpdateManifestUrls() -> [URL] {
+    if let overrideUrl = ProcessInfo.processInfo.environment["NVPN_UPDATE_MANIFEST_URL"]
+        .flatMap(URL.init(string:)) {
+        return [overrideUrl]
+    }
+    return [githubUpdateManifestUrl, defaultUpdateManifestUrl]
+}
+
+private func loadConfiguredUpdateManifestBlocking() throws -> (URL, Data) {
+    var lastError: Error?
+    for manifestUrl in configuredUpdateManifestUrls() {
+        do {
+            return (manifestUrl, try loadUpdateDataBlocking(from: manifestUrl))
+        } catch {
+            lastError = error
+        }
+    }
+    throw lastError ?? UpdateFetchError.malformedManifest
 }
 
 private func loadUpdateDataBlocking(from url: URL) throws -> Data {
     if url.isFileURL {
         return try Data(contentsOf: url)
     }
-    var request = URLRequest(url: url)
-    request.httpMethod = "GET"
+    let request = updateURLRequest(for: url)
     let semaphore = DispatchSemaphore(value: 0)
     var resultData: Data?
     var resultResponse: URLResponse?
     var resultError: Error?
-    let task = URLSession.shared.dataTask(with: request) { data, response, error in
+    let session = URLSession(configuration: updateURLSessionConfiguration())
+    let task = session.dataTask(with: request) { data, response, error in
         resultData = data
         resultResponse = response
         resultError = error
         semaphore.signal()
     }
     task.resume()
-    semaphore.wait()
+    if semaphore.wait(timeout: .now() + updateRequestTimeout) == .timedOut {
+        task.cancel()
+        throw URLError(.timedOut)
+    }
     if let resultError {
         throw resultError
     }
@@ -1001,11 +1069,29 @@ private func loadUpdateData(from url: URL) async throws -> Data {
     if url.isFileURL {
         return try Data(contentsOf: url)
     }
-    let (data, response) = try await URLSession.shared.data(from: url)
+    let session = URLSession(configuration: updateURLSessionConfiguration())
+    let (data, response) = try await session.data(for: updateURLRequest(for: url))
     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
         throw UpdateFetchError.httpStatus(code: http.statusCode)
     }
     return data
+}
+
+private func updateURLSessionConfiguration() -> URLSessionConfiguration {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.timeoutIntervalForRequest = updateRequestTimeout
+    configuration.timeoutIntervalForResource = updateRequestTimeout
+    return configuration
+}
+
+private func updateURLRequest(for url: URL) -> URLRequest {
+    var request = URLRequest(url: url, timeoutInterval: updateRequestTimeout)
+    request.httpMethod = "GET"
+    if url.host == "api.github.com" {
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue(updateUserAgent, forHTTPHeaderField: "User-Agent")
+    }
+    return request
 }
 
 private func versionIsNewer(_ candidate: String, than current: String) -> Bool {

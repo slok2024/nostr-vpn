@@ -2410,6 +2410,17 @@ mod tests {
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
         runtime.startup_error = None;
         runtime.mobile_runtime = true;
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-mobile-connect-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+        runtime.config_path = dir.join("config.toml");
+        runtime
+            .config
+            .save(&runtime.config_path)
+            .expect("save config");
 
         runtime.dispatch(NativeAppAction::ConnectVpn);
         let state = runtime.state();
