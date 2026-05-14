@@ -11,9 +11,10 @@ Current release artifacts:
 - Native apps for Apple Silicon macOS, Linux x64, Windows x64, and Android arm64
 - Headless CLI archives for Apple Silicon macOS, Windows x64, Linux x86_64, and Linux arm64
 - The `nvpn` CLI crate on crates.io: `cargo install nvpn`
+- [iOS TestFlight beta](https://testflight.apple.com/join/jPRVxbSv) (link exists, public access is not live yet)
 
 Intel macOS remains source-only. iOS builds from source and simulator today;
-TestFlight packaging is still pending.
+the TestFlight link exists, but public beta access is still pending.
 
 ## Overview
 
@@ -95,7 +96,7 @@ Private mesh traffic defaults to [FIPS](https://github.com/mmalmi/fips). `nvpn` 
 | Linux x64 | Native GTK/libadwaita desktop app packaged as `.deb`, CLI tarballs for x86_64 and arm64, Docker e2e coverage |
 | Windows x64 | Native WPF desktop app installer, batched WinTun tunnel path, native WireGuard-upstream routing, CLI zip |
 | Android arm64 | Native app-core UI, signed APK/AAB release artifacts when signing is configured, VPN runtime still being hardened |
-| iOS | Native SwiftUI app builds/runs from source and simulator, NetworkExtension target exists, TestFlight packaging pending |
+| iOS | Native SwiftUI app builds/runs from source and simulator, NetworkExtension target exists, [TestFlight link](https://testflight.apple.com/join/jPRVxbSv) exists but public beta access is pending |
 | Intel macOS | Source-only |
 
 ## What the project does today
