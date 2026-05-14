@@ -7,6 +7,8 @@
     <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
     <local:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVisibility" />
     <local:NonEmptyStringToVisibilityConverter x:Key="NonEmptyStringToVisibility" />
+    <local:ObjectToVisibilityConverter x:Key="ObjectToVisibility" />
+    <local:NullToVisibilityConverter x:Key="NullToVisibility" />
     <local:PageVisibilityConverter x:Key="PageVisibility" />
 
     <SolidColorBrush x:Key="WindowBg" Color="#F6F7F8" />

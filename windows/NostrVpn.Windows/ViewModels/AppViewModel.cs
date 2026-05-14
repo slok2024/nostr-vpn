@@ -29,6 +29,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     private readonly UpdateService _updateService = new();
     private NativeAppState _state = new();
     private AppPage _page = AppPage.Devices;
+    private string _selectedParticipantKey = "";
     private bool _actionInFlight;
     private string _notice = "";
     private string _inviteInput = "";
@@ -318,6 +319,27 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public NativeNetworkState? ActiveNetwork => State.Networks.FirstOrDefault(network => network.Enabled) ?? State.Networks.FirstOrDefault();
     public bool HasActiveNetwork => ActiveNetwork is not null;
     public IEnumerable<NativeNetworkState> InactiveNetworks => State.Networks.Where(network => !network.Enabled);
+    public NativeParticipantState? SelectedParticipant
+    {
+        get
+        {
+            var network = ActiveNetwork;
+            return network is null ? null : ResolveSelectedParticipant(network);
+        }
+        set
+        {
+            var nextKey = value is null ? "" : ParticipantKey(value);
+            if (_selectedParticipantKey == nextKey)
+            {
+                return;
+            }
+            _selectedParticipantKey = nextKey;
+            OnPropertyChanged();
+            RaiseSelectedParticipantChanged();
+        }
+    }
+    public bool SelectedParticipantCanManage => ActiveNetwork?.LocalIsAdmin == true
+        && SelectedParticipant is { IsSelf: false };
     public string ActiveNetworkName => DisplayNetworkName(ActiveNetwork);
     public string HeroSubtitle => $"{State.ConnectedPeerCount} of {State.ExpectedPeerCount} connected";
     public string VpnButtonText => State.VpnEnabled ? "On" : "Off";
@@ -387,6 +409,22 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     }
     public string ServiceSummary => State.ServiceInstalled ? "Service installed" : "Service missing";
     public string CliSummary => State.CliInstalled ? "CLI installed" : "CLI missing";
+    public string SystemVersionLabel
+    {
+        get
+        {
+            var app = State.AppVersion.Trim();
+            var daemon = State.DaemonBinaryVersion.Trim();
+            return (string.IsNullOrEmpty(app), string.IsNullOrEmpty(daemon)) switch
+            {
+                (true, true) => "",
+                (false, true) => $"gui v{app}",
+                (true, false) => $"daemon v{daemon}",
+                (false, false) when app == daemon => $"v{app}",
+                _ => $"gui v{app} · daemon v{daemon}",
+            };
+        }
+    }
     public string DiagnosticsInterface => string.IsNullOrWhiteSpace(State.Network.DefaultInterface) ? "unknown" : State.Network.DefaultInterface;
     public string DiagnosticsIpv4 => string.IsNullOrWhiteSpace(State.Network.PrimaryIpv4) ? "-" : State.Network.PrimaryIpv4;
     public string DiagnosticsIpv6 => string.IsNullOrWhiteSpace(State.Network.PrimaryIpv6) ? "-" : State.Network.PrimaryIpv6;
@@ -864,6 +902,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     private void ApplyState(NativeAppState state, bool syncDrafts)
     {
         TagSelfParticipants(state);
+        NormalizeSelectedParticipant(state);
         State = state;
         InviteQr = _core.QrMatrix(state.ActiveNetworkInvite);
         if (syncDrafts)
@@ -914,6 +953,8 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(ActiveNetwork));
         OnPropertyChanged(nameof(HasActiveNetwork));
         OnPropertyChanged(nameof(InactiveNetworks));
+        OnPropertyChanged(nameof(SelectedParticipant));
+        RaiseSelectedParticipantChanged();
         OnPropertyChanged(nameof(ActiveNetworkName));
         OnPropertyChanged(nameof(HeroSubtitle));
         OnPropertyChanged(nameof(VpnButtonText));
@@ -927,6 +968,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(NoNearbyInvitesNoticeVisibility));
         OnPropertyChanged(nameof(ServiceSummary));
         OnPropertyChanged(nameof(CliSummary));
+        OnPropertyChanged(nameof(SystemVersionLabel));
         OnPropertyChanged(nameof(DiagnosticsInterface));
         OnPropertyChanged(nameof(DiagnosticsIpv4));
         OnPropertyChanged(nameof(DiagnosticsIpv6));
@@ -939,6 +981,51 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(WireguardExitMarker));
         OnPropertyChanged(nameof(WireguardExitSubtitle));
     }
+
+    private void RaiseSelectedParticipantChanged()
+    {
+        OnPropertyChanged(nameof(SelectedParticipantCanManage));
+    }
+
+    private void NormalizeSelectedParticipant(NativeAppState state)
+    {
+        var network = state.Networks.FirstOrDefault(network => network.Enabled) ?? state.Networks.FirstOrDefault();
+        if (network is null || network.Participants.Count == 0)
+        {
+            _selectedParticipantKey = "";
+            return;
+        }
+        if (!string.IsNullOrWhiteSpace(_selectedParticipantKey)
+            && network.Participants.Any(participant => ParticipantKey(participant) == _selectedParticipantKey))
+        {
+            return;
+        }
+        _selectedParticipantKey = SortedParticipants(network).FirstOrDefault() is { } first
+            ? ParticipantKey(first)
+            : "";
+    }
+
+    private NativeParticipantState? ResolveSelectedParticipant(NativeNetworkState network)
+    {
+        if (!string.IsNullOrWhiteSpace(_selectedParticipantKey))
+        {
+            var selected = network.Participants.FirstOrDefault(participant => ParticipantKey(participant) == _selectedParticipantKey);
+            if (selected is not null)
+            {
+                return selected;
+            }
+        }
+        return SortedParticipants(network).FirstOrDefault();
+    }
+
+    private static IEnumerable<NativeParticipantState> SortedParticipants(NativeNetworkState network)
+        => network.Participants
+            .OrderBy(participant => !participant.IsSelf)
+            .ThenBy(participant => !participant.Reachable)
+            .ThenBy(participant => participant.DisplayName, StringComparer.OrdinalIgnoreCase);
+
+    private static string ParticipantKey(NativeParticipantState participant)
+        => string.IsNullOrWhiteSpace(participant.PubkeyHex) ? participant.Npub : participant.PubkeyHex;
 
     private static string FirstNonEmpty(string first, string second, string fallback)
     {

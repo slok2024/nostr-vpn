@@ -19,8 +19,6 @@
     <Border Grid.Column="0" Background="{StaticResource SidebarBg}" Padding="16">
       <DockPanel LastChildFill="True">
         <StackPanel DockPanel.Dock="Top">
-          <TextBlock Text="Nostr VPN" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" Margin="2,0,0,20" />
-
           <Button Style="{StaticResource NavButton}" Command="{Binding ShowDevicesCommand}">
             <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE772;" Width="24" /><TextBlock Text="Devices" /></StackPanel>
           </Button>
@@ -114,43 +112,181 @@
           </Border>
 
           <StackPanel Visibility="{Binding Page, Converter={StaticResource PageVisibility}, ConverterParameter=Devices}">
-            <Border Style="{StaticResource Card}" Visibility="{Binding HasActiveNetwork, Converter={StaticResource BoolToVisibility}}">
-              <DockPanel LastChildFill="True">
-                <Button DockPanel.Dock="Right" Command="{Binding ShowShareCommand}" Content="+" />
-                <TextBlock Text="Devices" FontSize="18" FontWeight="SemiBold" />
-              </DockPanel>
-            </Border>
+            <Grid Visibility="{Binding HasActiveNetwork, Converter={StaticResource BoolToVisibility}}">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="320" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
 
-            <ItemsControl ItemsSource="{Binding ActiveNetwork.Participants}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                  <Border Style="{StaticResource Card}">
-                    <Grid>
+              <Border Grid.Column="0" Style="{StaticResource Card}">
+                <StackPanel>
+                  <DockPanel LastChildFill="True">
+                    <Button DockPanel.Dock="Right" Command="{Binding ShowShareCommand}" Content="+" />
+                    <StackPanel>
+                      <TextBlock Text="Devices" FontSize="18" FontWeight="SemiBold" />
+                      <TextBlock Text="{Binding HeroSubtitle}" Foreground="{StaticResource TextSecondary}" FontSize="12" Margin="0,3,0,0" />
+                    </StackPanel>
+                  </DockPanel>
+
+                  <ListBox ItemsSource="{Binding ActiveNetwork.Participants}"
+                           SelectedItem="{Binding SelectedParticipant, Mode=TwoWay}"
+                           BorderThickness="0"
+                           Background="Transparent"
+                           Margin="0,14,0,0"
+                           HorizontalContentAlignment="Stretch">
+                    <ListBox.ItemContainerStyle>
+                      <Style TargetType="{x:Type ListBoxItem}">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="Margin" Value="0" />
+                      </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                      <DataTemplate>
+                        <Border>
+                          <Border.Style>
+                            <Style TargetType="{x:Type Border}" BasedOn="{StaticResource Card}">
+                              <Setter Property="Padding" Value="12" />
+                              <Setter Property="Margin" Value="0,0,0,8" />
+                              <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType={x:Type ListBoxItem}}}" Value="True">
+                                  <Setter Property="Background" Value="{StaticResource AccentSoft}" />
+                                  <Setter Property="BorderBrush" Value="{StaticResource Accent}" />
+                                </DataTrigger>
+                              </Style.Triggers>
+                            </Style>
+                          </Border.Style>
+                          <Grid>
+                            <Grid.ColumnDefinitions>
+                              <ColumnDefinition Width="16" />
+                              <ColumnDefinition Width="*" />
+                              <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Ellipse Width="8" Height="8" Fill="{StaticResource TextSecondary}" VerticalAlignment="Top" Margin="0,6,0,0" />
+                            <StackPanel Grid.Column="1">
+                              <WrapPanel>
+                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="This device" Margin="8,0,0,0" Foreground="{StaticResource Ok}" Visibility="{Binding IsSelf, Converter={StaticResource BoolToVisibility}}" />
+                                <TextBlock Text="Admin" Margin="8,0,0,0" Foreground="{StaticResource Accent}" Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisibility}}" />
+                                <TextBlock Text="Exit" Margin="8,0,0,0" Foreground="{StaticResource Warn}" Visibility="{Binding OffersExitNode, Converter={StaticResource BoolToVisibility}}" />
+                                <TextBlock Text="via mesh" Margin="8,0,0,0" Foreground="{StaticResource TextSecondary}" Visibility="{Binding IsFipsRouted, Converter={StaticResource BoolToVisibility}}" />
+                              </WrapPanel>
+                              <TextBlock Foreground="{StaticResource TextSecondary}" TextTrimming="CharacterEllipsis" Margin="0,4,0,0">
+                                <Run Text="{Binding CleanTunnelIp, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding ConnectivityStateText, Mode=OneWay}" />
+                              </TextBlock>
+                            </StackPanel>
+                            <Button Grid.Column="2" Content="Copy" Tag="{Binding Npub}" Click="CopyPeer_Click" Margin="8,0,0,0" />
+                          </Grid>
+                        </Border>
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
+                </StackPanel>
+              </Border>
+
+              <Border Grid.Column="2" Style="{StaticResource Card}">
+                <StackPanel>
+                  <StackPanel Visibility="{Binding SelectedParticipant, Converter={StaticResource ObjectToVisibility}}">
+                    <DockPanel LastChildFill="True">
+                      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                        <Ellipse Width="8" Height="8" Fill="{StaticResource TextSecondary}" Margin="0,6,7,0" />
+                        <TextBlock Text="{Binding SelectedParticipant.ConnectivityStateText}" Foreground="{StaticResource TextSecondary}" />
+                      </StackPanel>
+                      <StackPanel>
+                        <TextBlock Text="{Binding SelectedParticipant.DisplayName}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <WrapPanel Margin="0,8,0,0">
+                          <TextBlock Text="This device" Foreground="{StaticResource Ok}" Margin="0,0,10,0" Visibility="{Binding SelectedParticipant.IsSelf, Converter={StaticResource BoolToVisibility}}" />
+                          <TextBlock Text="Admin" Foreground="{StaticResource Accent}" Margin="0,0,10,0" Visibility="{Binding SelectedParticipant.IsAdmin, Converter={StaticResource BoolToVisibility}}" />
+                          <TextBlock Text="Exit" Foreground="{StaticResource Warn}" Margin="0,0,10,0" Visibility="{Binding SelectedParticipant.OffersExitNode, Converter={StaticResource BoolToVisibility}}" />
+                          <TextBlock Text="direct connection" Foreground="{StaticResource Ok}" Margin="0,0,10,0" Visibility="{Binding SelectedParticipant.IsFipsDirect, Converter={StaticResource BoolToVisibility}}" />
+                          <TextBlock Text="via mesh" Foreground="{StaticResource TextSecondary}" Margin="0,0,10,0" Visibility="{Binding SelectedParticipant.IsFipsRouted, Converter={StaticResource BoolToVisibility}}" />
+                        </WrapPanel>
+                      </StackPanel>
+                    </DockPanel>
+
+                    <Grid Margin="0,20,0,0" Visibility="{Binding SelectedParticipantCanManage, Converter={StaticResource BoolToVisibility}}">
                       <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="44" />
+                        <ColumnDefinition Width="80" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                       </Grid.ColumnDefinitions>
-                      <Border Width="36" Height="36" CornerRadius="8" Background="{StaticResource AccentSoft}">
-                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE772;" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource Accent}" />
-                      </Border>
-                      <StackPanel Grid.Column="1">
-                        <StackPanel Orientation="Horizontal">
-                          <TextBlock Text="{Binding MagicDnsName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                          <TextBlock Text="Admin" Margin="8,0,0,0" Foreground="{StaticResource Accent}" Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisibility}}" />
-                          <TextBlock Text="Exit" Margin="8,0,0,0" Foreground="{StaticResource Warn}" Visibility="{Binding OffersExitNode, Converter={StaticResource BoolToVisibility}}" />
-                          <TextBlock Text="Routed" Margin="8,0,0,0" Foreground="{StaticResource TextSecondary}" Visibility="{Binding IsFipsRouted, Converter={StaticResource BoolToVisibility}}" />
-                        </StackPanel>
-                        <TextBlock Foreground="{StaticResource TextSecondary}" TextTrimming="CharacterEllipsis">
-                          <Run Text="{Binding TunnelIp, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding StatusText, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding FipsPathText, Mode=OneWay}" />
-                        </TextBlock>
-                      </StackPanel>
-                      <Button Grid.Column="2" Content="Copy" Tag="{Binding Npub}" Click="CopyPeer_Click" />
+                      <TextBlock Text="Name" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                      <TextBox x:Name="AliasInput" Grid.Column="1" Text="{Binding SelectedParticipant.MagicDnsAlias, Mode=OneWay}" Margin="0,0,8,0" />
+                      <Button Grid.Column="2" Content="Save" Tag="{Binding SelectedParticipant}" Click="SetParticipantAlias_Click" Margin="0,0,8,0" />
+                      <Button Grid.Column="3" Content="Admin" Tag="{Binding SelectedParticipant}" Click="ToggleAdmin_Click" Margin="0,0,8,0" />
+                      <Button Grid.Column="4" Content="Remove" Tag="{Binding SelectedParticipant}" Click="RemoveParticipant_Click" />
                     </Grid>
-                  </Border>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
+
+                    <Border BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,18,0,0">
+                      <StackPanel>
+                        <TextBlock Text="Addresses" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10" />
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="*" />
+                          </Grid.ColumnDefinitions>
+                          <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                          </Grid.RowDefinitions>
+                          <TextBlock Text="MagicDNS" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                          <TextBlock Grid.Column="1" Text="{Binding SelectedParticipant.MagicDnsDisplay}" TextTrimming="CharacterEllipsis" Margin="0,0,0,8" />
+                          <TextBlock Grid.Row="1" Text="VPN IP" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                          <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SelectedParticipant.CleanTunnelIp}" TextTrimming="CharacterEllipsis" Margin="0,0,0,8" />
+                          <TextBlock Grid.Row="2" Text="Device ID" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,0" />
+                          <DockPanel Grid.Row="2" Grid.Column="1" LastChildFill="True">
+                            <Button DockPanel.Dock="Right" Content="Copy" Tag="{Binding SelectedParticipant.Npub}" Click="CopyPeer_Click" Margin="8,0,0,0" />
+                            <TextBlock Text="{Binding SelectedParticipant.Npub}" TextTrimming="CharacterEllipsis" />
+                          </DockPanel>
+                        </Grid>
+                      </StackPanel>
+                    </Border>
+
+                    <Border BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,18,0,0">
+                      <StackPanel>
+                        <TextBlock Text="Connectivity" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10" />
+                        <UniformGrid Columns="3" Rows="2">
+                          <StackPanel Margin="0,0,12,12">
+                            <TextBlock Text="Role" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="{Binding SelectedParticipant.RoleText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                          <StackPanel Margin="0,0,12,12">
+                            <TextBlock Text="State" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="{Binding SelectedParticipant.ConnectivityStateText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                          <StackPanel Margin="0,0,12,12">
+                            <TextBlock Text="FIPS path" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="{Binding SelectedParticipant.FipsPathText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                          <StackPanel Margin="0,0,12,0">
+                            <TextBlock Text="Last seen" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="{Binding SelectedParticipant.LastSeenDisplay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                          <StackPanel Margin="0,0,12,0">
+                            <TextBlock Text="Sent" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="{Binding SelectedParticipant.TxBytesDisplay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                          <StackPanel Margin="0,0,12,0">
+                            <TextBlock Text="Received" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="{Binding SelectedParticipant.RxBytesDisplay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                        </UniformGrid>
+                        <TextBlock Text="{Binding SelectedParticipant.StatusDetailText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                      </StackPanel>
+                    </Border>
+                  </StackPanel>
+
+                  <StackPanel Visibility="{Binding SelectedParticipant, Converter={StaticResource NullToVisibility}}">
+                    <TextBlock Text="Devices" FontSize="22" FontWeight="SemiBold" />
+                    <TextBlock Text="No devices yet" Foreground="{StaticResource TextSecondary}" Margin="0,8,0,0" />
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+            </Grid>
 
             <Expander Header="Manage Devices" Margin="0,4,0,14" Visibility="{Binding ActiveNetwork.LocalIsAdmin, Converter={StaticResource BoolToVisibility}}">
               <Border Style="{StaticResource Card}" Margin="0,8,0,0">
@@ -222,6 +358,11 @@
                   <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                     <Button Content="Copy" Command="{Binding CopyInviteCommand}" Margin="0,0,8,0" />
                     <Button Content="{Binding InviteBroadcastButtonText}" Command="{Binding ToggleInviteBroadcastCommand}" />
+                    <CheckBox Content="Join requests"
+                              IsChecked="{Binding ActiveNetwork.JoinRequestsEnabled, Mode=OneWay}"
+                              IsEnabled="{Binding ActiveNetwork.LocalIsAdmin}"
+                              Click="JoinRequests_Click"
+                              Margin="12,4,0,4" />
                   </StackPanel>
                 </StackPanel>
               </Grid>
@@ -402,7 +543,14 @@
 
             <Border Style="{StaticResource Card}">
               <StackPanel>
-                <TextBlock Text="System" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
+                <DockPanel LastChildFill="True" Margin="0,0,0,10">
+                  <TextBlock DockPanel.Dock="Right"
+                             Text="{Binding SystemVersionLabel}"
+                             Foreground="{StaticResource TextSecondary}"
+                             FontSize="12"
+                             Visibility="{Binding SystemVersionLabel, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                  <TextBlock Text="System" FontSize="18" FontWeight="SemiBold" />
+                </DockPanel>
                 <StackPanel Orientation="Horizontal">
                   <TextBlock Text="{Binding ServiceSummary}" Foreground="{StaticResource TextSecondary}" Margin="0,0,18,0" />
                   <TextBlock Text="{Binding CliSummary}" Foreground="{StaticResource TextSecondary}" Margin="0,0,18,0" />

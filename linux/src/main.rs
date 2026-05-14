@@ -84,6 +84,7 @@ struct AppModel {
     header_status_label: gtk::Label,
     header_status_dot: gtk::Box,
     header_vpn_switch: gtk::Switch,
+    selected_device_pubkey: Option<String>,
     drafts: Drafts,
     notice: String,
     tray: tray::TrayRuntime,
@@ -126,6 +127,7 @@ impl AppModel {
             header_status_label,
             header_status_dot,
             header_vpn_switch,
+            selected_device_pubkey: None,
             drafts,
             notice: String::new(),
             tray,
@@ -789,6 +791,8 @@ fn refresh_header(app: &AppRef, state: &NativeAppState) {
 }
 
 fn render(app: &AppRef) {
+    sync_selected_device(app);
+
     let (sidebar, update_bar, content, state, page) = {
         let model = app.borrow();
         (
@@ -899,14 +903,6 @@ fn update_stripe_text(version: &str, current: &str) -> String {
 }
 
 fn build_sidebar(app: &AppRef, sidebar: &gtk::Box, state: &NativeAppState, page: Page) {
-    let brand = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    brand.set_margin_bottom(6);
-    let label = gtk::Label::new(Some("Nostr VPN"));
-    label.add_css_class("heading");
-    label.set_xalign(0.0);
-    brand.append(&label);
-    sidebar.append(&brand);
-
     for (target, title, icon) in [
         (Page::Devices, "Devices", ""),
         (Page::ExitNodes, "Exit Nodes", ""),
@@ -967,8 +963,10 @@ fn build_devices_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         build_network_setup(app, page, state);
         return;
     };
+    let selected_key = app.borrow().selected_device_pubkey.clone();
 
     let devices = card();
+    devices.set_size_request(330, -1);
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     header.set_valign(gtk::Align::Center);
     let title = gtk::Label::new(Some("Devices"));
@@ -985,20 +983,17 @@ fn build_devices_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     header.append(&add);
     devices.append(&header);
 
-    let mut participants = network.participants.clone();
-    participants.sort_by_key(|participant| {
-        (
-            !is_self(participant, state),
-            !participant.reachable,
-            device_name(participant),
-        )
-    });
+    let participants = sorted_participants(&network, state);
 
     if participants.is_empty() {
         empty_row(&devices, "No devices yet");
     } else {
         for participant in participants {
-            device_row(app, &devices, &network, &participant, state);
+            let selected = selected_key
+                .as_deref()
+                .map(|key| participant_key(&participant) == key)
+                .unwrap_or(false);
+            device_row(app, &devices, &network, &participant, state, selected);
         }
     }
 
@@ -1151,7 +1146,15 @@ fn build_devices_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         devices.append(&expander);
     }
 
-    page.append(&devices);
+    let split = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    split.set_hexpand(true);
+    split.set_valign(gtk::Align::Start);
+    split.append(&devices);
+
+    let detail = device_detail_card(app, &network, state, selected_key.as_deref());
+    detail.set_hexpand(true);
+    split.append(&detail);
+    page.append(&split);
 
     if !network.inbound_join_requests.is_empty() {
         let requests = card();
@@ -1211,6 +1214,203 @@ fn build_devices_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         }
         page.append(&requests);
     }
+}
+
+fn device_detail_card(
+    app: &AppRef,
+    network: &NativeNetworkState,
+    state: &NativeAppState,
+    selected_key: Option<&str>,
+) -> gtk::Box {
+    let detail = card();
+
+    let Some(participant) = selected_participant(network, state, selected_key) else {
+        let title = gtk::Label::new(Some("Devices"));
+        title.add_css_class("title-2");
+        title.set_xalign(0.0);
+        detail.append(&title);
+        empty_row(&detail, "No devices yet");
+        return detail;
+    };
+
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    header.set_valign(gtk::Align::Start);
+
+    let text = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    text.set_hexpand(true);
+    let name = gtk::Label::new(Some(&device_name(&participant)));
+    name.add_css_class("title-2");
+    name.set_xalign(0.0);
+    name.set_wrap(true);
+    text.append(&name);
+
+    let badges = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    if is_self(&participant, state) {
+        badges.append(&badge("This device", "ok"));
+    }
+    if participant.is_admin {
+        badges.append(&badge("Admin", "muted"));
+    }
+    if participant.offers_exit_node {
+        badges.append(&badge("Exit", "warn"));
+    }
+    match fips_path_kind(&participant) {
+        FipsPathKind::Direct => badges.append(&badge("direct connection", "ok")),
+        FipsPathKind::Routed => badges.append(&badge("via mesh", "muted")),
+        _ => {}
+    }
+    text.append(&badges);
+    header.append(&text);
+
+    let status = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+    status.set_valign(gtk::Align::Start);
+    let dot = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    dot.add_css_class(if participant.reachable {
+        "nvpn-peer-online"
+    } else {
+        "nvpn-peer-offline"
+    });
+    status.append(&dot);
+    let status_label = gtk::Label::new(Some(&device_status_text(&participant)));
+    status_label.add_css_class("dim-label");
+    status.append(&status_label);
+    header.append(&status);
+    detail.append(&header);
+
+    if network.local_is_admin && !is_self(&participant, state) {
+        let manage = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        section_header(&manage, "Manage Device", "changes-allow-symbolic");
+
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        row.set_valign(gtk::Align::Center);
+        let label = gtk::Label::new(Some("Name"));
+        label.add_css_class("dim-label");
+        row.append(&label);
+
+        let alias = entry("Name", &participant.magic_dns_alias);
+        alias.set_hexpand(true);
+        row.append(&alias);
+
+        let save = gtk::Button::with_label("Save");
+        {
+            let app = app.clone();
+            let npub = participant.npub.clone();
+            let alias = alias.clone();
+            save.connect_clicked(move |_| {
+                dispatch(
+                    &app,
+                    NativeAppAction::SetParticipantAlias {
+                        npub: npub.clone(),
+                        alias: alias.text().trim().to_string(),
+                    },
+                );
+            });
+        }
+        row.append(&save);
+
+        let admin = gtk::Button::from_icon_name(if participant.is_admin {
+            "starred-symbolic"
+        } else {
+            "non-starred-symbolic"
+        });
+        admin.set_tooltip_text(Some(if participant.is_admin {
+            "Remove admin"
+        } else {
+            "Make admin"
+        }));
+        {
+            let app = app.clone();
+            let network_id = network.id.clone();
+            let npub = participant.npub.clone();
+            let is_admin = participant.is_admin;
+            admin.connect_clicked(move |_| {
+                dispatch(
+                    &app,
+                    if is_admin {
+                        NativeAppAction::RemoveAdmin {
+                            network_id: network_id.clone(),
+                            npub: npub.clone(),
+                        }
+                    } else {
+                        NativeAppAction::AddAdmin {
+                            network_id: network_id.clone(),
+                            npub: npub.clone(),
+                        }
+                    },
+                );
+            });
+        }
+        row.append(&admin);
+
+        let remove = gtk::Button::from_icon_name("edit-delete-symbolic");
+        remove.set_tooltip_text(Some("Remove device"));
+        remove.add_css_class("destructive-action");
+        {
+            let app = app.clone();
+            let network_id = network.id.clone();
+            let npub = participant.npub.clone();
+            remove.connect_clicked(move |_| {
+                dispatch(
+                    &app,
+                    NativeAppAction::RemoveParticipant {
+                        network_id: network_id.clone(),
+                        npub: npub.clone(),
+                    },
+                );
+            });
+        }
+        row.append(&remove);
+        manage.append(&row);
+        detail.append(&manage);
+    }
+
+    let addresses = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    section_header(&addresses, "Addresses", "");
+    detail_row(
+        &addresses,
+        "MagicDNS",
+        &device_magic_dns_name(&participant, state),
+    );
+    detail_row(&addresses, "VPN IP", &clean_ip(&participant.tunnel_ip));
+    detail_row(&addresses, "Device ID", &participant.npub);
+    let copy = icon_text_button("Copy device ID", "edit-copy-symbolic");
+    {
+        let npub = participant.npub.clone();
+        copy.connect_clicked(move |_| copy_text(&npub));
+    }
+    addresses.append(&copy);
+    detail.append(&addresses);
+
+    let connectivity = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    section_header(&connectivity, "Connectivity", "");
+    let metrics = gtk::FlowBox::new();
+    metrics.set_selection_mode(gtk::SelectionMode::None);
+    metrics.set_max_children_per_line(3);
+    metrics.set_min_children_per_line(2);
+    for (title, value) in [
+        ("Role", device_role_text(&participant, state)),
+        ("State", device_status_text(&participant)),
+        ("FIPS path", fips_path_text(&participant)),
+        ("Last seen", non_empty_or(&participant.last_seen_text, "-")),
+        ("Sent", format_bytes(participant.tx_bytes)),
+        ("Received", format_bytes(participant.rx_bytes)),
+    ] {
+        let item = metric(title, &value);
+        metrics.insert(&item, -1);
+    }
+    connectivity.append(&metrics);
+    if !participant.status_text.trim().is_empty() {
+        let status = gtk::Label::new(Some(&participant.status_text));
+        status.add_css_class("caption");
+        status.add_css_class("dim-label");
+        status.set_xalign(0.0);
+        status.set_wrap(true);
+        status.set_selectable(true);
+        connectivity.append(&status);
+    }
+    detail.append(&connectivity);
+
+    detail
 }
 
 fn build_network_hero(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
@@ -1565,6 +1765,20 @@ fn build_share_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     }
     invite_row.append(&broadcast);
     column.append(&invite_row);
+    switch_row_enabled(
+        app,
+        &column,
+        "Join requests",
+        network.join_requests_enabled,
+        network.local_is_admin,
+        {
+            let network_id = network.id.clone();
+            move |enabled| NativeAppAction::SetNetworkJoinRequestsEnabled {
+                network_id: network_id.clone(),
+                enabled,
+            }
+        },
+    );
 
     if network.outbound_join_request.is_some() {
         column.append(&badge("Join requested", "warn"));
@@ -2611,10 +2825,24 @@ fn device_row(
     network: &NativeNetworkState,
     participant: &NativeParticipantState,
     state: &NativeAppState,
+    selected: bool,
 ) {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     row.add_css_class("nvpn-device-row");
+    if selected {
+        row.add_css_class("selected");
+    }
     row.set_valign(gtk::Align::Center);
+    let click = gtk::GestureClick::new();
+    {
+        let app = app.clone();
+        let key = participant_key(participant);
+        click.connect_released(move |_, _, _, _| {
+            app.borrow_mut().selected_device_pubkey = Some(key.clone());
+            render(&app);
+        });
+    }
+    row.add_controller(click);
 
     let dot = gtk::Box::new(gtk::Orientation::Vertical, 0);
     dot.add_css_class(if participant.reachable {
@@ -2930,6 +3158,70 @@ fn active_network(state: &NativeAppState) -> Option<&NativeNetworkState> {
         .or_else(|| state.networks.first())
 }
 
+fn sync_selected_device(app: &AppRef) {
+    let mut model = app.borrow_mut();
+    let current = model.selected_device_pubkey.clone();
+    let next = {
+        let state = &model.state;
+        active_network(state).and_then(|network| {
+            let participants = sorted_participants(network, state);
+            if let Some(current) = current.as_deref() {
+                if participants
+                    .iter()
+                    .any(|participant| participant_key(participant) == current)
+                {
+                    Some(current.to_string())
+                } else {
+                    participants.first().map(participant_key)
+                }
+            } else {
+                participants.first().map(participant_key)
+            }
+        })
+    };
+    model.selected_device_pubkey = next;
+}
+
+fn sorted_participants(
+    network: &NativeNetworkState,
+    state: &NativeAppState,
+) -> Vec<NativeParticipantState> {
+    let mut participants = network.participants.clone();
+    participants.sort_by_key(|participant| {
+        (
+            !is_self(participant, state),
+            !participant.reachable,
+            device_name(participant).to_ascii_lowercase(),
+        )
+    });
+    participants
+}
+
+fn selected_participant(
+    network: &NativeNetworkState,
+    state: &NativeAppState,
+    selected_key: Option<&str>,
+) -> Option<NativeParticipantState> {
+    let participants = sorted_participants(network, state);
+    if let Some(selected_key) = selected_key {
+        if let Some(selected) = participants
+            .iter()
+            .find(|participant| participant_key(participant) == selected_key)
+        {
+            return Some(selected.clone());
+        }
+    }
+    participants.first().cloned()
+}
+
+fn participant_key(participant: &NativeParticipantState) -> String {
+    if participant.pubkey_hex.trim().is_empty() {
+        participant.npub.clone()
+    } else {
+        participant.pubkey_hex.clone()
+    }
+}
+
 fn resolve_network_id(state: &NativeAppState, requested: Option<String>) -> Option<String> {
     if let Some(requested) = requested {
         if let Some(network) = state
@@ -2954,15 +3246,50 @@ fn display_network_name(network: &NativeNetworkState) -> String {
 
 fn device_name(participant: &NativeParticipantState) -> String {
     for value in [
+        participant.magic_dns_name.as_str(),
         participant.alias.as_str(),
         participant.magic_dns_alias.as_str(),
-        participant.magic_dns_name.as_str(),
     ] {
         if !value.trim().is_empty() {
             return value.to_string();
         }
     }
     short_text(&participant.npub, 18)
+}
+
+fn device_magic_dns_name(participant: &NativeParticipantState, state: &NativeAppState) -> String {
+    if !participant.magic_dns_name.trim().is_empty() {
+        return participant.magic_dns_name.clone();
+    }
+    if is_self(participant, state) && !state.self_magic_dns_name.trim().is_empty() {
+        return state.self_magic_dns_name.clone();
+    }
+    if !participant.magic_dns_alias.trim().is_empty() && !state.magic_dns_suffix.trim().is_empty() {
+        return format!(
+            "{}.{}",
+            participant.magic_dns_alias.trim(),
+            state.magic_dns_suffix.trim()
+        );
+    }
+    String::new()
+}
+
+fn device_role_text(participant: &NativeParticipantState, state: &NativeAppState) -> String {
+    let mut roles = Vec::new();
+    if is_self(participant, state) {
+        roles.push("This device");
+    }
+    if participant.is_admin {
+        roles.push("Admin");
+    }
+    if participant.offers_exit_node {
+        roles.push("Exit node");
+    }
+    if roles.is_empty() {
+        "Member".to_string()
+    } else {
+        roles.join(", ")
+    }
 }
 
 fn device_subtitle(participant: &NativeParticipantState) -> String {
@@ -2976,19 +3303,13 @@ fn device_subtitle(participant: &NativeParticipantState) -> String {
 }
 
 fn device_status_text(participant: &NativeParticipantState) -> String {
-    for value in [
-        participant.status_text.as_str(),
-        participant.state.as_str(),
-        participant.mesh_state.as_str(),
-    ] {
-        if !value.trim().is_empty() {
-            return value.to_string();
-        }
-    }
-    if participant.reachable {
-        "Online".to_string()
-    } else {
-        "Offline".to_string()
+    match participant.state.as_str() {
+        "off" => "Off".to_string(),
+        "local" | "online" | "present" => "Online".to_string(),
+        "pending" => "Connecting".to_string(),
+        "offline" => "Offline".to_string(),
+        _ if participant.reachable => "Online".to_string(),
+        _ => "Unknown".to_string(),
     }
 }
 
@@ -3016,13 +3337,21 @@ fn fips_path_text(participant: &NativeParticipantState) -> String {
     match fips_path_kind(participant) {
         FipsPathKind::Local => "This device".to_string(),
         FipsPathKind::Direct => {
-            if participant.fips_srtt_ms > 0 {
-                format!("Direct FIPS {} ms", participant.fips_srtt_ms)
+            let transport = if participant.fips_transport_type.trim().is_empty() {
+                String::new()
             } else {
-                "Direct FIPS".to_string()
+                format!(" ({})", participant.fips_transport_type.to_uppercase())
+            };
+            if participant.fips_srtt_ms > 0 {
+                format!(
+                    "Direct connection{}, {} ms",
+                    transport, participant.fips_srtt_ms
+                )
+            } else {
+                format!("Direct connection{}", transport)
             }
         }
-        FipsPathKind::Routed => "FIPS routed".to_string(),
+        FipsPathKind::Routed => "Via mesh".to_string(),
         FipsPathKind::Offline => "Offline".to_string(),
     }
 }
@@ -3053,6 +3382,21 @@ fn hero_subtitle(state: &NativeAppState) -> String {
 
 fn clean_ip(value: &str) -> String {
     value.split('/').next().unwrap_or(value).trim().to_string()
+}
+
+fn format_bytes(bytes: u64) -> String {
+    let units = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit_index = 0usize;
+    while value >= 1024.0 && unit_index < units.len() - 1 {
+        value /= 1024.0;
+        unit_index += 1;
+    }
+    if unit_index == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", units[unit_index])
+    }
 }
 
 fn load_auto_install_updates() -> bool {
@@ -3366,7 +3710,12 @@ const CSS: &str = r#"
 }
 
 .nvpn-device-row {
-    padding: 10px 0;
+    padding: 10px;
+    border-radius: 8px;
+}
+
+.nvpn-device-row.selected {
+    background: alpha(#3584e4, 0.14);
 }
 
 .nvpn-route-choice {

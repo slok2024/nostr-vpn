@@ -122,6 +122,52 @@ public sealed class NativeParticipantState
     public string LastSeenText { get; set; } = "";
     [System.Text.Json.Serialization.JsonIgnore]
     public bool IsSelf { get; set; }
+    public string DisplayName => FirstNonEmpty(
+        MagicDnsName,
+        Alias,
+        MagicDnsAlias,
+        ShortText(Npub, 12, 6));
+    public string CleanTunnelIp => TunnelIp.Split('/')[0].Trim();
+    public string MagicDnsDisplay => FirstNonEmpty(MagicDnsName, MagicDnsAlias, "-");
+    public string LastSeenDisplay => string.IsNullOrWhiteSpace(LastSeenText) ? "-" : LastSeenText;
+    public string TxBytesDisplay => FormatBytes(TxBytes);
+    public string RxBytesDisplay => FormatBytes(RxBytes);
+    public string RoleText
+    {
+        get
+        {
+            var roles = new List<string>();
+            if (IsSelf)
+            {
+                roles.Add("This device");
+            }
+            if (IsAdmin)
+            {
+                roles.Add("Admin");
+            }
+            if (OffersExitNode)
+            {
+                roles.Add("Exit node");
+            }
+            return roles.Count == 0 ? "Member" : string.Join(", ", roles);
+        }
+    }
+    public string ConnectivityStateText
+    {
+        get
+        {
+            return State.ToLowerInvariant() switch
+            {
+                "off" => "Off",
+                "local" or "online" or "present" => "Online",
+                "pending" => "Connecting",
+                "offline" => "Offline",
+                _ when Reachable => "Online",
+                _ => "Unknown",
+            };
+        }
+    }
+    public string StatusDetailText => string.IsNullOrWhiteSpace(StatusText) ? ConnectivityStateText : StatusText;
     public bool IsFipsDirect => Reachable
         && !string.Equals(State, "local", StringComparison.OrdinalIgnoreCase)
         && !string.IsNullOrWhiteSpace(FipsTransportAddr);
@@ -138,14 +184,53 @@ public sealed class NativeParticipantState
             }
             if (IsFipsDirect)
             {
-                return FipsSrttMs > 0 ? $"Direct FIPS {FipsSrttMs} ms" : "Direct FIPS";
+                var transport = string.IsNullOrWhiteSpace(FipsTransportType) ? "" : $" ({FipsTransportType.ToUpperInvariant()})";
+                return FipsSrttMs > 0 ? $"Direct connection{transport}, {FipsSrttMs} ms" : $"Direct connection{transport}";
             }
             if (IsFipsRouted)
             {
-                return "FIPS routed";
+                return "Via mesh";
+            }
+            if (string.Equals(State, "pending", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Connecting";
             }
             return "Offline";
         }
+    }
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    private static string ShortText(string value, int prefix, int suffix)
+    {
+        if (value.Length <= prefix + suffix + 3)
+        {
+            return value;
+        }
+        return $"{value[..prefix]}...{value[^suffix..]}";
+    }
+
+    private static string FormatBytes(ulong bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        var value = (double)bytes;
+        var unitIndex = 0;
+        while (value >= 1024 && unitIndex < units.Length - 1)
+        {
+            value /= 1024;
+            unitIndex++;
+        }
+        return unitIndex == 0 ? $"{bytes} B" : $"{value:0.0} {units[unitIndex]}";
     }
 }
 
