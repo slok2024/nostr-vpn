@@ -34,13 +34,29 @@ Results:
   Windows uses the FIPS core Tokio per-datagram UDP send path, with
   millisecond endpoint command waits under load, while Linux uses the raw
   batched/GSO sender path.
+- Follow-up apples-to-apples userspace baseline, after adding Windows
+  `wg-upstream-test --scoped-host` at `77c133d`: `tcpdump` during nvpn ping
+  confirmed direct FIPS UDP on `enp1s0` between
+  `192.168.122.103:36344` and `192.168.122.147:58013`. The baseline used
+  Ubuntu `boringtun-cli 0.7.1` on `btbench` and Windows nvpn's BoringTun/Wintun
+  WG upstream runtime, with tunnel IPs `10.88.0.1/32` and `10.88.0.2/32`.
+- Current nvpn FIPS direct-LAN samples were about 260/259/261/259 Mbit/s
+  Windows to Linux for 1/2/4/8 streams, and about 351/349/356/356 Mbit/s
+  Linux to Windows.
+- Userspace BoringTun/BoringTun samples on the same VMs were about
+  305/295/298/309 Mbit/s Windows to Linux for 1/2/4/8 streams, and about
+  347/419/492/517 Mbit/s Linux to Windows.
 
 Decision:
 - Keep the Windows receive-side Wintun write batching because it materially
   improves the Linux-to-Windows direction without changing protocol format.
-- Do not keep send-side batching in nvpn. The next real Windows-to-Linux parity
-  work belongs in FIPS core: a Windows UDP sender path closer to the Unix
-  worker/connected send architecture, or a deeper native/kernel transport.
+- Do not keep send-side batching in nvpn. Kernel WireGuard/WireGuardNT is a
+  useful ceiling but not the right baseline for nvpn FIPS. Against userspace
+  BoringTun/BoringTun, current nvpn is close enough Windows-to-Linux
+  (roughly 84-88% of BoringTun) that there is no obvious simple nvpn-side fix.
+  Linux-to-Windows still falls behind BoringTun as stream count rises, so the
+  next parity work should focus on FIPS core / Windows receive-path scaling
+  rather than another small CLI-side batching tweak.
 
 ## 2026-05-13 - `nvpn update` CLI e2e release gate
 

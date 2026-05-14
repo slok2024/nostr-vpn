@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+### Added
+
+- `nvpn wg-upstream-test --scoped-host` now works on Windows using the
+  userspace BoringTun/Wintun runtime, which makes Windows/Linux userspace
+  WireGuard baseline testing possible without replacing the Windows default
+  route.
+
 ## 4.0.15 - 2026-05-13
 
 ### Fixed
