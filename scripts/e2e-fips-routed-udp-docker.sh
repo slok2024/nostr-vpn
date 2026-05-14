@@ -10,6 +10,8 @@ CONFIG_PATH="/root/.config/nvpn/config.toml"
 UDP_PORT=42424
 SAFE_TUNNEL_MTU=1150
 PING_PAYLOAD_SIZE=1000
+CONTINUITY_DURATION_SECS="${NVPN_E2E_CONTINUITY_SECS:-90}"
+CONTINUITY_INTERVAL_SECS="${NVPN_E2E_CONTINUITY_INTERVAL_SECS:-0.2}"
 
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -251,6 +253,59 @@ ping_tunnel_payload() {
   return 1
 }
 
+run_continuity_ping() {
+  local node="$1"
+  local target_ip="$2"
+  local label="$3"
+  local log_path="$4"
+  "${COMPOSE[@]}" exec -T "$node" sh -lc "
+    set -eu
+    end=\$(( \$(date +%s) + $CONTINUITY_DURATION_SECS ))
+    seq=0
+    while [ \$(date +%s) -lt \$end ]; do
+      seq=\$((seq + 1))
+      printf 'sample=%s label=%s target=%s\n' \"\$seq\" '$label' '$target_ip'
+      ping -M do -s '$PING_PAYLOAD_SIZE' -c 1 -W 2 '$target_ip'
+      sleep '$CONTINUITY_INTERVAL_SECS'
+    done
+    printf 'continuity_samples=%s label=%s\n' \"\$seq\" '$label'
+  " >"$log_path" 2>&1
+}
+
+assert_bidirectional_continuity() {
+  local first_node="$1"
+  local first_target_ip="$2"
+  local first_label="$3"
+  local first_log="$4"
+  local second_node="$5"
+  local second_target_ip="$6"
+  local second_label="$7"
+  local second_log="$8"
+  local failed=0
+  local first_pid second_pid
+
+  run_continuity_ping "$first_node" "$first_target_ip" "$first_label" "$first_log" &
+  first_pid=$!
+  run_continuity_ping "$second_node" "$second_target_ip" "$second_label" "$second_log" &
+  second_pid=$!
+
+  if ! wait "$first_pid"; then
+    failed=1
+  fi
+  if ! wait "$second_pid"; then
+    failed=1
+  fi
+
+  if [[ "$failed" -ne 0 ]]; then
+    echo "fips routed udp e2e failed: tunnel ping dropped during ${CONTINUITY_DURATION_SECS}s continuity check" >&2
+    echo "--- $first_label continuity log ---" >&2
+    cat "$first_log" >&2 2>/dev/null || true
+    echo "--- $second_label continuity log ---" >&2
+    cat "$second_log" >&2 2>/dev/null || true
+    exit 1
+  fi
+}
+
 cleanup
 
 "${COMPOSE[@]}" build >/dev/null
@@ -378,6 +433,10 @@ if ! ping_tunnel_payload node-b "$ALICE_TUNNEL_IP" /tmp/bob-to-alice-safe-mtu-pi
   exit 1
 fi
 
+assert_bidirectional_continuity \
+  node-a "$BOB_TUNNEL_IP" "alice-to-bob" /tmp/alice-to-bob-continuity.log \
+  node-b "$ALICE_TUNNEL_IP" "bob-to-alice" /tmp/bob-to-alice-continuity.log
+
 start_udp_listener node-b /tmp/bob-udp.out
 send_udp_payload node-a "$BOB_TUNNEL_IP" "alice-to-bob-fips-udp"
 wait_for_payload node-b /tmp/bob-udp.out "alice-to-bob-fips-udp"
@@ -403,8 +462,11 @@ echo "$BOB_ROUTE"
 echo "--- Safe MTU pings ---"
 cat /tmp/alice-to-bob-safe-mtu-ping.log
 cat /tmp/bob-to-alice-safe-mtu-ping.log
+echo "--- Continuity pings (${CONTINUITY_DURATION_SECS}s) ---"
+tail -n 20 /tmp/alice-to-bob-continuity.log
+tail -n 20 /tmp/bob-to-alice-continuity.log
 echo "--- UDP payloads ---"
 "${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/bob-udp.out'
 "${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/alice-udp.out'
 
-echo "fips routed udp docker e2e passed: alice.nvpn and bob.nvpn resolved to tunnel IPs, safe-MTU payloads crossed both ways, and UDP crossed the FIPS overlay while direct Alice/Bob underlay UDP was blocked"
+echo "fips routed udp docker e2e passed: alice.nvpn and bob.nvpn resolved to tunnel IPs, safe-MTU payloads crossed both ways, continuity stayed up for ${CONTINUITY_DURATION_SECS}s, and UDP crossed the FIPS overlay while direct Alice/Bob underlay UDP was blocked"
