@@ -251,6 +251,21 @@ typedef void (*UniffiForeignFutureCompleteVoid)(uint64_t, UniffiForeignFutureStr
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_PRIVILEGED_COMMAND_RUNNER_METHOD0
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_PRIVILEGED_COMMAND_RUNNER_METHOD0
+typedef void (*UniffiCallbackInterfacePrivilegedCommandRunnerMethod0)(uint64_t, RustBuffer, RustBuffer, RustBuffer* _Nonnull,
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_PRIVILEGED_COMMAND_RUNNER
+#define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_PRIVILEGED_COMMAND_RUNNER
+typedef struct UniffiVTableCallbackInterfacePrivilegedCommandRunner {
+    UniffiCallbackInterfacePrivilegedCommandRunnerMethod0 _Nonnull run;
+    UniffiCallbackInterfaceFree _Nonnull uniffiFree;
+} UniffiVTableCallbackInterfacePrivilegedCommandRunner;
+
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_FN_CLONE_FFIAPP
 #define UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_FN_CLONE_FFIAPP
 void*_Nonnull uniffi_nostr_vpn_app_core_fn_clone_ffiapp(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
@@ -276,9 +291,34 @@ RustBuffer uniffi_nostr_vpn_app_core_fn_method_ffiapp_dispatch(void*_Nonnull ptr
 RustBuffer uniffi_nostr_vpn_app_core_fn_method_ffiapp_refresh(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_FN_METHOD_FFIAPP_SET_PRIVILEGED_COMMAND_RUNNER
+#define UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_FN_METHOD_FFIAPP_SET_PRIVILEGED_COMMAND_RUNNER
+void uniffi_nostr_vpn_app_core_fn_method_ffiapp_set_privileged_command_runner(void*_Nonnull ptr, void*_Nonnull runner, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_FN_METHOD_FFIAPP_STATE
 #define UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_FN_METHOD_FFIAPP_STATE
 RustBuffer uniffi_nostr_vpn_app_core_fn_method_ffiapp_state(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_FN_CLONE_PRIVILEGEDCOMMANDRUNNER
+#define UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_FN_CLONE_PRIVILEGEDCOMMANDRUNNER
+void*_Nonnull uniffi_nostr_vpn_app_core_fn_clone_privilegedcommandrunner(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_FN_FREE_PRIVILEGEDCOMMANDRUNNER
+#define UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_FN_FREE_PRIVILEGEDCOMMANDRUNNER
+void uniffi_nostr_vpn_app_core_fn_free_privilegedcommandrunner(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_FN_INIT_CALLBACK_VTABLE_PRIVILEGEDCOMMANDRUNNER
+#define UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_FN_INIT_CALLBACK_VTABLE_PRIVILEGEDCOMMANDRUNNER
+void uniffi_nostr_vpn_app_core_fn_init_callback_vtable_privilegedcommandrunner(const UniffiVTableCallbackInterfacePrivilegedCommandRunner* _Nonnull vtable
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_FN_METHOD_PRIVILEGEDCOMMANDRUNNER_RUN
+#define UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_FN_METHOD_PRIVILEGEDCOMMANDRUNNER_RUN
+RustBuffer uniffi_nostr_vpn_app_core_fn_method_privilegedcommandrunner_run(void*_Nonnull ptr, RustBuffer executable, RustBuffer args, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_NOSTR_VPN_APP_CORE_RUSTBUFFER_ALLOC
@@ -573,9 +613,21 @@ uint16_t uniffi_nostr_vpn_app_core_checksum_method_ffiapp_refresh(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_CHECKSUM_METHOD_FFIAPP_SET_PRIVILEGED_COMMAND_RUNNER
+#define UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_CHECKSUM_METHOD_FFIAPP_SET_PRIVILEGED_COMMAND_RUNNER
+uint16_t uniffi_nostr_vpn_app_core_checksum_method_ffiapp_set_privileged_command_runner(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_CHECKSUM_METHOD_FFIAPP_STATE
 #define UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_CHECKSUM_METHOD_FFIAPP_STATE
 uint16_t uniffi_nostr_vpn_app_core_checksum_method_ffiapp_state(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_CHECKSUM_METHOD_PRIVILEGEDCOMMANDRUNNER_RUN
+#define UNIFFI_FFIDEF_UNIFFI_NOSTR_VPN_APP_CORE_CHECKSUM_METHOD_PRIVILEGEDCOMMANDRUNNER_RUN
+uint16_t uniffi_nostr_vpn_app_core_checksum_method_privilegedcommandrunner_run(void
 
 );
 #endif

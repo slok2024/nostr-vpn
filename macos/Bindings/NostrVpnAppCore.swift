@@ -395,7 +395,13 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 
 
 // Public interface members begin here.
-
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+private let IDX_CALLBACK_FREE: Int32 = 0
+// Callback return codes
+private let UNIFFI_CALLBACK_SUCCESS: Int32 = 0
+private let UNIFFI_CALLBACK_ERROR: Int32 = 1
+private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -510,6 +516,24 @@ fileprivate struct FfiConverterString: FfiConverter {
     }
 }
 
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterData: FfiConverterRustBuffer {
+    typealias SwiftType = Data
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Data {
+        let len: Int32 = try readInt(&buf)
+        return Data(try readBytes(&buf, count: Int(len)))
+    }
+
+    public static func write(_ value: Data, into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        writeBytes(&buf, value)
+    }
+}
+
 
 
 
@@ -518,6 +542,8 @@ public protocol FfiAppProtocol: AnyObject, Sendable {
     func dispatch(action: NativeAppAction)  -> NativeAppState
 
     func refresh()  -> NativeAppState
+
+    func setPrivilegedCommandRunner(runner: PrivilegedCommandRunner)
 
     func state()  -> NativeAppState
 
@@ -598,6 +624,13 @@ open func refresh() -> NativeAppState  {
 })
 }
 
+open func setPrivilegedCommandRunner(runner: PrivilegedCommandRunner)  {try! rustCall() {
+    uniffi_nostr_vpn_app_core_fn_method_ffiapp_set_privileged_command_runner(self.uniffiClonePointer(),
+        FfiConverterTypePrivilegedCommandRunner_lower(runner),$0
+    )
+}
+}
+
 open func state() -> NativeAppState  {
     return try!  FfiConverterTypeNativeAppState_lift(try! rustCall() {
     uniffi_nostr_vpn_app_core_fn_method_ffiapp_state(self.uniffiClonePointer(),$0
@@ -656,6 +689,199 @@ public func FfiConverterTypeFfiApp_lift(_ pointer: UnsafeMutableRawPointer) thro
 #endif
 public func FfiConverterTypeFfiApp_lower(_ value: FfiApp) -> UnsafeMutableRawPointer {
     return FfiConverterTypeFfiApp.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Foreign-implemented runner for executing the bundled `nvpn` CLI as root.
+ *
+ * The Mac shell implements this with Authorization Services so the
+ * elevation prompt can use Touch ID. When no runner is registered, the
+ * Rust core falls back to spawning `osascript ... with administrator
+ * privileges` (password-only).
+ */
+public protocol PrivilegedCommandRunner: AnyObject, Sendable {
+
+    func run(executable: String, args: [String])  -> PrivilegedCommandOutput
+
+}
+/**
+ * Foreign-implemented runner for executing the bundled `nvpn` CLI as root.
+ *
+ * The Mac shell implements this with Authorization Services so the
+ * elevation prompt can use Touch ID. When no runner is registered, the
+ * Rust core falls back to spawning `osascript ... with administrator
+ * privileges` (password-only).
+ */
+open class PrivilegedCommandRunnerImpl: PrivilegedCommandRunner, @unchecked Sendable {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_nostr_vpn_app_core_fn_clone_privilegedcommandrunner(self.pointer, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_nostr_vpn_app_core_fn_free_privilegedcommandrunner(pointer, $0) }
+    }
+
+
+
+
+open func run(executable: String, args: [String]) -> PrivilegedCommandOutput  {
+    return try!  FfiConverterTypePrivilegedCommandOutput_lift(try! rustCall() {
+    uniffi_nostr_vpn_app_core_fn_method_privilegedcommandrunner_run(self.uniffiClonePointer(),
+        FfiConverterString.lower(executable),
+        FfiConverterSequenceString.lower(args),$0
+    )
+})
+}
+
+
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfacePrivilegedCommandRunner {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfacePrivilegedCommandRunner] = [UniffiVTableCallbackInterfacePrivilegedCommandRunner(
+        run: { (
+            uniffiHandle: UInt64,
+            executable: RustBuffer,
+            args: RustBuffer,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> PrivilegedCommandOutput in
+                guard let uniffiObj = try? FfiConverterTypePrivilegedCommandRunner.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.run(
+                     executable: try FfiConverterString.lift(executable),
+                     args: try FfiConverterSequenceString.lift(args)
+                )
+            }
+
+
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterTypePrivilegedCommandOutput_lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            let result = try? FfiConverterTypePrivilegedCommandRunner.handleMap.remove(handle: uniffiHandle)
+            if result == nil {
+                print("Uniffi callback interface PrivilegedCommandRunner: handle missing in uniffiFree")
+            }
+        }
+    )]
+}
+
+private func uniffiCallbackInitPrivilegedCommandRunner() {
+    uniffi_nostr_vpn_app_core_fn_init_callback_vtable_privilegedcommandrunner(UniffiCallbackInterfacePrivilegedCommandRunner.vtable)
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePrivilegedCommandRunner: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<PrivilegedCommandRunner>()
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = PrivilegedCommandRunner
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> PrivilegedCommandRunner {
+        return PrivilegedCommandRunnerImpl(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: PrivilegedCommandRunner) -> UnsafeMutableRawPointer {
+        guard let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: handleMap.insert(obj: value))) else {
+            fatalError("Cast to UnsafeMutableRawPointer failed")
+        }
+        return ptr
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PrivilegedCommandRunner {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: PrivilegedCommandRunner, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePrivilegedCommandRunner_lift(_ pointer: UnsafeMutableRawPointer) throws -> PrivilegedCommandRunner {
+    return try FfiConverterTypePrivilegedCommandRunner.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePrivilegedCommandRunner_lower(_ value: PrivilegedCommandRunner) -> UnsafeMutableRawPointer {
+    return FfiConverterTypePrivilegedCommandRunner.lower(value)
 }
 
 
@@ -2471,6 +2697,99 @@ public func FfiConverterTypeNativeRuntimeCapabilities_lower(_ value: NativeRunti
 }
 
 
+/**
+ * Output of running a privileged command from foreign code.
+ *
+ * `cancelled = true` means the user dismissed the elevation dialog (e.g.
+ * hit Cancel on the Touch ID / password prompt). Surfaced separately so
+ * the UI can avoid showing it as a hard error.
+ */
+public struct PrivilegedCommandOutput {
+    public var success: Bool
+    public var cancelled: Bool
+    public var stdout: Data
+    public var stderr: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(success: Bool, cancelled: Bool, stdout: Data, stderr: Data) {
+        self.success = success
+        self.cancelled = cancelled
+        self.stdout = stdout
+        self.stderr = stderr
+    }
+}
+
+#if compiler(>=6)
+extension PrivilegedCommandOutput: Sendable {}
+#endif
+
+
+extension PrivilegedCommandOutput: Equatable, Hashable {
+    public static func ==(lhs: PrivilegedCommandOutput, rhs: PrivilegedCommandOutput) -> Bool {
+        if lhs.success != rhs.success {
+            return false
+        }
+        if lhs.cancelled != rhs.cancelled {
+            return false
+        }
+        if lhs.stdout != rhs.stdout {
+            return false
+        }
+        if lhs.stderr != rhs.stderr {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(success)
+        hasher.combine(cancelled)
+        hasher.combine(stdout)
+        hasher.combine(stderr)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePrivilegedCommandOutput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PrivilegedCommandOutput {
+        return
+            try PrivilegedCommandOutput(
+                success: FfiConverterBool.read(from: &buf),
+                cancelled: FfiConverterBool.read(from: &buf),
+                stdout: FfiConverterData.read(from: &buf),
+                stderr: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PrivilegedCommandOutput, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.success, into: &buf)
+        FfiConverterBool.write(value.cancelled, into: &buf)
+        FfiConverterData.write(value.stdout, into: &buf)
+        FfiConverterData.write(value.stderr, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePrivilegedCommandOutput_lift(_ buf: RustBuffer) throws -> PrivilegedCommandOutput {
+    return try FfiConverterTypePrivilegedCommandOutput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePrivilegedCommandOutput_lower(_ value: PrivilegedCommandOutput) -> RustBuffer {
+    return FfiConverterTypePrivilegedCommandOutput.lower(value)
+}
+
+
 public struct SettingsPatch {
     public var nodeName: String?
     public var endpoint: String?
@@ -3381,13 +3700,20 @@ private let initializationResult: InitializationResult = {
     if (uniffi_nostr_vpn_app_core_checksum_method_ffiapp_refresh() != 8203) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_nostr_vpn_app_core_checksum_method_ffiapp_set_privileged_command_runner() != 20071) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_nostr_vpn_app_core_checksum_method_ffiapp_state() != 28183) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nostr_vpn_app_core_checksum_method_privilegedcommandrunner_run() != 491) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nostr_vpn_app_core_checksum_constructor_ffiapp_new() != 50796) {
         return InitializationResult.apiChecksumMismatch
     }
 
+    uniffiCallbackInitPrivilegedCommandRunner()
     return InitializationResult.ok
 }()
 

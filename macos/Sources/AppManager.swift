@@ -63,6 +63,7 @@ final class AppManager: ObservableObject {
         // (workspace-inherited). Avoids drift between MARKETING_VERSION in the
         // xcodeproj and the bundled nvpn binary.
         let app = FfiApp(dataDir: dataDir, appVersion: "")
+        app.setPrivilegedCommandRunner(runner: AuthorizationServicesPrivilegedCommandRunner())
         self.app = app
         self.state = app.state()
         self.launchedHidden = CommandLine.arguments.contains("--autostart")

@@ -42,6 +42,30 @@ use crate::state::{
 const NVPN_BIN_ENV: &str = "NVPN_CLI_PATH";
 const SERVICE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
+/// Output of running a privileged command from foreign code.
+///
+/// `cancelled = true` means the user dismissed the elevation dialog (e.g.
+/// hit Cancel on the Touch ID / password prompt). Surfaced separately so
+/// the UI can avoid showing it as a hard error.
+#[derive(uniffi::Record, Debug, Default)]
+pub struct PrivilegedCommandOutput {
+    pub success: bool,
+    pub cancelled: bool,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+/// Foreign-implemented runner for executing the bundled `nvpn` CLI as root.
+///
+/// The Mac shell implements this with Authorization Services so the
+/// elevation prompt can use Touch ID. When no runner is registered, the
+/// Rust core falls back to spawning `osascript ... with administrator
+/// privileges` (password-only).
+#[uniffi::export(with_foreign)]
+pub trait PrivilegedCommandRunner: Send + Sync {
+    fn run(&self, executable: String, args: Vec<String>) -> PrivilegedCommandOutput;
+}
+
 #[derive(uniffi::Object, Debug)]
 pub struct FfiApp {
     runtime: Mutex<NativeAppRuntime>,
@@ -76,6 +100,13 @@ impl FfiApp {
             runtime.dispatch(action);
             runtime.state()
         })
+    }
+
+    pub fn set_privileged_command_runner(&self, runner: Arc<dyn PrivilegedCommandRunner>) {
+        self.with_runtime(|runtime| {
+            runtime.privileged_command_runner = Some(PrivilegedCommandRunnerHandle(runner));
+            runtime.state()
+        });
     }
 }
 
@@ -124,6 +155,16 @@ struct NativeAppRuntime {
     invite_broadcast_expires_at: Option<SystemTime>,
     nearby_discovery_expires_at: Option<SystemTime>,
     lan_peers: HashMap<String, LanPeerRecord>,
+    privileged_command_runner: Option<PrivilegedCommandRunnerHandle>,
+}
+
+#[derive(Clone)]
+struct PrivilegedCommandRunnerHandle(Arc<dyn PrivilegedCommandRunner>);
+
+impl std::fmt::Debug for PrivilegedCommandRunnerHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PrivilegedCommandRunnerHandle(<foreign>)")
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -292,6 +333,7 @@ impl NativeAppRuntime {
             invite_broadcast_expires_at: None,
             nearby_discovery_expires_at: None,
             lan_peers: HashMap::new(),
+            privileged_command_runner: None,
         };
         runtime.refresh_expected_service_binary_version();
         if runtime.mobile_runtime {
@@ -339,6 +381,7 @@ impl NativeAppRuntime {
             invite_broadcast_expires_at: None,
             nearby_discovery_expires_at: None,
             lan_peers: HashMap::new(),
+            privileged_command_runner: None,
         }
     }
 
@@ -1857,6 +1900,16 @@ impl NativeAppRuntime {
                 "nvpn CLI binary not found; set {NVPN_BIN_ENV} or install nvpn"
             ));
         };
+        if let Some(handle) = &self.privileged_command_runner {
+            let outcome = handle.0.run(
+                nvpn_bin.display().to_string(),
+                args.iter().map(|arg| (*arg).to_string()).collect(),
+            );
+            if outcome.cancelled {
+                return Err(anyhow!("user cancelled the administrator prompt"));
+            }
+            return Ok(privileged_outcome_to_output(outcome));
+        }
         let shell_command = macos_service_action_shell_command(nvpn_bin, &args);
         let script = format!(
             "do shell script {} with administrator privileges",
@@ -2249,6 +2302,17 @@ fn exit_node_display_name(
         return "admin".to_string();
     }
     short_pubkey(pubkey_hex)
+}
+
+#[cfg(target_os = "macos")]
+fn privileged_outcome_to_output(outcome: PrivilegedCommandOutput) -> Output {
+    use std::os::unix::process::ExitStatusExt;
+    let raw = if outcome.success { 0 } else { 1 << 8 };
+    Output {
+        status: std::process::ExitStatus::from_raw(raw),
+        stdout: outcome.stdout,
+        stderr: outcome.stderr,
+    }
 }
 
 #[cfg(target_os = "macos")]

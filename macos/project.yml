@@ -38,3 +38,4 @@ targets:
       - framework: Frameworks/NostrVpnAppCore.xcframework
         embed: false
       - sdk: SystemConfiguration.framework
+      - sdk: Security.framework
