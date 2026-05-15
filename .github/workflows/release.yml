@@ -247,6 +247,11 @@ jobs:
             echo "NVPN_ASC_AUTH_KEY_ISSUER_ID=${ASC_AUTH_KEY_ISSUER_ID}"
           } >> "${GITHUB_ENV}"
 
+      - name: macOS service install/uninstall e2e
+        env:
+          NVPN_RUN_MACOS_SERVICE_E2E: '1'
+        run: ./scripts/e2e-macos-service.sh
+
       - name: Build native macOS app artifacts
         env:
           NVPN_MACOS_RUST_PROFILE: release

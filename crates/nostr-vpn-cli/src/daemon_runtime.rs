@@ -1397,19 +1397,23 @@ fn daemon_command_has_nvpn_executable_prefix(prefix: &str) -> bool {
         return true;
     }
 
-    // macOS service-managed daemons live at
-    // /Library/PrivilegedHelperTools/to.nostrvpn.nvpn(.<config-suffix>) — the
-    // basename starts with the service label, not "nvpn". Without this match,
-    // the user-mode CLI can't tell the launchd daemon is running, the GUI
-    // falls through to `nvpn start --daemon` (which requires root), and VPN
-    // toggle silently fails on a freshly-installed service.
-    if let Some(name) = normalized.rsplit('/').next()
-        && (name == MACOS_SERVICE_LABEL
-            || name
-                .strip_prefix(MACOS_SERVICE_LABEL)
-                .is_some_and(|rest| rest.starts_with('.')))
+    #[cfg(any(target_os = "macos", test))]
     {
-        return true;
+        // macOS service-managed daemons live at
+        // /Library/PrivilegedHelperTools/to.nostrvpn.nvpn(.<config-suffix>)
+        // — the basename starts with the service label, not "nvpn".
+        // Without this match, the user-mode CLI can't tell the launchd
+        // daemon is running, the GUI falls through to `nvpn start
+        // --daemon` (which requires root), and VPN toggle silently fails
+        // on a freshly-installed service.
+        if let Some(name) = normalized.rsplit('/').next()
+            && (name == MACOS_SERVICE_LABEL
+                || name
+                    .strip_prefix(MACOS_SERVICE_LABEL)
+                    .is_some_and(|rest| rest.starts_with('.')))
+        {
+            return true;
+        }
     }
 
     false

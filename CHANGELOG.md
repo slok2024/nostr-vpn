@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.18 - 2026-05-15
+
+### Fixed
+
+- macOS: the user-mode CLI now detects the launchd-managed service daemon
+  at `/Library/PrivilegedHelperTools/to.nostrvpn.nvpn(.<config-suffix>)`.
+  The May 14 stable-service-path change made the binary basename end in
+  `.nvpn` instead of `/nvpn`, so the existing daemon-detection heuristic
+  missed it. Effects of the miss: `nvpn status --json` reported
+  `daemon.running: false` even with a healthy launchd daemon serving
+  the tunnel; `nvpn pause`/`resume` rejected control requests; and the
+  Mac GUI's VPN switch silently refused to turn on after a
+  service-version update because it fell through to `nvpn start
+  --daemon` (user-mode) which can't set up a TUN without root.
+
+### Added
+
+- New `scripts/e2e-macos-service.sh`: installs and uninstalls a real
+  launchd service under a unique test config suffix and asserts that
+  `nvpn status` sees the daemon and `pause`/`resume` work. Wired into
+  the GitHub release CI's `build-macos-app` job (`macos-14` runners
+  have passwordless sudo); gated locally behind
+  `NVPN_RUN_MACOS_SERVICE_E2E=1` because it mutates `/Library/`.
+
 ## 4.0.17 - 2026-05-15
 
 ### Added
