@@ -44,6 +44,8 @@ object NativeActions {
     fun setNetworkEnabled(networkId: String, enabled: Boolean) =
         action("set_network_enabled", "networkId" to networkId, "enabled" to enabled)
 
+    fun removeNetwork(networkId: String) = action("remove_network", "networkId" to networkId)
+
     fun updateSettings(vararg settings: Pair<String, Any?>): JSONObject =
         JSONObject()
             .put("type", "update_settings")

@@ -545,9 +545,9 @@ private struct AddDeviceCard: View {
 
     var body: some View {
         AppCard {
-            Text("Manual")
+            Text("Add by npub")
                 .font(.headline)
-            TextField("npub", text: $npub)
+            TextField("npub1…", text: $npub)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .textFieldStyle(.roundedBorder)
@@ -746,6 +746,7 @@ private struct WireGuardSettingsCard: View {
 private struct NetworksCard: View {
     @ObservedObject var model: AppModel
     @State private var newNetwork = ""
+    @State private var pendingRemoval: NetworkState?
 
     var body: some View {
         AppCard {
@@ -777,6 +778,12 @@ private struct NetworksCard: View {
                     Button("Activate") {
                         model.dispatch(NativeActions.setNetworkEnabled(network.id, true), status: "Activating")
                     }
+                    Button(role: .destructive) {
+                        pendingRemoval = network
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
                 }
             }
             HStack {
@@ -788,6 +795,23 @@ private struct NetworksCard: View {
                 }
                 .disabled(newNetwork.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+        }
+        .confirmationDialog(
+            "Remove \(pendingRemoval?.displayName ?? "network")?",
+            isPresented: Binding(
+                get: { pendingRemoval != nil },
+                set: { if !$0 { pendingRemoval = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingRemoval
+        ) { network in
+            Button("Remove", role: .destructive) {
+                model.dispatch(NativeActions.removeNetwork(network.id), status: "Removing network")
+                pendingRemoval = nil
+            }
+            Button("Cancel", role: .cancel) { pendingRemoval = nil }
+        } message: { _ in
+            Text("This deletes the network from this device. You can rejoin later with the invite.")
         }
     }
 }

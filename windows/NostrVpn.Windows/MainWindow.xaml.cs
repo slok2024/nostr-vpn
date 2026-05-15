@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -157,6 +158,16 @@ public partial class MainWindow : Window
     {
         if (sender is Button { Tag: string networkId })
         {
+            var network = ViewModel.State.Networks.FirstOrDefault(n => n.Id == networkId);
+            var name = string.IsNullOrWhiteSpace(network?.Name) ? "this network" : network!.Name;
+            var result = MessageBox.Show(
+                this,
+                "This deletes the network from this device. You can rejoin later with the invite.",
+                $"Remove {name}?",
+                MessageBoxButton.OKCancel,
+                MessageBoxImage.Warning,
+                MessageBoxResult.Cancel);
+            if (result != MessageBoxResult.OK) return;
             await ViewModel.RemoveNetworkAsync(networkId);
         }
     }

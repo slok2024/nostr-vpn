@@ -18,6 +18,7 @@ struct RootView: View {
     @State private var networkNameDrafts: [String: String] = [:]
     @State private var participantAliasDrafts: [String: String] = [:]
     @State private var savedNetworksExpanded = false
+    @State private var pendingNetworkRemoval: NativeNetworkState?
     @State private var diagnosticsExpanded = false
     @State private var showingQrScanner = false
     @State private var selectedSidebarItem: SidebarItem? = .devices
@@ -1019,7 +1020,7 @@ struct RootView: View {
                 manager.setNetworkEnabled(networkId: network.id, enabled: true)
             }
             Button(role: .destructive) {
-                manager.removeNetwork(network.id)
+                pendingNetworkRemoval = network
             } label: {
                 Image(systemName: "trash")
             }
@@ -1028,6 +1029,24 @@ struct RootView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .confirmationDialog(
+            "Remove \(pendingNetworkRemoval.map(displayName) ?? "network")?",
+            isPresented: Binding(
+                get: { pendingNetworkRemoval?.id == network.id },
+                set: { if !$0 { pendingNetworkRemoval = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                if let target = pendingNetworkRemoval {
+                    manager.removeNetwork(target.id)
+                }
+                pendingNetworkRemoval = nil
+            }
+            Button("Cancel", role: .cancel) { pendingNetworkRemoval = nil }
+        } message: {
+            Text("This deletes the network from this device. You can rejoin later with the invite.")
+        }
     }
 
     private var systemSettings: some View {

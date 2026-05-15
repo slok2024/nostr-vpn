@@ -22,8 +22,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -297,6 +299,7 @@ internal fun WireGuardSettingsCard(state: AppState, dispatch: (JSONObject) -> Un
 @Composable
 internal fun NetworksCard(state: AppState, network: NetworkState?, dispatch: (JSONObject) -> Unit) {
     var newNetwork by remember { mutableStateOf("") }
+    var pendingRemoval by remember { mutableStateOf<NetworkState?>(null) }
     AppCard {
         Text("Networks", style = MaterialTheme.typography.titleMedium)
         network?.let {
@@ -326,6 +329,10 @@ internal fun NetworksCard(state: AppState, network: NetworkState?, dispatch: (JS
                 Button(onClick = { dispatch(NativeActions.setNetworkEnabled(saved.id, true)) }) {
                     Text("Activate")
                 }
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(onClick = { pendingRemoval = saved }) {
+                    Text("Remove")
+                }
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -344,6 +351,22 @@ internal fun NetworksCard(state: AppState, network: NetworkState?, dispatch: (JS
                 Text("Add")
             }
         }
+    }
+    pendingRemoval?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingRemoval = null },
+            title = { Text("Remove ${target.name.ifBlank { "network" }}?") },
+            text = { Text("This deletes the network from this device. You can rejoin later with the invite.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    dispatch(NativeActions.removeNetwork(target.id))
+                    pendingRemoval = null
+                }) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRemoval = null }) { Text("Cancel") }
+            },
+        )
     }
 }
 
