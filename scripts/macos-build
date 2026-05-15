@@ -278,6 +278,13 @@ run_macos_xcodeproj() {
     exit 1
   fi
   node "$ROOT/scripts/sync-versions.mjs"
+  # Resolve NVPN_APP_VERSION_NAME / NVPN_APP_VERSION_CODE from the workspace
+  # version so xcodegen can substitute them into project.yml (MARKETING_VERSION
+  # and CURRENT_PROJECT_VERSION). Without this each release would carry
+  # CFBundleVersion = "1" and Apple would dedupe uploads silently.
+  if declare -F resolve_shared_build_metadata >/dev/null 2>&1; then
+    resolve_shared_build_metadata "$ROOT"
+  fi
   (cd "$MACOS_DIR" && xcodegen generate --spec project.yml)
   # XcodeGen emits objectVersion 77 on newer Xcode installs even though this
   # project uses classic groups. Xcode 15 runners cannot open that format.

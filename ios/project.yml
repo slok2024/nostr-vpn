@@ -7,8 +7,17 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: 4.0.19
-    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: ${NVPN_APP_VERSION_NAME:-4.0.20}
+    # Apple uses (CFBundleShortVersionString, CFBundleVersion) as the unique
+    # build key on App Store Connect. Hardcoding CURRENT_PROJECT_VERSION = 1
+    # makes every TestFlight upload at the same marketing version conflict
+    # silently. NVPN_APP_VERSION_CODE is derived from the workspace version
+    # (4.0.19 -> 4001019) so each release lands a unique CFBundleVersion.
+    # scripts/ios-build sources release_common.sh + resolve_shared_build_metadata
+    # before xcodegen so both env vars resolve at project-generation time.
+    # The :-default fallback keeps `tools/run-ios` (debug builds, no release env)
+    # working without crashing xcodegen.
+    CURRENT_PROJECT_VERSION: ${NVPN_APP_VERSION_CODE:-1}
     VERSIONING_SYSTEM: apple-generic
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: 5.0

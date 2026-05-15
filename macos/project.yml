@@ -8,8 +8,13 @@ options:
 settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: to.iris.nvpn.macos
-    MARKETING_VERSION: 4.0.19
-    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: ${NVPN_APP_VERSION_NAME:-4.0.20}
+    # Resolved by scripts/macos-build via release_common.sh's
+    # resolve_shared_build_metadata before xcodegen runs. Mirrors the iOS
+    # setup so any future App-Store-bound or Sparkle-style updater sees a
+    # unique CFBundleVersion per release rather than the literal "1".
+    # The :-default fallback keeps debug builds working without release env.
+    CURRENT_PROJECT_VERSION: ${NVPN_APP_VERSION_CODE:-1}
     VERSIONING_SYSTEM: apple-generic
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: 5.0

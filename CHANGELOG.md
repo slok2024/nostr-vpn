@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.20 - 2026-05-15
+
+### Fixed
+
+- iOS / macOS: every TestFlight upload at the same marketing version was
+  silently colliding on App Store Connect because both `ios/project.yml`
+  and `macos/project.yml` hardcoded `CURRENT_PROJECT_VERSION: 1`. Apple
+  uses `(CFBundleShortVersionString, CFBundleVersion)` as the unique
+  build key, so the second 4.0.X build never showed up in TestFlight —
+  only the first 4.0.X upload at build=1 would ever surface. Both
+  project.yml files now use `${NVPN_APP_VERSION_NAME}` /
+  `${NVPN_APP_VERSION_CODE}` (with `:-default` fallbacks for debug
+  builds without release env). The version code is derived from the
+  workspace version via `scripts/release_common.sh`'s
+  `semantic_version_code` helper (4.0.20 -> 4000020), guaranteeing a
+  fresh CFBundleVersion per release. `scripts/macos-build` now also
+  calls `resolve_shared_build_metadata` before xcodegen so the env
+  vars resolve at project-generation time (matches what `ios-build`
+  was already doing).
+
 ## 4.0.19 - 2026-05-15
 
 ### Changed

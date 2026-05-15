@@ -54,16 +54,19 @@ const targets = [
       (_, prefix, suffix) => `${prefix}${version}${suffix}`,
     ),
   ),
+  // project.yml uses ${NVPN_APP_VERSION_NAME:-X.Y.Z} for MARKETING_VERSION so
+  // release builds get the env-resolved value and debug builds (no env) get
+  // the default. We just bump the default in the template.
   makeTarget('macos/project.yml', (text, version) =>
     text.replace(
-      /^(\s*MARKETING_VERSION:\s*).+$/m,
-      (_, prefix) => `${prefix}${version}`,
+      /^(\s*MARKETING_VERSION:\s*\$\{NVPN_APP_VERSION_NAME:-)[^}]+(\}\s*)$/m,
+      (_, prefix, suffix) => `${prefix}${version}${suffix}`,
     ),
   ),
   makeTarget('ios/project.yml', (text, version) =>
     text.replace(
-      /^(\s*MARKETING_VERSION:\s*).+$/m,
-      (_, prefix) => `${prefix}${version}`,
+      /^(\s*MARKETING_VERSION:\s*\$\{NVPN_APP_VERSION_NAME:-)[^}]+(\}\s*)$/m,
+      (_, prefix, suffix) => `${prefix}${version}${suffix}`,
     ),
   ),
   makeTarget('android/app/build.gradle.kts', (text, version) => {
