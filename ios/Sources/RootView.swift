@@ -2,41 +2,113 @@ import SwiftUI
 
 struct RootView: View {
     @ObservedObject var model: AppModel
+    @State private var addNetworkPresented = false
 
     var body: some View {
         Group {
             if model.activeNetwork == nil {
                 NavigationStack {
-                    SetupPage(model: model)
-                        .navigationTitle("Nostr VPN")
+                    AddNetworkPage(model: model)
+                        .navigationTitle("Add Network")
+                        .navigationBarTitleDisplayMode(.inline)
                 }
             } else {
                 TabView {
                     NavigationStack {
                         DevicesPage(model: model)
-                            .navigationTitle("Devices")
+                            .toolbar { networkSwitcherToolbar }
                     }
                     .tabItem { Label("Devices", systemImage: "circle.grid.2x2.fill") }
 
                     NavigationStack {
                         ExitNodesPage(model: model)
                             .navigationTitle("Exit Nodes")
+                            .toolbar { networkSwitcherToolbar }
                     }
                     .tabItem { Label("Exit Nodes", systemImage: "arrow.triangle.branch") }
 
                     NavigationStack {
                         SettingsPage(model: model)
                             .navigationTitle("Settings")
+                            .toolbar { networkSwitcherToolbar }
                     }
                     .tabItem { Label("Settings", systemImage: "gearshape") }
                 }
             }
         }
         .tint(.purple)
+        .sheet(isPresented: $addNetworkPresented) {
+            NavigationStack {
+                AddNetworkPage(model: model)
+                    .navigationTitle("Add Network")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") { addNetworkPresented = false }
+                        }
+                    }
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var networkSwitcherToolbar: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            NetworkSwitcher(model: model, addNetworkPresented: $addNetworkPresented)
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            ToolbarVpnSwitch(model: model)
+        }
     }
 }
 
-private struct SetupPage: View {
+/// Header dropdown that shows the active network's name and lets the user
+/// switch to any saved network or jump to the Add Network page. Single
+/// "Add network" button when there's only one saved network and nothing
+/// to switch to.
+private struct NetworkSwitcher: View {
+    @ObservedObject var model: AppModel
+    @Binding var addNetworkPresented: Bool
+
+    var body: some View {
+        let active = model.activeNetwork
+        let inactive = model.state.networks.filter { !$0.enabled }
+        Menu {
+            ForEach(inactive) { network in
+                Button {
+                    model.dispatch(
+                        NativeActions.setNetworkEnabled(network.id, true),
+                        status: "Switching to \(network.displayName)"
+                    )
+                } label: {
+                    Label(network.displayName, systemImage: "rectangle.stack")
+                }
+            }
+            if !inactive.isEmpty {
+                Divider()
+            }
+            Button {
+                addNetworkPresented = true
+            } label: {
+                Label("Add network", systemImage: "plus")
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(active?.displayName ?? "Nostr VPN")
+                    .font(.headline)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.caption2)
+            }
+            .foregroundStyle(.primary)
+        }
+    }
+}
+
+/// First screen on a fresh install AND the screen reachable from the
+/// header switcher's "Add network" item. Same content in both contexts:
+/// create, join via invite, or pick up a nearby invite.
+private struct AddNetworkPage: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
@@ -66,7 +138,15 @@ private struct DevicesPage: View {
                     NoticeCard(text: model.state.error.isEmpty ? model.statusMessage : model.state.error)
                 }
                 if let network = model.activeNetwork {
-                    DeviceListHeader(state: model.state, network: network)
+                    if network.localIsAdmin {
+                        Button {
+                            addDevicePresented = true
+                        } label: {
+                            Label("Add device", systemImage: "person.crop.circle.badge.plus")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    }
                     ForEach(sortedParticipants(network.participants, state: model.state)) { participant in
                         ParticipantRow(model: model, participant: participant)
                     }
@@ -88,24 +168,10 @@ private struct DevicesPage: View {
             .padding()
         }
         .background(AppColors.background)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                HStack(spacing: 12) {
-                    Button {
-                        addDevicePresented = true
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    .accessibilityLabel("Add device")
-
-                    ToolbarVpnSwitch(model: model)
-                }
-            }
-        }
         .sheet(isPresented: $addDevicePresented) {
             NavigationStack {
                 AddDeviceSheet(model: model)
-                    .navigationTitle("Connect")
+                    .navigationTitle("Add Device")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
@@ -182,6 +248,20 @@ private struct JoinNetworkCard: View {
     @ObservedObject var model: AppModel
     @State private var inviteInput = ""
     @State private var qrScannerPresented = false
+    @State private var manualExpanded = false
+    @State private var manualAdminId = ""
+    @State private var manualNetworkId = ""
+
+    private var manualAdminInvalid: Bool {
+        let trimmed = manualAdminId.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && !isValidDeviceId(trimmed)
+    }
+
+    private var canSubmitManual: Bool {
+        let admin = manualAdminId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mesh = manualNetworkId.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !admin.isEmpty && !mesh.isEmpty && isValidDeviceId(admin)
+    }
 
     var body: some View {
         AppCard {
@@ -213,6 +293,46 @@ private struct JoinNetworkCard: View {
                 }
                 Spacer()
             }
+
+            DisclosureGroup("Add manually", isExpanded: $manualExpanded) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Enter the admin's Device ID and the network ID. They must add your Device ID too.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("Admin Device ID (npub1…)", text: $manualAdminId)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textFieldStyle(.roundedBorder)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.red, lineWidth: manualAdminInvalid ? 1 : 0)
+                        )
+                    if manualAdminInvalid {
+                        Text("Not a valid device ID")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                    TextField("Network ID", text: $manualNetworkId)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textFieldStyle(.roundedBorder)
+                    Button("Send join request") {
+                        let admin = manualAdminId.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let mesh = manualNetworkId.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if let invite = manualInviteJSON(adminNpub: admin, meshId: mesh) {
+                            model.importInvite(invite)
+                            manualAdminId = ""
+                            manualNetworkId = ""
+                            manualExpanded = false
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canSubmitManual)
+                }
+                .padding(.top, 6)
+            }
+            .font(.subheadline)
+
             if let network = model.activeNetwork {
                 if network.outboundJoinRequest != nil {
                     Pill("Join requested", tint: .orange)
@@ -238,54 +358,44 @@ private struct JoinNetworkCard: View {
     }
 }
 
-private struct DeviceListHeader: View {
-    let state: AppState
-    let network: NetworkState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(network.displayName)
-                .font(.headline)
-                .lineLimit(1)
-            Text(deviceCountText)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 2)
+/// Build a synthetic invite from an admin's Device ID + a mesh network ID,
+/// for the manual-join flow. The Rust core's `parse_network_invite`
+/// accepts a bare-JSON invite (no `nvpn://invite/` prefix needed) as long
+/// as it has v3, a non-empty network_id, and at least one admin. This
+/// gives the same result as importing the equivalent invite link: the
+/// network is added locally with the admin's npub, and a join request is
+/// queued so the admin can accept and propagate the roster.
+func manualInviteJSON(adminNpub: String, meshId: String) -> String? {
+    guard isValidDeviceId(adminNpub), !meshId.isEmpty else { return nil }
+    // NetworkInvite is serde(rename_all = "camelCase") on the Rust side.
+    let payload: [String: Any] = [
+        "v": 3,
+        "networkId": meshId,
+        "inviterNpub": adminNpub,
+        "admins": [adminNpub],
+        "participants": [],
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: payload, options: []) else {
+        return nil
     }
-
-    private var deviceCountText: String {
-        if network.expectedCount == 0 {
-            return "This device"
-        }
-        let word = network.expectedCount == 1 ? "device" : "devices"
-        return "\(network.onlineCount) online - \(network.expectedCount) \(word)"
-    }
+    return String(data: data, encoding: .utf8)
 }
 
+/// Admin-only sheet for adding a device to YOUR network. Two paths:
+/// share an invite (QR / copy / broadcast) for the other device to import,
+/// or directly add by Device ID. Joining someone else's network and
+/// finding nearby networks belong to the Add Network page, not here —
+/// they're the "I want IN to a network" direction, not "I want THEM in
+/// MY network".
 private struct AddDeviceSheet: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
-                // Three distinct flows, in order of "happens first" likelihood
-                // for a fresh user:
-                //   1. Join someone else's network (paste their invite)
-                //   2. Find networks broadcasting nearby (LAN discovery)
-                //   3. Share my network with others (QR / link / broadcast)
-                //   4. (admin only) Manually add another device by ID
-                // Previously all four lived under a single "Add Device" sheet
-                // title, which suggested they were variations of one action.
-                // They aren't — joining and inviting go in opposite directions.
-
-                JoinNetworkCard(model: model)
-                NearbyCard(model: model)
                 InviteToMyNetworkCard(model: model)
 
-                if let network = model.activeNetwork, network.localIsAdmin {
+                if let network = model.activeNetwork {
                     AddDeviceCard(network: network) { npub, alias in
                         model.dispatch(
                             NativeActions.addParticipant(networkId: network.id, npub: npub, alias: alias),

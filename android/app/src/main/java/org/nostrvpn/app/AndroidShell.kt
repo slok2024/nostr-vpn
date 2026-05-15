@@ -2,9 +2,11 @@ package org.nostrvpn.app
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -20,7 +22,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.NavigationBar
@@ -87,31 +92,32 @@ internal fun NostrVpnApp(
 ) {
     var page by remember { mutableStateOf(Page.Devices) }
     var showAddDevice by remember { mutableStateOf(false) }
+    var showAddNetwork by remember { mutableStateOf(false) }
     val network = state.activeNetwork
     Scaffold(
         containerColor = Color(0xFFF6F7F8),
         topBar = {
             MobileTopBar(
-                title = page.title,
                 state = state,
                 network = network,
                 dispatch = dispatch,
-                onAddDevice = if (page == Page.Devices && network != null) {
-                    { showAddDevice = true }
-                } else {
-                    null
-                },
+                onAddNetwork = { showAddNetwork = true },
             )
         },
         bottomBar = {
-            NavigationBar(containerColor = Color.White) {
-                Page.entries.forEach { item ->
-                    NavigationBarItem(
-                        selected = page == item,
-                        onClick = { page = item },
-                        icon = { NavIcon(item, selected = page == item) },
-                        label = { Text(item.title) },
-                    )
+            // Bottom nav only makes sense once a network exists. With no
+            // network the only meaningful action is Add Network, which we
+            // surface as the entire screen body.
+            if (network != null) {
+                NavigationBar(containerColor = Color.White) {
+                    Page.entries.forEach { item ->
+                        NavigationBarItem(
+                            selected = page == item,
+                            onClick = { page = item },
+                            icon = { NavIcon(item, selected = page == item) },
+                            label = { Text(item.title) },
+                        )
+                    }
                 }
             }
         },
@@ -126,33 +132,45 @@ internal fun NostrVpnApp(
             if (state.error.isNotBlank()) {
                 item { Notice(state.error) }
             }
-            when (page) {
-                Page.Devices -> devicesPage(state, network, scanQr, dispatch)
-                Page.ExitNodes -> exitNodesPage(state, network, dispatch)
-                Page.Settings -> settingsPage(state, network, dispatch)
+            if (network == null) {
+                addNetworkBody(state, scanQr, dispatch)
+            } else {
+                when (page) {
+                    Page.Devices -> devicesPage(state, network, scanQr, dispatch, onAddDevice = { showAddDevice = true })
+                    Page.ExitNodes -> exitNodesPage(state, network, dispatch)
+                    Page.Settings -> settingsPage(state, network, dispatch)
+                }
             }
         }
     }
-    if (showAddDevice) {
+    if (showAddDevice && network != null) {
         AddDevicesDialog(
             state = state,
             network = network,
             qrJson = qrJson,
-            scanQr = scanQr,
             dispatch = dispatch,
             onDismiss = { showAddDevice = false },
+        )
+    }
+    if (showAddNetwork) {
+        AddNetworkDialog(
+            state = state,
+            scanQr = scanQr,
+            dispatch = dispatch,
+            onDismiss = { showAddNetwork = false },
         )
     }
 }
 
 @Composable
 private fun MobileTopBar(
-    title: String,
     state: AppState,
     network: NetworkState?,
     dispatch: (JSONObject) -> Unit,
-    onAddDevice: (() -> Unit)?,
+    onAddNetwork: () -> Unit,
 ) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    val inactive = state.networks.filter { !it.enabled }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -160,15 +178,44 @@ private fun MobileTopBar(
             .padding(horizontal = 18.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Text(networkTitle(network), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        if (onAddDevice != null) {
-            FilledIconButton(onClick = onAddDevice) {
-                PlusIcon()
+        Box(Modifier.weight(1f)) {
+            // Single dropdown: switch network OR add a new one. Whole row
+            // tappable so it reads as a "current network: name" affordance.
+            Row(
+                modifier = Modifier.clickable { menuExpanded = true },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    networkTitle(network),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("▾", color = Muted)
             }
-            Spacer(Modifier.width(10.dp))
+            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                inactive.forEach { saved ->
+                    DropdownMenuItem(
+                        text = { Text(saved.name.ifBlank { "Private network" }) },
+                        onClick = {
+                            menuExpanded = false
+                            dispatch(NativeActions.setNetworkEnabled(saved.id, true))
+                        },
+                    )
+                }
+                if (inactive.isNotEmpty()) {
+                    HorizontalDivider()
+                }
+                DropdownMenuItem(
+                    text = { Text("Add network") },
+                    onClick = {
+                        menuExpanded = false
+                        onAddNetwork()
+                    },
+                )
+            }
         }
         Switch(
             checked = state.vpnEnabled,
@@ -256,15 +303,21 @@ private fun NavIcon(page: Page, selected: Boolean) {
 
 private fun androidx.compose.foundation.lazy.LazyListScope.devicesPage(
     state: AppState,
-    network: NetworkState?,
+    network: NetworkState,
     scanQr: () -> Unit,
     dispatch: (JSONObject) -> Unit,
+    onAddDevice: () -> Unit,
 ) {
-    if (network == null) {
-        item { NetworkSetupCard(state, scanQr, dispatch) }
-        return
+    if (network.localIsAdmin) {
+        item {
+            Button(
+                onClick = onAddDevice,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Add device")
+            }
+        }
     }
-    item { DeviceListHeader(state, network) }
     items(sortedParticipants(network.participants, state), key = { it.pubkeyHex.ifBlank { it.npub } }) { participant ->
         ParticipantRow(state, participant)
     }
@@ -384,34 +437,132 @@ private fun NetworkSetupCard(
             OutlinedButton(onClick = scanQr) {
                 Text("Scan")
             }
+        }
+
+        // Manual join: build a synthetic invite from admin device id +
+        // mesh network id when the user doesn't have a copy/paste invite.
+        // The Rust core's parse_network_invite accepts a bare-JSON
+        // payload; we just hand it the JSON. Result is identical to
+        // importing an invite link: network is added locally with
+        // admin's npub, join request queued for the admin to accept.
+        Spacer(Modifier.height(8.dp))
+        var manualExpanded by remember { mutableStateOf(false) }
+        var manualAdminId by remember { mutableStateOf("") }
+        var manualNetworkId by remember { mutableStateOf("") }
+        TextButton(onClick = { manualExpanded = !manualExpanded }) {
+            Text(if (manualExpanded) "Add manually ▴" else "Add manually ▾")
+        }
+        if (manualExpanded) {
+            val adminTrim = manualAdminId.trim()
+            val meshTrim = manualNetworkId.trim()
+            val adminInvalid = adminTrim.isNotEmpty() && !isValidDeviceId(adminTrim)
+            val canSubmit = adminTrim.isNotEmpty() && meshTrim.isNotEmpty() && !adminInvalid
+            Text(
+                "Enter the admin's Device ID and the network ID. They must add your Device ID too.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Muted,
+            )
+            OutlinedTextField(
+                value = manualAdminId,
+                onValueChange = { manualAdminId = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Admin Device ID (npub1…)") },
+                isError = adminInvalid,
+                supportingText = if (adminInvalid) {
+                    { Text("Not a valid device ID") }
+                } else {
+                    null
+                },
+            )
+            OutlinedTextField(
+                value = manualNetworkId,
+                onValueChange = { manualNetworkId = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Network ID") },
+            )
             Button(
-                enabled = inviteInput.isNotBlank(),
+                enabled = canSubmit,
                 onClick = {
-                    dispatch(NativeActions.importInvite(inviteInput.trim()))
-                    inviteInput = ""
+                    val invite = manualInviteJson(adminTrim, meshTrim)
+                    if (invite != null) {
+                        dispatch(NativeActions.importInvite(invite))
+                        manualAdminId = ""
+                        manualNetworkId = ""
+                        manualExpanded = false
+                    }
                 },
             ) {
-                Text("Import")
+                Text("Send join request")
             }
         }
     }
     NearbyCard(state, dispatch)
 }
 
-@Composable
-private fun AddDevicesDialog(
+internal fun manualInviteJson(adminNpub: String, meshId: String): String? {
+    if (!isValidDeviceId(adminNpub) || meshId.isBlank()) return null
+    // NetworkInvite is serde(rename_all = "camelCase") on the Rust side.
+    val payload = JSONObject()
+    payload.put("v", 3)
+    payload.put("networkId", meshId)
+    payload.put("inviterNpub", adminNpub)
+    payload.put("admins", org.json.JSONArray().put(adminNpub))
+    payload.put("participants", org.json.JSONArray())
+    return payload.toString()
+}
+
+// LazyListScope wrapper for the Add Network body, used as the entire
+// screen content when there is no active network. Mirrors the in-dialog
+// content we show when the user picks "Add network" from the header
+// switcher with an existing network already in place.
+private fun androidx.compose.foundation.lazy.LazyListScope.addNetworkBody(
     state: AppState,
-    network: NetworkState?,
-    qrJson: (String) -> JSONObject,
+    scanQr: () -> Unit,
+    dispatch: (JSONObject) -> Unit,
+) {
+    item { NetworkSetupCard(state, scanQr, dispatch) }
+    item { NearbyCard(state, dispatch) }
+}
+
+@Composable
+private fun AddNetworkDialog(
+    state: AppState,
     scanQr: () -> Unit,
     dispatch: (JSONObject) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var inviteInput by remember { mutableStateOf("") }
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val clipboard = remember(context) {
-        context.getSystemService(android.content.ClipboardManager::class.java)
-    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Network") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                NetworkSetupCard(state, scanQr, dispatch)
+                NearbyCard(state, dispatch)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Done") }
+        },
+    )
+}
+
+/// Admin-only sheet for adding a device to YOUR network. Two paths:
+/// share an invite, or directly add by Device ID. Joining someone
+/// else's network and finding nearby networks belong to Add Network,
+/// not here.
+@Composable
+private fun AddDevicesDialog(
+    state: AppState,
+    network: NetworkState,
+    qrJson: (String) -> JSONObject,
+    dispatch: (JSONObject) -> Unit,
+    onDismiss: () -> Unit,
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Device") },
@@ -420,10 +571,14 @@ private fun AddDevicesDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("Invite Devices", style = MaterialTheme.typography.titleMedium)
+                Text("Invite to my network", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Share this code with another device to give it access to your network.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Muted,
+                )
                 if (state.activeNetworkInvite.isNotBlank()) {
                     QrCode(invite = state.activeNetworkInvite, qrJson = qrJson)
-                    Text("Your invite", color = Muted, style = MaterialTheme.typography.bodySmall)
                     CopyLine(state.activeNetworkInvite)
                 }
                 Button(onClick = {
@@ -445,54 +600,13 @@ private fun AddDevicesDialog(
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("Join Network", style = MaterialTheme.typography.titleMedium)
-                Text("Paste invite code", color = Muted, style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(
-                    value = inviteInput,
-                    onValueChange = { newValue ->
-                        inviteInput = newValue
-                        // Auto-import on a recognisable invite — saves the
-                        // user a tap. Clearing prevents re-firing.
-                        val trimmed = newValue.trim()
-                        if (trimmed.startsWith("nvpn://invite/", ignoreCase = true)) {
-                            dispatch(NativeActions.importInvite(trimmed))
-                            inviteInput = ""
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("nvpn://invite/…") },
+                Text("Add by Device ID", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Manual pairing: enter the other device's ID (starts with npub1). They also need to add yours.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Muted,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = {
-                        val item = clipboard?.primaryClip?.getItemAt(0)?.coerceToText(context)
-                        item?.toString()?.let { inviteInput = it.trim() }
-                    }) {
-                        Text("Paste")
-                    }
-                    OutlinedButton(onClick = scanQr) {
-                        Text("Scan")
-                    }
-                }
-                if (network?.outboundJoinRequest == true) {
-                    Pill("Join requested", Color(0xFFFFF7ED), Color(0xFF9A3412))
-                } else if (!network?.inviteInviterNpub.isNullOrBlank()) {
-                    Button(onClick = {
-                        dispatch(JSONObject().put("type", "request_network_join").put("networkId", network!!.id))
-                    }) {
-                        Text("Request Access")
-                    }
-                }
-                if (network?.localIsAdmin == true) {
-                    Text("Add by Device ID", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "Manual pairing: enter the other device's ID (starts with npub1). They also need to add yours.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Muted,
-                    )
-                    AddParticipantForm(network, dispatch)
-                }
-                NearbyCard(state, dispatch)
+                AddParticipantForm(network, dispatch)
             }
         },
         confirmButton = {

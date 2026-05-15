@@ -172,11 +172,36 @@ struct RootView: View {
     }
 
     private var headerIdentity: some View {
-        Text(activeNetwork.map(displayName) ?? "Nostr VPN")
-            .font(.caption.weight(.semibold))
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .frame(width: 180, alignment: .leading)
+        Menu {
+            ForEach(manager.inactiveNetworks, id: \.id) { network in
+                Button {
+                    manager.setNetworkEnabled(networkId: network.id, enabled: true)
+                } label: {
+                    Label(displayName(network), systemImage: "rectangle.stack")
+                }
+            }
+            if !manager.inactiveNetworks.isEmpty {
+                Divider()
+            }
+            Button {
+                selectedSidebarItem = .sharing
+            } label: {
+                Label("Add network", systemImage: "plus")
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(activeNetwork.map(displayName) ?? "Nostr VPN")
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 200, alignment: .leading)
     }
 
     private var headerVpnControl: some View {

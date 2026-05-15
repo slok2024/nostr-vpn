@@ -230,6 +230,65 @@ fn importing_current_invite_queues_join_request_to_admin() {
 }
 
 #[test]
+fn manual_join_invite_with_admin_id_and_mesh_id_queues_join_request() {
+    // Mirrors the iOS / Android manual-join UI: user has the admin's
+    // Device ID (npub) and the mesh network id but no invite link, so
+    // the shell builds a synthetic JSON invite shaped like
+    //   {"v":3,"networkId":"...","inviterNpub":"npub1...","admins":["npub1..."]}
+    // and hands it to import_network_invite. The end state must be the
+    // same as importing the equivalent invite link: network present
+    // locally with the admin in its admin set, join request queued for
+    // the admin to accept (which then sends back the roster including
+    // us once the admin Add-by-Device-IDs us).
+    let admin_npub = Keys::generate()
+        .public_key()
+        .to_bech32()
+        .expect("admin npub");
+    let admin_hex = normalize_nostr_pubkey(&admin_npub).expect("normalize admin");
+    let manual_invite = serde_json::json!({
+        "v": 3,
+        "networkId": "abcdef0123456789",
+        "inviterNpub": admin_npub,
+        "admins": [admin_npub],
+        "participants": []
+    })
+    .to_string();
+
+    let mut config = AppConfig::generated();
+    let parsed = parse_network_invite(&manual_invite).expect("manual invite parses");
+    apply_network_invite_to_active_network(&mut config, &parsed)
+        .expect("manual invite applies");
+    let queued = queue_active_network_join_request(&mut config)
+        .expect("join request queues");
+
+    let network = config.active_network();
+    assert!(queued, "join request should be queued for the admin");
+    assert_eq!(
+        network.network_id, "abcdef0123456789",
+        "mesh id from manual invite should land on the active network"
+    );
+    assert!(
+        network.admins.iter().any(|admin| admin == &admin_hex),
+        "admin Device ID must end up in the active network's admin set"
+    );
+    assert_eq!(
+        network
+            .outbound_join_request
+            .as_ref()
+            .expect("pending join request")
+            .recipient,
+        admin_hex,
+        "join request must be addressed to the admin from the manual invite"
+    );
+    // Manual invite carries no participants — the requester is added
+    // only after the admin accepts and broadcasts the updated roster.
+    assert!(
+        network.participants.is_empty(),
+        "no participants until the admin accepts and propagates the roster"
+    );
+}
+
+#[test]
 fn config_overrides_set_the_active_network_mesh_id() {
     let nonce = unix_timestamp();
     let dir = std::env::temp_dir().join(format!("nvpn-load-config-override-{nonce}"));
