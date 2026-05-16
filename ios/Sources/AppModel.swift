@@ -51,7 +51,11 @@ final class AppModel: ObservableObject {
                 self?.refresh()
             }
         }
-        runLaunchAutomationIfRequested()
+        let launchAutomationHandled = runLaunchAutomationIfRequested()
+        if !launchAutomationHandled, state.autoconnect, !state.vpnEnabled, activeNetwork != nil {
+            debugLog("autoconnect starting PacketTunnel")
+            setVpnEnabled(true)
+        }
     }
 
     func refresh() {
@@ -150,9 +154,9 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func runLaunchAutomationIfRequested() {
+    private func runLaunchAutomationIfRequested() -> Bool {
         guard !launchAutomationHandled else {
-            return
+            return false
         }
         launchAutomationHandled = true
 
@@ -160,9 +164,13 @@ final class AppModel: ObservableObject {
         debugLog("launch automation args=\(Array(arguments).sorted())")
         if arguments.contains("--nvpn-connect") {
             setVpnEnabled(true, force: true)
-        } else if arguments.contains("--nvpn-disconnect") {
-            setVpnEnabled(false, force: true)
+            return true
         }
+        if arguments.contains("--nvpn-disconnect") {
+            setVpnEnabled(false, force: true)
+            return true
+        }
+        return false
     }
 
     func qrMatrix(for invite: String) -> QrMatrix {
