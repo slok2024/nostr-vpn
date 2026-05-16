@@ -257,45 +257,42 @@ struct RootView: View {
     }
 
     private var headerIdentity: some View {
-        Menu {
-            ForEach(state.networks, id: \.id) { network in
-                Button {
-                    shownNetworkId = network.id
-                    selectedSidebarItem = .devices
-                } label: {
-                    HStack {
-                        if state.networks.count > 1 {
-                            networkStatusDot(network)
-                        }
-                        Text(displayName(network))
-                    }
+        HStack(spacing: 6) {
+            if let shownNetwork, state.networks.count > 1 {
+                networkStatusDot(shownNetwork)
+            }
+            Picker("", selection: headerNetworkSelection) {
+                ForEach(state.networks, id: \.id) { network in
+                    Text(displayName(network))
+                        .tag(network.id)
                 }
             }
-            if !state.networks.isEmpty {
-                Divider()
-            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .disabled(state.networks.isEmpty)
+            .frame(maxWidth: 160, alignment: .leading)
+
             Button {
                 addNetworkPresented = true
             } label: {
-                Label("Add network", systemImage: "plus")
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .semibold))
             }
-        } label: {
-            HStack(spacing: 4) {
-                if let shownNetwork, state.networks.count > 1 {
-                    networkStatusDot(shownNetwork)
-                }
-                Text(shownNetwork.map(displayName) ?? "Nostr VPN")
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
+            .buttonStyle(.borderless)
+            .help("Add network")
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .frame(width: 200, alignment: .leading)
+        .frame(width: 220, alignment: .leading)
+    }
+
+    private var headerNetworkSelection: Binding<String> {
+        Binding(
+            get: { shownNetwork?.id ?? state.networks.first?.id ?? "" },
+            set: { networkId in
+                guard !networkId.isEmpty else { return }
+                shownNetworkId = networkId
+                selectedSidebarItem = .devices
+            }
+        )
     }
 
     private func networkStatusDot(_ network: NativeNetworkState) -> some View {
@@ -744,7 +741,7 @@ struct RootView: View {
 
     private func inviteSection(_ network: NativeNetworkState) -> some View {
         let invite = network.enabled ? state.activeNetworkInvite : ""
-        surface {
+        return surface {
             HStack(alignment: .top, spacing: 18) {
                 InviteQRCodeView(invite: invite)
                     .frame(width: 150, height: 150)
