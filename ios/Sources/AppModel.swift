@@ -160,8 +160,15 @@ final class AppModel: ObservableObject {
         }
         launchAutomationHandled = true
 
-        let arguments = Set(ProcessInfo.processInfo.arguments)
+        let rawArguments = ProcessInfo.processInfo.arguments
+        let arguments = Set(rawArguments)
         debugLog("launch automation args=\(Array(arguments).sorted())")
+        if arguments.contains("--nvpn-debug-exit-probe") {
+            Task {
+                await runDebugExitProbe(arguments: rawArguments)
+            }
+            return true
+        }
         if arguments.contains("--nvpn-connect") {
             setVpnEnabled(true, force: true)
             return true
@@ -171,6 +178,148 @@ final class AppModel: ObservableObject {
             return true
         }
         return false
+    }
+
+    private func runDebugExitProbe(arguments: [String]) async {
+        #if DEBUG
+        let urlString = Self.argumentValue(after: "--nvpn-debug-fetch-url", in: arguments)
+            ?? "https://am.i.mullvad.net/json"
+        let resultName = Self.argumentValue(after: "--nvpn-debug-result", in: arguments)
+            ?? "debug-exit-probe.json"
+        let waitSeconds = Self.argumentValue(after: "--nvpn-debug-wait-seconds", in: arguments)
+            .flatMap(Double.init) ?? 12
+        let exitNode = Self.argumentValue(after: "--nvpn-debug-exit-node", in: arguments)
+        let clearExit = arguments.contains("--nvpn-debug-clear-exit")
+        var result: [String: Any] = [
+            "url": urlString,
+            "startedAt": ISO8601DateFormatter().string(from: Date()),
+        ]
+
+        await stopVpnForDebugProbe()
+
+        if let exitNode, !exitNode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            dispatch(NativeActions.updateSettings([
+                "exitNode": exitNode,
+                "wireguardExitEnabled": false,
+            ]))
+        } else if clearExit {
+            dispatch(NativeActions.updateSettings([
+                "exitNode": "",
+                "wireguardExitEnabled": false,
+            ]))
+        }
+        refresh()
+
+        if let error = await startVpnForDebugProbe() {
+            result["startError"] = error
+        }
+
+        if waitSeconds > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(waitSeconds * 1_000_000_000))
+        }
+        refresh()
+        result["exitNode"] = state.exitNode
+        result["vpnEnabled"] = state.vpnEnabled
+        result["vpnActive"] = state.vpnActive
+        result["connectedPeerCount"] = state.connectedPeerCount
+        result["expectedPeerCount"] = state.expectedPeerCount
+
+        for (key, value) in await fetchDebugProbe(urlString: urlString) {
+            result[key] = value
+        }
+        result["finishedAt"] = ISO8601DateFormatter().string(from: Date())
+        writeDebugProbeResult(result, name: resultName)
+        #endif
+    }
+
+    private func stopVpnForDebugProbe() async {
+        refresh()
+        guard state.vpnEnabled else {
+            return
+        }
+        dispatch(NativeActions.disconnectVpn())
+        do {
+            try await vpnController.stop()
+        } catch {
+            debugLog("debug probe stop failed: \(String(describing: error))")
+        }
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        refresh()
+    }
+
+    private func startVpnForDebugProbe() async -> String? {
+        let tunnelConfigJson = core.mobileTunnelConfigJson()
+        if !state.vpnEnabled {
+            dispatch(NativeActions.connectVpn())
+        }
+        do {
+            try await vpnController.start(
+                state: state,
+                network: activeNetwork,
+                tunnelConfigJson: tunnelConfigJson
+            )
+            return nil
+        } catch {
+            dispatch(NativeActions.disconnectVpn())
+            let message = String(describing: error)
+            debugLog("debug probe start failed: \(message)")
+            return message
+        }
+    }
+
+    private func fetchDebugProbe(urlString: String) async -> [String: Any] {
+        var result: [String: Any] = [:]
+        guard let url = URL(string: urlString) else {
+            result["fetchError"] = "Invalid URL"
+            return result
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 20
+        configuration.timeoutIntervalForResource = 25
+        let session = URLSession(configuration: configuration)
+        do {
+            let (data, response) = try await session.data(from: url)
+            if let http = response as? HTTPURLResponse {
+                result["statusCode"] = http.statusCode
+            }
+            if let body = String(data: data, encoding: .utf8) {
+                result["body"] = String(body.prefix(4096))
+            } else {
+                result["byteCount"] = data.count
+            }
+        } catch {
+            result["fetchError"] = String(describing: error)
+        }
+        return result
+    }
+
+    private func writeDebugProbeResult(_ result: [String: Any], name: String) {
+        guard let supportDir else {
+            return
+        }
+        let safeName = name
+            .split(separator: "/")
+            .last
+            .map(String.init) ?? "debug-exit-probe.json"
+        let url = supportDir.appendingPathComponent(safeName)
+        guard JSONSerialization.isValidJSONObject(result),
+              let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
+        else {
+            return
+        }
+        try? data.write(to: url, options: .atomic)
+        debugLog("debug probe wrote \(url.path)")
+    }
+
+    private static func argumentValue(after name: String, in arguments: [String]) -> String? {
+        guard let index = arguments.firstIndex(of: name) else {
+            return nil
+        }
+        let valueIndex = arguments.index(after: index)
+        guard valueIndex < arguments.endIndex else {
+            return nil
+        }
+        return arguments[valueIndex]
     }
 
     func qrMatrix(for invite: String) -> QrMatrix {
