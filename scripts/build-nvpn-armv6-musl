@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET=arm-unknown-linux-musleabihf
+IMAGE=${NVPN_ARMV6_MUSL_IMAGE:-messense/rust-musl-cross:arm-musleabihf}
+WORKSPACE=$(git rev-parse --show-toplevel)
+BUILD_ROOT=${NVPN_ARMV6_BUILD_ROOT:-${TMPDIR:-/tmp}}
+TARGET_DIR=${NVPN_ARMV6_TARGET_DIR:-$WORKSPACE/target/nvpn-armv6-musl}
+WORK_DIR=$(mktemp -d "$BUILD_ROOT/nvpn-armv6-musl.XXXXXX")
+
+cleanup() {
+  if [[ ${NVPN_ARMV6_KEEP_WORK:-0} != 1 ]]; then
+    rm -rf "$WORK_DIR"
+  fi
+}
+trap cleanup EXIT
+
+git -C "$WORKSPACE" archive --format=tar HEAD | tar -x -C "$WORK_DIR"
+mkdir -p "$TARGET_DIR"
+
+docker run --rm \
+  -v "$WORK_DIR":/home/rust/src \
+  -v "$TARGET_DIR":/home/rust/src/target \
+  -e BINDGEN_EXTRA_CLANG_ARGS_arm_unknown_linux_musleabihf=-I/usr/local/musl/arm-unknown-linux-musleabihf/include \
+  "$IMAGE" \
+  bash -se <<'CONTAINER'
+set -euo pipefail
+
+cd /home/rust/src
+cargo fetch -p nvpn --target arm-unknown-linux-musleabihf
+
+rustables_src=$(find "${CARGO_HOME:-/root/.cargo}/registry/src" -maxdepth 3 -type d -name rustables-0.8.7 -print -quit)
+if [[ -z "$rustables_src" ]]; then
+  echo "rustables-0.8.7 was not found in the cargo registry after cargo fetch" >&2
+  exit 1
+fi
+
+mkdir -p vendor
+cp -a "$rustables_src" vendor/rustables-0.8.7
+
+if ! grep -q '^rustables = { path = "vendor/rustables-0.8.7" }' Cargo.toml; then
+  if grep -q '^\[patch.crates-io\]' Cargo.toml; then
+    sed -i '/^\[patch.crates-io\]/a rustables = { path = "vendor/rustables-0.8.7" }' Cargo.toml
+  else
+    patch -p0 <<'PATCH'
+--- Cargo.toml
++++ Cargo.toml
+@@
+ nostr-vpn-wintun = { version = "4.0.16", path = "crates/nostr-vpn-wintun" }
+ 
++[patch.crates-io]
++rustables = { path = "vendor/rustables-0.8.7" }
++
+ [workspace.lints.clippy]
+PATCH
+  fi
+fi
+
+if ! grep -q 'NFTA_CHAIN_FLAGS' vendor/rustables-0.8.7/build.rs; then
+  patch -p0 <<'PATCH'
+--- vendor/rustables-0.8.7/build.rs
++++ vendor/rustables-0.8.7/build.rs
+@@
+-    let s = bindings.to_string().replace(" ; ", ";\n");
++    let mut s = bindings.to_string().replace(" ; ", ";\n");
++    if !s.contains("NFTA_CHAIN_FLAGS") {
++        s = s.replace(
++            "pub const __NFTA_CHAIN_MAX: nft_chain_attributes = 10;\n",
++            concat!(
++                "pub const NFTA_CHAIN_FLAGS: nft_chain_attributes = 10;\n",
++                "pub const NFTA_CHAIN_ID: nft_chain_attributes = 11;\n",
++                "pub const NFTA_CHAIN_USERDATA: nft_chain_attributes = 12;\n",
++                "pub const __NFTA_CHAIN_MAX: nft_chain_attributes = 13;\n",
++            ),
++        );
++    }
+     let s = reformat_units(&s);
+PATCH
+fi
+
+cargo build -p nvpn --bin nvpn --release --target arm-unknown-linux-musleabihf
+CONTAINER
+
+BIN="$TARGET_DIR/$TARGET/release/nvpn"
+if [[ ! -x "$BIN" ]]; then
+  echo "expected output binary missing: $BIN" >&2
+  exit 1
+fi
+
+if [[ -n ${NVPN_SMOKE_HOST:-} ]]; then
+  REMOTE_PATH=${NVPN_SMOKE_PATH:-/tmp/nvpn-armv6-smoke}
+  scp "$BIN" "$NVPN_SMOKE_HOST:$REMOTE_PATH"
+  ssh "$NVPN_SMOKE_HOST" "chmod +x '$REMOTE_PATH' && '$REMOTE_PATH' --version"
+fi
+
+printf '%s\n' "$BIN"
