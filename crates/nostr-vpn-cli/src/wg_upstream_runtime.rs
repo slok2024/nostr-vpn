@@ -36,6 +36,8 @@ use tokio::task::JoinHandle;
 const WG_TUN_CHANNEL_CAPACITY: usize = 1024;
 #[cfg(target_os = "windows")]
 const WG_WINTUN_READ_BURST: usize = 64;
+#[cfg(target_os = "macos")]
+const MACOS_WG_DEFAULT_ROUTE_TARGETS: &[&str] = &["0.0.0.0/1", "128.0.0.0/1"];
 
 /// Spin up a userspace WG runtime over a POSIX `TunSocket` (Linux tun
 /// or macOS utun). Builds the platform-specific reader+writer tasks
@@ -561,22 +563,21 @@ fn install_default_via_iface(iface: &str, _src: &str) -> Result<()> {
     }
     #[cfg(target_os = "macos")]
     {
-        // macOS default-route replacement: delete the existing default
-        // first (route add default would otherwise fail with "File
-        // exists"), then add via the tun interface.
-        let _ = ProcessCommand::new("route")
-            .arg("-n")
-            .arg("delete")
-            .arg("default")
-            .status();
-        run_checked(
-            ProcessCommand::new("route")
-                .arg("-n")
-                .arg("add")
-                .arg("default")
-                .arg("-interface")
-                .arg(iface),
-        )?;
+        // Keep the underlay default route intact and steer ordinary
+        // internet traffic through the WG utun with two covering /1s.
+        // This mirrors the main macOS tunnel path and avoids restoring
+        // an accidentally interface-scoped default during cleanup.
+        for target in MACOS_WG_DEFAULT_ROUTE_TARGETS {
+            run_checked(
+                ProcessCommand::new("route")
+                    .arg("-n")
+                    .arg("add")
+                    .arg("-net")
+                    .arg(target)
+                    .arg("-interface")
+                    .arg(iface),
+            )?;
+        }
     }
     Ok(())
 }
@@ -616,15 +617,48 @@ impl FullDefaultRoute {
                 .arg("-interface")
                 .arg(&self.iface)
                 .status();
-            run_checked(
-                ProcessCommand::new("route")
+            for target in MACOS_WG_DEFAULT_ROUTE_TARGETS {
+                let _ = ProcessCommand::new("route")
                     .arg("-n")
-                    .arg("add")
-                    .arg("default")
-                    .arg(&self.original_default.gateway)
-                    .arg("-ifscope")
-                    .arg(&self.original_default.interface),
-            )?;
+                    .arg("delete")
+                    .arg("-net")
+                    .arg(target)
+                    .arg("-interface")
+                    .arg(&self.iface)
+                    .status();
+            }
+            let mut change = ProcessCommand::new("route");
+            change
+                .arg("-n")
+                .arg("change")
+                .arg("default")
+                .arg(&self.original_default.gateway);
+            if run_checked(&mut change).is_err() {
+                run_checked(
+                    ProcessCommand::new("route")
+                        .arg("-n")
+                        .arg("add")
+                        .arg("default")
+                        .arg(&self.original_default.gateway),
+                )?;
+            }
+            let _ = ProcessCommand::new("route")
+                .arg("-n")
+                .arg("delete")
+                .arg("-host")
+                .arg(&target_str)
+                .arg(&self.original_default.gateway)
+                .arg("-ifscope")
+                .arg(&self.original_default.interface)
+                .status();
+            let _ = ProcessCommand::new("route")
+                .arg("-n")
+                .arg("delete")
+                .arg("-host")
+                .arg(&target_str)
+                .arg("-ifscope")
+                .arg(&self.original_default.interface)
+                .status();
             let _ = ProcessCommand::new("route")
                 .arg("-n")
                 .arg("delete")
@@ -659,10 +693,7 @@ impl FullDefaultRoute {
         }
         #[cfg(target_os = "macos")]
         {
-            format!(
-                "default via {} -ifscope {}",
-                self.original_default.gateway, self.original_default.interface
-            )
+            format!("default via {}", self.original_default.gateway)
         }
     }
 }
