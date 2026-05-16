@@ -11,12 +11,13 @@ final class AppModel: ObservableObject {
 
     private let core: NativeCoreClient
     private let vpnController = PacketTunnelController()
+    private let supportDir: URL?
     private var refreshTask: Task<Void, Never>?
     private var copyClearTask: Task<Void, Never>?
     private var launchAutomationHandled = false
 
     init() {
-        let supportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+        supportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first?
             .appendingPathComponent("Nostr VPN", isDirectory: true)
         if let supportDir {
@@ -28,6 +29,7 @@ final class AppModel: ObservableObject {
         // xcodeproj and the bundled nvpn binary.
         core = NativeCoreClient(dataDir: supportDir?.path ?? "", appVersion: "")
         state = core.state()
+        debugLog("init args=\(ProcessInfo.processInfo.arguments)")
     }
 
     deinit {
@@ -72,29 +74,36 @@ final class AppModel: ObservableObject {
     }
 
     private func setVpnEnabled(_ enabled: Bool, force: Bool = false) {
+        debugLog("setVpnEnabled enabled=\(enabled) force=\(force) stateEnabled=\(state.vpnEnabled)")
         Task {
             if enabled {
                 guard force || !state.vpnEnabled else {
+                    debugLog("connect skipped: already enabled")
                     return
                 }
                 let tunnelConfigJson = core.mobileTunnelConfigJson()
+                debugLog("mobileTunnelConfigJson len=\(tunnelConfigJson.count)")
                 if state.vpnEnabled {
                     statusMessage = "Turning VPN on"
                 } else {
                     dispatch(NativeActions.connectVpn(), status: "Turning VPN on")
                 }
+                debugLog("starting PacketTunnel stateEnabled=\(state.vpnEnabled) network=\(activeNetwork?.id ?? "nil")")
                 do {
                     try await vpnController.start(
                         state: state,
                         network: activeNetwork,
                         tunnelConfigJson: tunnelConfigJson
                     )
+                    debugLog("PacketTunnel start returned success")
                 } catch {
                     dispatch(NativeActions.disconnectVpn(), status: "Turning VPN off")
                     statusMessage = error.localizedDescription
+                    debugLog("PacketTunnel start failed: \(String(describing: error))")
                 }
             } else {
                 guard force || state.vpnEnabled else {
+                    debugLog("disconnect skipped: already disabled")
                     return
                 }
                 if state.vpnEnabled {
@@ -102,8 +111,10 @@ final class AppModel: ObservableObject {
                 }
                 do {
                     try await vpnController.stop()
+                    debugLog("PacketTunnel stop returned success")
                 } catch {
                     statusMessage = error.localizedDescription
+                    debugLog("PacketTunnel stop failed: \(String(describing: error))")
                 }
             }
         }
@@ -118,6 +129,7 @@ final class AppModel: ObservableObject {
     }
 
     func handle(url: URL) {
+        debugLog("handle url=\(url.absoluteString)")
         let raw = url.absoluteString
         if raw.lowercased().hasPrefix("nvpn://invite/") {
             importInvite(raw)
@@ -145,6 +157,7 @@ final class AppModel: ObservableObject {
         launchAutomationHandled = true
 
         let arguments = Set(ProcessInfo.processInfo.arguments)
+        debugLog("launch automation args=\(Array(arguments).sorted())")
         if arguments.contains("--nvpn-connect") {
             setVpnEnabled(true, force: true)
         } else if arguments.contains("--nvpn-disconnect") {
@@ -198,5 +211,27 @@ final class AppModel: ObservableObject {
 
         let model = UIDevice.current.model.trimmingCharacters(in: .whitespacesAndNewlines)
         return model.isEmpty ? "iOS device" : model
+    }
+
+    private func debugLog(_ message: String) {
+        #if DEBUG
+        guard let supportDir else {
+            return
+        }
+        let line = "[\(Date())] \(message)\n"
+        guard let data = line.data(using: .utf8) else {
+            return
+        }
+        let logUrl = supportDir.appendingPathComponent("app-debug.log")
+        if FileManager.default.fileExists(atPath: logUrl.path),
+           let handle = try? FileHandle(forWritingTo: logUrl)
+        {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            try? handle.close()
+        } else {
+            try? data.write(to: logUrl)
+        }
+        #endif
     }
 }
