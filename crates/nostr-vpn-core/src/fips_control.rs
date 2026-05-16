@@ -24,7 +24,29 @@ pub struct PeerCapabilities {
     #[serde(default)]
     pub advertised_routes: Vec<String>,
     #[serde(default)]
+    pub endpoint_hints: Vec<PeerEndpointHint>,
+    #[serde(default)]
     pub signed_at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerEndpointHint {
+    #[serde(default = "default_peer_endpoint_hint_transport")]
+    pub transport: String,
+    pub addr: String,
+}
+
+impl PeerEndpointHint {
+    pub fn udp(addr: impl Into<String>) -> Self {
+        Self {
+            transport: default_peer_endpoint_hint_transport(),
+            addr: addr.into(),
+        }
+    }
+}
+
+fn default_peer_endpoint_hint_transport() -> String {
+    "udp".to_string()
 }
 
 const FIPS_CONTROL_MAGIC: &[u8] = b"NVPN-FIPS-CTRL\0";
@@ -197,6 +219,7 @@ mod tests {
             network_id: "mesh".to_string(),
             capabilities: PeerCapabilities {
                 advertised_routes: vec!["0.0.0.0/0".to_string(), "::/0".to_string()],
+                endpoint_hints: vec![PeerEndpointHint::udp("192.168.50.22:51820")],
                 signed_at: 99,
             },
         };
@@ -206,6 +229,26 @@ mod tests {
             .expect("decode")
             .expect("control frame");
         assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn old_capabilities_decode_with_empty_endpoint_hints() {
+        let caps: PeerCapabilities =
+            serde_json::from_str(r#"{"advertised_routes":["0.0.0.0/0"],"signed_at":99}"#)
+                .expect("decode old capabilities");
+
+        assert_eq!(caps.advertised_routes, vec!["0.0.0.0/0".to_string()]);
+        assert!(caps.endpoint_hints.is_empty());
+        assert_eq!(caps.signed_at, 99);
+    }
+
+    #[test]
+    fn endpoint_hints_default_to_udp_transport() {
+        let hint: PeerEndpointHint =
+            serde_json::from_str(r#"{"addr":"192.168.50.22:51820"}"#).expect("decode hint");
+
+        assert_eq!(hint.transport, "udp");
+        assert_eq!(hint.addr, "192.168.50.22:51820");
     }
 
     #[test]

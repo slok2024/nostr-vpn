@@ -13,7 +13,7 @@ use nostr_vpn_core::config::{
 };
 use nostr_vpn_core::data_plane::{MeshPeerStatus, PrivatePacket};
 use nostr_vpn_core::fips_control::{
-    FipsControlFrame, NetworkRoster, PeerCapabilities, decode_fips_control_frame,
+    FipsControlFrame, NetworkRoster, PeerCapabilities, PeerEndpointHint, decode_fips_control_frame,
     encode_fips_control_frame, encode_fips_control_messages,
 };
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
@@ -30,7 +30,7 @@ use std::io::{self, Write};
 use std::mem::ManuallyDrop;
 #[cfg(target_os = "linux")]
 use std::net::Ipv4Addr;
-use std::net::{SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, SocketAddr, SocketAddrV4};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::path::{Path, PathBuf};
@@ -308,6 +308,70 @@ fn tunnel_mtu_for_underlay(underlay_udp_mtu: u16) -> u16 {
 struct PeerCapabilitiesEntry {
     capabilities: PeerCapabilities,
     received_at: u64,
+}
+
+fn fips_peer_liveness(
+    last_seen_at: Option<u64>,
+    link_connected: bool,
+    peer_error: Option<String>,
+    now: u64,
+) -> (bool, Option<String>) {
+    let presence_connected = last_seen_at.is_some_and(|last_seen_at| {
+        now.saturating_sub(last_seen_at) <= FIPS_PEER_ONLINE_GRACE_SECS
+    });
+    if presence_connected {
+        return (true, None);
+    }
+    if link_connected {
+        return (false, Some("fips ping pending".to_string()));
+    }
+    (
+        false,
+        peer_error.or_else(|| Some("fips link pending".to_string())),
+    )
+}
+
+fn peer_endpoint_hint_addr(hint: &PeerEndpointHint) -> Option<String> {
+    if !hint.transport.trim().eq_ignore_ascii_case("udp") {
+        return None;
+    }
+    let trimmed = hint.addr.trim();
+    if let Ok(parsed) = trimmed.parse::<SocketAddr>() {
+        if parsed.port() == 0 || endpoint_hint_ip_is_unusable(parsed.ip()) {
+            return None;
+        }
+        return Some(parsed.to_string());
+    }
+
+    let (host, port) = trimmed.rsplit_once(':')?;
+    let host = host.trim();
+    let port = port.trim().parse::<u16>().ok()?;
+    if host.is_empty() || port == 0 || host.eq_ignore_ascii_case("localhost") {
+        return None;
+    }
+    if host.contains(':') {
+        return None;
+    }
+    if let Ok(ip) = host.parse::<IpAddr>()
+        && endpoint_hint_ip_is_unusable(ip)
+    {
+        return None;
+    }
+    Some(format!("{host}:{port}"))
+}
+
+fn endpoint_hint_ip_is_unusable(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            ip.is_unspecified() || ip.is_loopback() || ip.is_link_local() || ip.is_multicast()
+        }
+        IpAddr::V6(ip) => {
+            ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_unicast_link_local()
+                || ip.is_multicast()
+        }
+    }
 }
 
 // The historical FIPS endpoint cache (`daemon.fips-cache.json`) persisted observed
@@ -620,9 +684,6 @@ impl FipsPrivateMeshRuntime {
             status.last_seen_at = peer_presence.and_then(|value| value.last_seen_at);
             status.tx_bytes = peer_presence.map(|value| value.tx_bytes).unwrap_or(0);
             status.rx_bytes = peer_presence.map(|value| value.rx_bytes).unwrap_or(0);
-            let presence_connected = status.last_seen_at.is_some_and(|last_seen_at| {
-                now.saturating_sub(last_seen_at) <= FIPS_PEER_ONLINE_GRACE_SECS
-            });
             if let Some(peer_link) = peer_link {
                 status.endpoint_npub = peer_link.npub.clone();
                 status.transport_addr = peer_link.transport_addr.clone();
@@ -634,17 +695,14 @@ impl FipsPrivateMeshRuntime {
                 status.link_bytes_recv = peer_link.bytes_recv;
             }
             let link_connected = peer_link.is_some();
-            if link_connected {
-                status.last_seen_at = Some(now);
-            }
-            status.connected = link_connected || presence_connected;
-            status.error = if status.connected {
-                None
-            } else {
-                peer_presence
-                    .and_then(|value| value.error.clone())
-                    .or_else(|| Some("fips link pending".to_string()))
-            };
+            let (connected, error) = fips_peer_liveness(
+                status.last_seen_at,
+                link_connected,
+                peer_presence.and_then(|value| value.error.clone()),
+                now,
+            );
+            status.connected = connected;
+            status.error = error;
         }
         statuses
     }
@@ -758,6 +816,32 @@ impl FipsPrivateMeshRuntime {
             .unwrap_or_default()
     }
 
+    pub(crate) fn peer_endpoint_hints(&self) -> Vec<(String, Vec<(String, u64)>)> {
+        let now = unix_timestamp();
+        let caps = match self.peer_capabilities.read() {
+            Ok(guard) => guard,
+            Err(_) => return Vec::new(),
+        };
+        let mut out = caps
+            .iter()
+            .filter(|(_, entry)| now.saturating_sub(entry.received_at) <= FIPS_PEER_CAPS_GRACE_SECS)
+            .filter_map(|(participant, entry)| {
+                let mut addresses = entry
+                    .capabilities
+                    .endpoint_hints
+                    .iter()
+                    .filter_map(peer_endpoint_hint_addr)
+                    .map(|addr| (addr, entry.received_at.saturating_mul(1000)))
+                    .collect::<Vec<_>>();
+                addresses.sort_by(|left, right| left.0.cmp(&right.0));
+                addresses.dedup_by(|left, right| left.0 == right.0);
+                (!addresses.is_empty()).then_some((participant.clone(), addresses))
+            })
+            .collect::<Vec<_>>();
+        out.sort_by(|left, right| left.0.cmp(&right.0));
+        out
+    }
+
     fn record_peer_capabilities(
         &self,
         participant: &str,
@@ -820,6 +904,22 @@ impl FipsPrivateMeshRuntime {
             &FipsControlFrame::Roster {
                 network_id: network_id.to_string(),
                 roster,
+            },
+        )
+        .await
+    }
+
+    pub(crate) async fn send_capabilities(
+        &self,
+        participant: &str,
+        network_id: &str,
+        capabilities: PeerCapabilities,
+    ) -> Result<()> {
+        self.send_control_frame(
+            participant,
+            &FipsControlFrame::Capabilities {
+                network_id: network_id.to_string(),
+                capabilities,
             },
         )
         .await
@@ -1140,15 +1240,15 @@ fn fips_endpoint_peers_from_mesh(
 
     // Recent-peers cache entries arrive with `last_success_at_ms` so the
     // fips dialer ranks them ahead of unstamped operator hints in the
-    // same try-everything pass.
+    // same try-everything pass. Mesh-carried live hints are merged through
+    // this same stamped path and are accepted only for peers already in
+    // the private-network roster; operator-configured static transit peers
+    // above remain the explicit opt-in for outside-roster dialing.
     for (npub, addresses) in recent_peer_endpoints {
         let npub = normalize_fips_endpoint_npub(&npub);
-        let peer = peers
-            .entry(npub.clone())
-            .or_insert_with(|| FipsEndpointPeerTransportConfig {
-                npub,
-                addresses: Vec::new(),
-            });
+        let Some(peer) = peers.get_mut(&npub) else {
+            continue;
+        };
         for (addr, seen_at_ms) in addresses {
             let trimmed = addr.trim();
             if trimmed.is_empty() {
@@ -1239,6 +1339,7 @@ impl FipsPrivateTunnelConfig {
         iface: impl Into<String>,
         own_pubkey: Option<&str>,
         recent_peers: Option<&nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
+        live_peer_endpoints: &[(String, Vec<(String, u64)>)],
     ) -> Result<Self> {
         let mut peers = Vec::new();
         let mut route_targets = Vec::new();
@@ -1290,10 +1391,27 @@ impl FipsPrivateTunnelConfig {
         // fips's dialer races every hint in parallel, ranked by `seen_at_ms`
         // descending — recent observations naturally beat unstamped hints,
         // and a fresh nostr advert beats both because it's stamped at fetch.
+        let desired_endpoint_hint_npubs = app
+            .participant_pubkeys_hex()
+            .into_iter()
+            .filter(|participant| Some(participant.as_str()) != own_pubkey)
+            .map(|participant| normalize_fips_endpoint_npub(&participant))
+            .collect::<std::collections::HashSet<_>>();
         let operator_static = app.fips_static_peer_endpoints();
-        let recent_peer_endpoints = recent_peers
+        let mut recent_peer_endpoints = recent_peers
             .map(|cache| cache.as_static_peer_endpoints_with_seen_at())
             .unwrap_or_default();
+        recent_peer_endpoints.retain(|(participant, _)| {
+            desired_endpoint_hint_npubs.contains(&normalize_fips_endpoint_npub(participant))
+        });
+        recent_peer_endpoints.extend(
+            live_peer_endpoints
+                .iter()
+                .filter(|(participant, _)| {
+                    desired_endpoint_hint_npubs.contains(&normalize_fips_endpoint_npub(participant))
+                })
+                .cloned(),
+        );
         let endpoint_peers =
             fips_endpoint_peers_from_mesh(&peers, operator_static, recent_peer_endpoints);
         route_targets.sort();
@@ -1499,6 +1617,10 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.authenticated_peer_transport_addrs()
     }
 
+    pub(crate) fn peer_endpoint_hints(&self) -> Vec<(String, Vec<(String, u64)>)> {
+        self.mesh.peer_endpoint_hints()
+    }
+
     /// Forward a refreshed peer roster + address hints to fips without
     /// restarting the endpoint. Daemon heartbeat path: when the
     /// recent-peers cache or active-network roster changes, build the
@@ -1589,6 +1711,17 @@ impl FipsPrivateTunnelRuntime {
         roster: NetworkRoster,
     ) -> Result<()> {
         self.mesh.send_roster(participant, network_id, roster).await
+    }
+
+    pub(crate) async fn send_capabilities(
+        &self,
+        participant: &str,
+        network_id: &str,
+        capabilities: PeerCapabilities,
+    ) -> Result<()> {
+        self.mesh
+            .send_capabilities(participant, network_id, capabilities)
+            .await
     }
 
     pub(crate) async fn broadcast_capabilities(
@@ -2618,6 +2751,10 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.authenticated_peer_transport_addrs()
     }
 
+    pub(crate) fn peer_endpoint_hints(&self) -> Vec<(String, Vec<(String, u64)>)> {
+        self.mesh.peer_endpoint_hints()
+    }
+
     /// Forward a refreshed peer roster + address hints to fips without
     /// restarting the endpoint. Daemon heartbeat path: when the
     /// recent-peers cache or active-network roster changes, build the
@@ -2736,6 +2873,17 @@ impl FipsPrivateTunnelRuntime {
         roster: NetworkRoster,
     ) -> Result<()> {
         self.mesh.send_roster(participant, network_id, roster).await
+    }
+
+    pub(crate) async fn send_capabilities(
+        &self,
+        participant: &str,
+        network_id: &str,
+        capabilities: PeerCapabilities,
+    ) -> Result<()> {
+        self.mesh
+            .send_capabilities(participant, network_id, capabilities)
+            .await
     }
 
     pub(crate) async fn broadcast_capabilities(
@@ -2984,6 +3132,10 @@ impl FipsPrivateTunnelRuntime {
         Vec::new()
     }
 
+    pub(crate) fn peer_endpoint_hints(&self) -> Vec<(String, Vec<(String, u64)>)> {
+        Vec::new()
+    }
+
     pub(crate) async fn update_peers(
         &self,
         _endpoint_peers: &[FipsEndpointPeerTransportConfig],
@@ -3025,6 +3177,15 @@ impl FipsPrivateTunnelRuntime {
         _participant: &str,
         _network_id: &str,
         _roster: NetworkRoster,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    pub(crate) async fn send_capabilities(
+        &self,
+        _participant: &str,
+        _network_id: &str,
+        _capabilities: PeerCapabilities,
     ) -> Result<()> {
         Ok(())
     }
@@ -3072,7 +3233,8 @@ mod tests {
     use nostr_vpn_core::config::{AppConfig, derive_mesh_tunnel_ip};
     use nostr_vpn_core::data_plane::MeshPeerStatus;
     use nostr_vpn_core::fips_control::{
-        FipsControlFrame, NetworkRoster, decode_fips_control_frame, encode_fips_control_messages,
+        FipsControlFrame, NetworkRoster, PeerEndpointHint, decode_fips_control_frame,
+        encode_fips_control_messages,
     };
     use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
     use nostr_vpn_core::join_requests::MeshJoinRequest;
@@ -3213,6 +3375,61 @@ mod tests {
                 underlay_udp: 1280,
                 tunnel: 1150,
             }
+        );
+    }
+
+    #[test]
+    fn peer_endpoint_hint_addr_accepts_only_udp_socket_addresses() {
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("192.168.50.22:51820")),
+            Some("192.168.50.22:51820".to_string())
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("peer.example.com:51820")),
+            Some("peer.example.com:51820".to_string())
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint {
+                transport: "tcp".to_string(),
+                addr: "192.168.50.22:51820".to_string(),
+            }),
+            None
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("192.168.50.22")),
+            None
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("127.0.0.1:51820")),
+            None
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("0.0.0.0:51820")),
+            None
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("localhost:51820")),
+            None
+        );
+    }
+
+    #[test]
+    fn fips_peer_liveness_requires_recent_authenticated_presence() {
+        assert_eq!(
+            super::fips_peer_liveness(Some(100), true, None, 120),
+            (true, None)
+        );
+        assert_eq!(
+            super::fips_peer_liveness(None, true, None, 120),
+            (false, Some("fips ping pending".to_string()))
+        );
+        assert_eq!(
+            super::fips_peer_liveness(Some(10), true, None, 120),
+            (false, Some("fips ping pending".to_string()))
+        );
+        assert_eq!(
+            super::fips_peer_liveness(None, false, Some("dial failed".to_string()), 120),
+            (false, Some("dial failed".to_string()))
         );
     }
 
@@ -3359,6 +3576,7 @@ mod tests {
             "utun-test",
             Some(&alice_pubkey),
             None,
+            &[],
         )
         .expect("fips tunnel config");
         let bob_peer = config
@@ -3661,6 +3879,85 @@ mod tests {
         assert_eq!(charlie.addresses.len(), 1);
         assert_eq!(charlie.addresses[0].transport, "udp");
         assert_eq!(charlie.addresses[0].addr, "10.203.0.12:51820");
+    }
+
+    #[test]
+    fn stamped_endpoint_hints_are_ignored_for_outside_roster_peers() {
+        let bob_keys = Keys::generate();
+        let charlie_keys = Keys::generate();
+        let bob_pubkey = bob_keys.public_key().to_hex();
+        let charlie_pubkey = charlie_keys.public_key().to_hex();
+        let mesh_peer =
+            FipsMeshPeerConfig::from_participant_pubkey(&bob_pubkey, vec!["10.44.1.2/32".into()])
+                .expect("mesh peer");
+
+        let endpoint_peers = fips_endpoint_peers_from_mesh(
+            std::slice::from_ref(&mesh_peer),
+            Vec::new(),
+            vec![(
+                charlie_pubkey,
+                vec![("10.203.0.12:51820".to_string(), 123_000)],
+            )],
+        );
+
+        assert_eq!(endpoint_peers.len(), 1);
+        assert_eq!(endpoint_peers[0].npub, mesh_peer.endpoint_npub);
+        assert!(endpoint_peers[0].addresses.is_empty());
+    }
+
+    #[test]
+    fn tunnel_config_applies_live_endpoint_hints_only_for_participants() {
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let admin_keys = Keys::generate();
+        let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
+        let alice_pubkey = alice_keys.public_key().to_hex();
+        let bob_pubkey = bob_keys.public_key().to_hex();
+        let bob_npub = bob_keys.public_key().to_bech32().expect("bob npub");
+        let admin_pubkey = admin_keys.public_key().to_hex();
+        let admin_npub = admin_keys.public_key().to_bech32().expect("admin npub");
+        let network_id = "fips-live-hints-test";
+
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = alice_nsec;
+        app.networks[0].network_id = network_id.to_string();
+        app.networks[0].participants = vec![alice_pubkey.clone(), bob_pubkey.clone()];
+        app.networks[0].admins = vec![admin_pubkey.clone()];
+
+        let config = FipsPrivateTunnelConfig::from_app(
+            &app,
+            network_id,
+            "utun-test",
+            Some(&alice_pubkey),
+            None,
+            &[
+                (
+                    bob_pubkey.clone(),
+                    vec![("192.168.50.22:51820".to_string(), 123_000)],
+                ),
+                (
+                    admin_pubkey.clone(),
+                    vec![("192.168.50.33:51820".to_string(), 123_000)],
+                ),
+            ],
+        )
+        .expect("fips tunnel config");
+
+        let bob = config
+            .endpoint_peers
+            .iter()
+            .find(|peer| peer.npub == bob_npub)
+            .expect("bob endpoint peer");
+        assert_eq!(bob.addresses.len(), 1);
+        assert_eq!(bob.addresses[0].addr, "192.168.50.22:51820");
+        assert_eq!(bob.addresses[0].seen_at_ms, Some(123_000));
+
+        let admin = config
+            .endpoint_peers
+            .iter()
+            .find(|peer| peer.npub == admin_npub)
+            .expect("admin endpoint peer");
+        assert!(admin.addresses.is_empty());
     }
 
     /// Pin the open-discovery / closed-data-plane invariant.

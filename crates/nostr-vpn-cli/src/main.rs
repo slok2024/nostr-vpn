@@ -59,7 +59,7 @@ use nostr_vpn_core::data_plane::MeshPeerStatus;
 use nostr_vpn_core::diagnostics::{
     HealthIssue, HealthSeverity, NetworkSummary, PortMappingStatus, ProbeState,
 };
-use nostr_vpn_core::fips_control::{NetworkRoster, PeerCapabilities};
+use nostr_vpn_core::fips_control::{NetworkRoster, PeerCapabilities, PeerEndpointHint};
 use nostr_vpn_core::magic_dns::{
     MagicDnsResolverConfig, MagicDnsServer, build_magic_dns_records, install_system_resolver,
     uninstall_system_resolver,
@@ -2260,13 +2260,18 @@ impl CliTunnelRuntime {
 }
 
 fn endpoint_with_listen_port(endpoint: &str, listen_port: u16) -> String {
-    endpoint
-        .parse::<SocketAddr>()
-        .map(|mut parsed| {
-            parsed.set_port(listen_port);
-            parsed.to_string()
-        })
-        .unwrap_or_else(|_| endpoint.to_string())
+    let trimmed = endpoint.trim();
+    if let Ok(mut parsed) = trimmed.parse::<SocketAddr>() {
+        parsed.set_port(listen_port);
+        return parsed.to_string();
+    }
+    let Some((host, port)) = trimmed.rsplit_once(':') else {
+        return trimmed.to_string();
+    };
+    if host.is_empty() || host.contains(':') || port.trim().parse::<u16>().is_err() {
+        return trimmed.to_string();
+    }
+    format!("{}:{listen_port}", host.trim())
 }
 
 fn detect_runtime_primary_ipv4() -> Option<Ipv4Addr> {
@@ -2626,6 +2631,7 @@ async fn refresh_fips_tunnel_config(
         runtime.iface().to_string(),
         own_pubkey,
         None,
+        &runtime.peer_endpoint_hints(),
     )?;
     runtime.apply_config(config).await
 }
@@ -2637,6 +2643,7 @@ fn fips_tunnel_config_from_app(
     iface: impl Into<String>,
     own_pubkey: Option<&str>,
     recent_peers: Option<&nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
+    live_peer_endpoints: &[(String, Vec<(String, u64)>)],
 ) -> Result<crate::fips_private_mesh::FipsPrivateTunnelConfig> {
     let mut config = crate::fips_private_mesh::FipsPrivateTunnelConfig::from_app(
         app,
@@ -2644,6 +2651,7 @@ fn fips_tunnel_config_from_app(
         iface,
         own_pubkey,
         recent_peers,
+        live_peer_endpoints,
     )?;
     // Daemon no longer pre-discovers a public endpoint. fips-core's
     // build_overlay_advert performs its own STUN observation and advertises
@@ -2680,7 +2688,18 @@ async fn sync_fips_private_runtime(
         .as_ref()
         .map(|runtime| runtime.iface().to_string())
         .unwrap_or_else(|| iface.to_string());
-    let config = fips_tunnel_config_from_app(app, network_id, config_iface, own_pubkey, None)?;
+    let live_peer_endpoints = runtime
+        .as_ref()
+        .map(|runtime| runtime.peer_endpoint_hints())
+        .unwrap_or_default();
+    let config = fips_tunnel_config_from_app(
+        app,
+        network_id,
+        config_iface,
+        own_pubkey,
+        None,
+        &live_peer_endpoints,
+    )?;
 
     let restart = runtime
         .as_ref()
@@ -2779,13 +2798,146 @@ async fn broadcast_local_fips_capabilities(
     app: &AppConfig,
 ) -> Result<usize> {
     let network = app.active_network();
-    let capabilities = PeerCapabilities {
-        advertised_routes: runtime_effective_advertised_routes(app),
-        signed_at: unix_timestamp(),
+    let advertised_routes = runtime_effective_advertised_routes(app);
+    let local_ipv4_candidates =
+        runtime_signal_ipv4_candidates(detect_runtime_primary_ipv4(), &app.node.tunnel_ip);
+    let endpoint_hints = local_fips_endpoint_hints(app, local_ipv4_candidates);
+    let desired_hint_recipients = desired_fips_endpoint_hint_recipients(app);
+    let signed_at = unix_timestamp();
+    let mut sent = 0usize;
+
+    for participant in runtime.peer_pubkeys() {
+        let capabilities = PeerCapabilities {
+            advertised_routes: advertised_routes.clone(),
+            endpoint_hints: if desired_hint_recipients.contains(&participant) {
+                endpoint_hints.clone()
+            } else {
+                Vec::new()
+            },
+            signed_at,
+        };
+        if runtime
+            .send_capabilities(&participant, &network.id, capabilities)
+            .await
+            .is_ok()
+        {
+            sent += 1;
+        }
+    }
+
+    Ok(sent)
+}
+
+#[cfg(feature = "embedded-fips")]
+fn local_fips_endpoint_hints(
+    app: &AppConfig,
+    local_ipv4_candidates: Vec<Ipv4Addr>,
+) -> Vec<PeerEndpointHint> {
+    let mut endpoints = Vec::new();
+
+    let configured = endpoint_with_listen_port(&app.node.endpoint, app.node.listen_port);
+    if endpoint_is_gossipable_direct_hint(&configured, app.lan_discovery_enabled) {
+        endpoints.push(configured);
+    }
+
+    if app.lan_discovery_enabled {
+        for ip in local_ipv4_candidates {
+            endpoints.push(SocketAddrV4::new(ip, app.node.listen_port).to_string());
+        }
+    }
+
+    endpoints.sort();
+    endpoints.dedup();
+    endpoints.into_iter().map(PeerEndpointHint::udp).collect()
+}
+
+#[cfg(feature = "embedded-fips")]
+fn runtime_signal_ipv4_candidates(
+    detected_ipv4: Option<Ipv4Addr>,
+    tunnel_ip: &str,
+) -> Vec<Ipv4Addr> {
+    let tunnel_ipv4 = strip_cidr(tunnel_ip).parse::<Ipv4Addr>().ok();
+    let mut ips = Vec::new();
+    if let Some(ip) = runtime_signal_ipv4(detected_ipv4, tunnel_ip) {
+        ips.push(ip);
+    }
+    for iface in netdev::get_interfaces() {
+        if iface.is_loopback() {
+            continue;
+        }
+        for net in &iface.ipv4 {
+            let ip = net.addr();
+            if Some(ip) == tunnel_ipv4
+                || ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_link_local()
+            {
+                continue;
+            }
+            let endpoint = SocketAddrV4::new(ip, 1).to_string();
+            if endpoint_is_local_only(&endpoint) {
+                ips.push(ip);
+            }
+        }
+    }
+    ips.sort();
+    ips.dedup();
+    ips
+}
+
+#[cfg(feature = "embedded-fips")]
+fn endpoint_is_gossipable_direct_hint(endpoint: &str, allow_local: bool) -> bool {
+    let trimmed = endpoint.trim();
+    if let Ok(parsed) = trimmed.parse::<SocketAddr>() {
+        if parsed.port() == 0 || endpoint_hint_ip_is_unusable(parsed.ip()) {
+            return false;
+        }
+        return allow_local || !endpoint_is_local_only(&parsed.to_string());
+    }
+
+    let Some((host, port)) = trimmed.rsplit_once(':') else {
+        return false;
     };
-    runtime
-        .broadcast_capabilities(&network.id, capabilities)
-        .await
+    let host = host.trim();
+    let Ok(port) = port.trim().parse::<u16>() else {
+        return false;
+    };
+    if host.is_empty() || port == 0 || host.eq_ignore_ascii_case("localhost") {
+        return false;
+    }
+    if host.contains(':') {
+        return false;
+    }
+    if let Ok(ip) = host.parse::<IpAddr>()
+        && endpoint_hint_ip_is_unusable(ip)
+    {
+        return false;
+    }
+    allow_local || !endpoint_is_local_only(trimmed)
+}
+
+#[cfg(feature = "embedded-fips")]
+fn endpoint_hint_ip_is_unusable(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            ip.is_unspecified() || ip.is_loopback() || ip.is_link_local() || ip.is_multicast()
+        }
+        IpAddr::V6(ip) => {
+            ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_unicast_link_local()
+                || ip.is_multicast()
+        }
+    }
+}
+
+#[cfg(feature = "embedded-fips")]
+fn desired_fips_endpoint_hint_recipients(app: &AppConfig) -> HashSet<String> {
+    let own_pubkey = app.own_nostr_pubkey_hex().ok();
+    app.participant_pubkeys_hex()
+        .into_iter()
+        .filter(|participant| own_pubkey.as_deref() != Some(participant.as_str()))
+        .collect()
 }
 
 #[cfg(feature = "embedded-fips")]

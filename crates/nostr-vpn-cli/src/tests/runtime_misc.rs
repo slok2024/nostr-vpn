@@ -1,5 +1,9 @@
 use crate::*;
+#[cfg(feature = "embedded-fips")]
+use nostr_sdk::prelude::{Keys, ToBech32};
 use std::collections::HashSet;
+#[cfg(feature = "embedded-fips")]
+use std::net::Ipv4Addr;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -34,6 +38,102 @@ fn fips_roster_publish_keeps_disconnected_recipients_pending() {
 
     assert_eq!(ready, vec!["alice".to_string()]);
     assert_eq!(pending, HashSet::from(["bob".to_string()]));
+}
+
+#[cfg(feature = "embedded-fips")]
+#[test]
+fn local_fips_endpoint_hints_include_configured_and_lan_candidates() {
+    let mut app = AppConfig::generated();
+    app.node.endpoint = "89.27.103.157:1111".to_string();
+    app.node.listen_port = 51820;
+    app.node.tunnel_ip = "10.44.1.1/32".to_string();
+    app.lan_discovery_enabled = true;
+
+    let hints = local_fips_endpoint_hints(&app, vec![Ipv4Addr::new(192, 168, 50, 10)]);
+    let addrs = hints.into_iter().map(|hint| hint.addr).collect::<Vec<_>>();
+
+    assert_eq!(
+        addrs,
+        vec![
+            "192.168.50.10:51820".to_string(),
+            "89.27.103.157:51820".to_string(),
+        ]
+    );
+}
+
+#[cfg(feature = "embedded-fips")]
+#[test]
+fn local_fips_endpoint_hints_do_not_share_lan_when_disabled() {
+    let mut app = AppConfig::generated();
+    app.node.endpoint = "127.0.0.1:1111".to_string();
+    app.node.listen_port = 51820;
+    app.node.tunnel_ip = "10.44.1.1/32".to_string();
+    app.lan_discovery_enabled = false;
+
+    let hints = local_fips_endpoint_hints(&app, vec![Ipv4Addr::new(192, 168, 50, 10)]);
+
+    assert!(hints.is_empty());
+}
+
+#[cfg(feature = "embedded-fips")]
+#[test]
+fn local_fips_endpoint_hints_do_not_share_loopback_when_lan_enabled() {
+    let mut app = AppConfig::generated();
+    app.node.endpoint = "127.0.0.1:1111".to_string();
+    app.node.listen_port = 51820;
+    app.node.tunnel_ip = "10.44.1.1/32".to_string();
+    app.lan_discovery_enabled = true;
+
+    let hints = local_fips_endpoint_hints(&app, Vec::new());
+
+    assert!(hints.is_empty());
+}
+
+#[cfg(feature = "embedded-fips")]
+#[test]
+fn local_fips_endpoint_hints_keep_dns_endpoint_and_listen_port() {
+    let mut app = AppConfig::generated();
+    app.node.endpoint = "peer.example.com:1111".to_string();
+    app.node.listen_port = 51820;
+    app.node.tunnel_ip = "10.44.1.1/32".to_string();
+    app.lan_discovery_enabled = false;
+
+    let hints = local_fips_endpoint_hints(&app, Vec::new());
+
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].addr, "peer.example.com:51820");
+}
+
+#[cfg(feature = "embedded-fips")]
+#[test]
+fn runtime_signal_ipv4_candidates_keep_local_non_tunnel_addresses() {
+    let candidates =
+        runtime_signal_ipv4_candidates(Some(Ipv4Addr::new(192, 168, 50, 10)), "10.44.1.1/32");
+
+    assert!(candidates.contains(&Ipv4Addr::new(192, 168, 50, 10)));
+    assert!(!candidates.contains(&Ipv4Addr::new(10, 44, 1, 1)));
+}
+
+#[cfg(feature = "embedded-fips")]
+#[test]
+fn endpoint_hint_recipients_are_active_participants_only() {
+    let own = Keys::generate();
+    let peer = Keys::generate();
+    let admin = Keys::generate();
+    let own_pubkey = own.public_key().to_hex();
+    let peer_pubkey = peer.public_key().to_hex();
+    let admin_pubkey = admin.public_key().to_hex();
+    let mut app = AppConfig::generated();
+    app.nostr.secret_key = own.secret_key().to_bech32().expect("own nsec");
+    app.nostr.public_key = own_pubkey.clone();
+    app.networks[0].participants = vec![own_pubkey.clone(), peer_pubkey.clone()];
+    app.networks[0].admins = vec![admin_pubkey.clone()];
+
+    let recipients = desired_fips_endpoint_hint_recipients(&app);
+
+    assert_eq!(recipients, HashSet::from([peer_pubkey]));
+    assert!(!recipients.contains(&own_pubkey));
+    assert!(!recipients.contains(&admin_pubkey));
 }
 
 #[test]
