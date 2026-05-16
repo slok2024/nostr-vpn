@@ -68,17 +68,21 @@ final class AppModel: ObservableObject {
     }
 
     func toggleVpn() {
+        setVpnEnabled(!state.vpnEnabled)
+    }
+
+    private func setVpnEnabled(_ enabled: Bool, force: Bool = false) {
         Task {
-            if state.vpnEnabled {
-                dispatch(NativeActions.disconnectVpn(), status: "Turning VPN off")
-                do {
-                    try await vpnController.stop()
-                } catch {
-                    statusMessage = error.localizedDescription
+            if enabled {
+                guard force || !state.vpnEnabled else {
+                    return
                 }
-            } else {
                 let tunnelConfigJson = core.mobileTunnelConfigJson()
-                dispatch(NativeActions.connectVpn(), status: "Turning VPN on")
+                if state.vpnEnabled {
+                    statusMessage = "Turning VPN on"
+                } else {
+                    dispatch(NativeActions.connectVpn(), status: "Turning VPN on")
+                }
                 do {
                     try await vpnController.start(
                         state: state,
@@ -87,6 +91,18 @@ final class AppModel: ObservableObject {
                     )
                 } catch {
                     dispatch(NativeActions.disconnectVpn(), status: "Turning VPN off")
+                    statusMessage = error.localizedDescription
+                }
+            } else {
+                guard force || state.vpnEnabled else {
+                    return
+                }
+                if state.vpnEnabled {
+                    dispatch(NativeActions.disconnectVpn(), status: "Turning VPN off")
+                }
+                do {
+                    try await vpnController.stop()
+                } catch {
                     statusMessage = error.localizedDescription
                 }
             }
@@ -115,6 +131,10 @@ final class AppModel: ObservableObject {
         let action = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         if action == "tick" {
             refresh()
+        } else if action == "connect" {
+            setVpnEnabled(true, force: true)
+        } else if action == "disconnect" {
+            setVpnEnabled(false, force: true)
         }
     }
 
@@ -125,10 +145,10 @@ final class AppModel: ObservableObject {
         launchAutomationHandled = true
 
         let arguments = Set(ProcessInfo.processInfo.arguments)
-        if arguments.contains("--nvpn-connect"), !state.vpnEnabled {
-            toggleVpn()
-        } else if arguments.contains("--nvpn-disconnect"), state.vpnEnabled {
-            toggleVpn()
+        if arguments.contains("--nvpn-connect") {
+            setVpnEnabled(true, force: true)
+        } else if arguments.contains("--nvpn-disconnect") {
+            setVpnEnabled(false, force: true)
         }
     }
 
