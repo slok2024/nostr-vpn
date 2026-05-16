@@ -414,6 +414,14 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
 
     public NativeNetworkState? ActiveNetwork => State.Networks.FirstOrDefault(network => network.Enabled) ?? State.Networks.FirstOrDefault();
     public bool HasActiveNetwork => ActiveNetwork is not null;
+    public string OfferExitNodeLabel
+    {
+        get
+        {
+            var name = string.IsNullOrWhiteSpace(ActiveNetwork?.Name) ? "this network" : ActiveNetwork!.Name;
+            return $"Offer this device as an exit node in {name}";
+        }
+    }
     public IEnumerable<NativeNetworkState> InactiveNetworks => State.Networks.Where(network => !network.Enabled);
     public NativeParticipantState? SelectedParticipant
     {
@@ -981,11 +989,16 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         return DispatchAsync(NativeActions.AddNetwork(NetworkNameInput.Trim()), "Adding network");
     }
 
-    private Task CreateNetworkAsync()
+    private async Task CreateNetworkAsync()
     {
         var name = string.IsNullOrWhiteSpace(NetworkNameInput) ? "My Network" : NetworkNameInput.Trim();
         NetworkNameInput = "";
-        return DispatchAsync(NativeActions.AddNetwork(name), "Creating network");
+        await DispatchAsync(NativeActions.AddNetwork(name), "Creating network");
+        // Land on the new network's Devices view. Add Network may have
+        // been the active page (or we may have been showing the
+        // pre-network setup card); either way, Devices is the next
+        // meaningful destination.
+        Page = AppPage.Devices;
     }
 
     private async Task ManualAddNetworkAsync()
@@ -1085,6 +1098,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     {
         OnPropertyChanged(nameof(ActiveNetwork));
         OnPropertyChanged(nameof(HasActiveNetwork));
+        OnPropertyChanged(nameof(OfferExitNodeLabel));
         OnPropertyChanged(nameof(InactiveNetworks));
         OnPropertyChanged(nameof(SelectedParticipant));
         RaiseSelectedParticipantChanged();

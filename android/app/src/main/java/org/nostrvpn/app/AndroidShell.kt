@@ -166,6 +166,14 @@ internal fun NostrVpnApp(
             scanQr = scanQr,
             dispatch = dispatch,
             onDismiss = { showAddNetwork = false },
+            onCreated = {
+                // Land on the new network's Devices view: dismiss the
+                // dialog and reset the nav to Devices in case the user
+                // was on Exit Nodes or Settings when they tapped Add
+                // network.
+                showAddNetwork = false
+                page = Page.Devices
+            },
         )
     }
     pendingNetworkRemoval?.let { target ->
@@ -421,6 +429,7 @@ private fun NetworkSetupCard(
     state: AppState,
     scanQr: () -> Unit,
     dispatch: (JSONObject) -> Unit,
+    onCreated: (() -> Unit)? = null,
 ) {
     var networkName by remember { mutableStateOf("My Network") }
     var inviteInput by remember { mutableStateOf("") }
@@ -443,6 +452,7 @@ private fun NetworkSetupCard(
             Button(onClick = {
                 dispatch(NativeActions.addNetwork(networkName.trim().ifBlank { "My Network" }))
                 networkName = "My Network"
+                onCreated?.invoke()
             }) {
                 Text("Create")
             }
@@ -553,6 +563,7 @@ private fun AddNetworkDialog(
     scanQr: () -> Unit,
     dispatch: (JSONObject) -> Unit,
     onDismiss: () -> Unit,
+    onCreated: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -562,7 +573,7 @@ private fun AddNetworkDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                NetworkSetupCard(state, scanQr, dispatch)
+                NetworkSetupCard(state, scanQr, dispatch, onCreated = onCreated)
                 NearbyCard(state, dispatch)
             }
         },
@@ -730,16 +741,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.exitNodesPage(
                         dispatch(NativeActions.updateSettings("advertiseExitNode" to enabled))
                     },
                 )
-                Text("Offer exit node")
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(
-                    checked = state.exitNodeLeakProtection,
-                    onCheckedChange = { enabled ->
-                        dispatch(NativeActions.updateSettings("exitNodeLeakProtection" to enabled))
-                    },
-                )
-                Text("Block internet if exit node disconnects")
+                val name = network?.name?.ifBlank { null } ?: "this network"
+                Text("Offer exit node in $name")
             }
         }
     }
@@ -752,5 +755,18 @@ private fun androidx.compose.foundation.lazy.LazyListScope.settingsPage(
     dispatch: (JSONObject) -> Unit,
 ) {
     item { DeviceSettingsCard(state, dispatch) }
+    item {
+        AppCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = state.exitNodeLeakProtection,
+                    onCheckedChange = { enabled ->
+                        dispatch(NativeActions.updateSettings("exitNodeLeakProtection" to enabled))
+                    },
+                )
+                Text("Block internet if exit node disconnects")
+            }
+        }
+    }
     item { DiagnosticsCard(state) }
 }

@@ -812,15 +812,28 @@ struct RootView: View {
             sectionHeader("Create Network", systemImage: "plus.circle")
             HStack(spacing: 8) {
                 TextField("Network name", text: $networkNameInput)
-                    .onSubmit { addNetwork() }
+                    .onSubmit {
+                        addNetwork()
+                        finishCreateNetwork()
+                    }
                 Button {
                     addNetwork(defaultName: "My Network")
+                    finishCreateNetwork()
                 } label: {
                     Label("Create", systemImage: "plus")
                 }
                 .disabled(manager.actionInFlight)
             }
         }
+    }
+
+    /// Land on the new network's Devices view right after Create. The
+    /// sidebar may have been on Routing/Settings; from the Add Network
+    /// sheet we also have to dismiss. Both are no-ops if already in the
+    /// target state.
+    private func finishCreateNetwork() {
+        addNetworkPresented = false
+        selectedSidebarItem = .devices
     }
 
     private func joinNetworkSection(_ network: NativeNetworkState?) -> some View {
@@ -1007,20 +1020,21 @@ struct RootView: View {
 
                 Divider()
 
-                Toggle("Offer this device as an exit node", isOn: Binding(
-                    get: { state.advertiseExitNode },
-                    set: { manager.setAdvertiseExitNode($0) }
-                ))
-                .disabled(manager.actionInFlight)
-
-                Toggle("Block internet if exit node disconnects", isOn: Binding(
-                    get: { state.exitNodeLeakProtection },
-                    set: { manager.setExitNodeLeakProtection($0) }
-                ))
+                Toggle(
+                    "Offer this device as an exit node in \(activeNetworkLabel)",
+                    isOn: Binding(
+                        get: { state.advertiseExitNode },
+                        set: { manager.setAdvertiseExitNode($0) }
+                    )
+                )
                 .disabled(manager.actionInFlight)
             }
             wireGuardExitSettings
         }
+    }
+
+    private var activeNetworkLabel: String {
+        activeNetwork.map(displayName) ?? "this network"
     }
 
     private var wireguardUpstreamSubtitle: String {
@@ -1101,6 +1115,11 @@ struct RootView: View {
                 ))
                 .disabled(!state.trayBehaviorSupported)
             }
+            Toggle("Block internet if exit node disconnects", isOn: Binding(
+                get: { state.exitNodeLeakProtection },
+                set: { manager.setExitNodeLeakProtection($0) }
+            ))
+            .disabled(manager.actionInFlight)
             Button {
                 manager.saveNodeSettings(
                     nodeName: nodeName,
