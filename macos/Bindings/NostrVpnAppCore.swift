@@ -3071,6 +3071,15 @@ public enum NativeAppAction {
     case importNetworkInvite(invite: String
     )
     /**
+     * Manual pairing: the joiner enters the admin's Device ID + mesh
+     * network id from out-of-band. We just add a local network with the
+     * admin seeded as participant + admin and let mesh discovery converge
+     * once the admin adds us back. No join request is queued — both sides
+     * are expected to add each other directly.
+     */
+    case manualAddNetwork(adminNpub: String, meshNetworkId: String
+    )
+    /**
      * Start broadcasting our active-network invite over LAN multicast/broadcast.
      */
     case startInviteBroadcast
@@ -3157,27 +3166,30 @@ public struct FfiConverterTypeNativeAppAction: FfiConverterRustBuffer {
         case 20: return .importNetworkInvite(invite: try FfiConverterString.read(from: &buf)
         )
 
-        case 21: return .startInviteBroadcast
-
-        case 22: return .stopInviteBroadcast
-
-        case 23: return .startNearbyDiscovery
-
-        case 24: return .stopNearbyDiscovery
-
-        case 25: return .removeParticipant(networkId: try FfiConverterString.read(from: &buf), npub: try FfiConverterString.read(from: &buf)
+        case 21: return .manualAddNetwork(adminNpub: try FfiConverterString.read(from: &buf), meshNetworkId: try FfiConverterString.read(from: &buf)
         )
 
-        case 26: return .removeAdmin(networkId: try FfiConverterString.read(from: &buf), npub: try FfiConverterString.read(from: &buf)
+        case 22: return .startInviteBroadcast
+
+        case 23: return .stopInviteBroadcast
+
+        case 24: return .startNearbyDiscovery
+
+        case 25: return .stopNearbyDiscovery
+
+        case 26: return .removeParticipant(networkId: try FfiConverterString.read(from: &buf), npub: try FfiConverterString.read(from: &buf)
         )
 
-        case 27: return .acceptJoinRequest(networkId: try FfiConverterString.read(from: &buf), requesterNpub: try FfiConverterString.read(from: &buf)
+        case 27: return .removeAdmin(networkId: try FfiConverterString.read(from: &buf), npub: try FfiConverterString.read(from: &buf)
         )
 
-        case 28: return .setParticipantAlias(npub: try FfiConverterString.read(from: &buf), alias: try FfiConverterString.read(from: &buf)
+        case 28: return .acceptJoinRequest(networkId: try FfiConverterString.read(from: &buf), requesterNpub: try FfiConverterString.read(from: &buf)
         )
 
-        case 29: return .updateSettings(patch: try FfiConverterTypeSettingsPatch.read(from: &buf)
+        case 29: return .setParticipantAlias(npub: try FfiConverterString.read(from: &buf), alias: try FfiConverterString.read(from: &buf)
+        )
+
+        case 30: return .updateSettings(patch: try FfiConverterTypeSettingsPatch.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -3285,48 +3297,54 @@ public struct FfiConverterTypeNativeAppAction: FfiConverterRustBuffer {
             FfiConverterString.write(invite, into: &buf)
 
 
-        case .startInviteBroadcast:
+        case let .manualAddNetwork(adminNpub,meshNetworkId):
             writeInt(&buf, Int32(21))
+            FfiConverterString.write(adminNpub, into: &buf)
+            FfiConverterString.write(meshNetworkId, into: &buf)
 
 
-        case .stopInviteBroadcast:
+        case .startInviteBroadcast:
             writeInt(&buf, Int32(22))
 
 
-        case .startNearbyDiscovery:
+        case .stopInviteBroadcast:
             writeInt(&buf, Int32(23))
 
 
-        case .stopNearbyDiscovery:
+        case .startNearbyDiscovery:
             writeInt(&buf, Int32(24))
 
 
-        case let .removeParticipant(networkId,npub):
+        case .stopNearbyDiscovery:
             writeInt(&buf, Int32(25))
-            FfiConverterString.write(networkId, into: &buf)
-            FfiConverterString.write(npub, into: &buf)
 
 
-        case let .removeAdmin(networkId,npub):
+        case let .removeParticipant(networkId,npub):
             writeInt(&buf, Int32(26))
             FfiConverterString.write(networkId, into: &buf)
             FfiConverterString.write(npub, into: &buf)
 
 
-        case let .acceptJoinRequest(networkId,requesterNpub):
+        case let .removeAdmin(networkId,npub):
             writeInt(&buf, Int32(27))
+            FfiConverterString.write(networkId, into: &buf)
+            FfiConverterString.write(npub, into: &buf)
+
+
+        case let .acceptJoinRequest(networkId,requesterNpub):
+            writeInt(&buf, Int32(28))
             FfiConverterString.write(networkId, into: &buf)
             FfiConverterString.write(requesterNpub, into: &buf)
 
 
         case let .setParticipantAlias(npub,alias):
-            writeInt(&buf, Int32(28))
+            writeInt(&buf, Int32(29))
             FfiConverterString.write(npub, into: &buf)
             FfiConverterString.write(alias, into: &buf)
 
 
         case let .updateSettings(patch):
-            writeInt(&buf, Int32(29))
+            writeInt(&buf, Int32(30))
             FfiConverterTypeSettingsPatch.write(patch, into: &buf)
 
         }

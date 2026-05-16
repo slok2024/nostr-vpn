@@ -20,7 +20,8 @@ use serde::Deserialize;
 
 use crate::actions::NativeAppAction;
 use crate::invite::{
-    active_network_invite_code, apply_network_invite_to_active_network, parse_network_invite,
+    NETWORK_INVITE_VERSION, NetworkInvite, active_network_invite_code,
+    apply_network_invite_to_active_network, parse_network_invite,
     preferred_join_request_recipient, to_npub,
 };
 use crate::lan_pairing::{
@@ -819,6 +820,16 @@ impl NativeAppRuntime {
                 }
                 Ok(())
             }
+            NativeAppAction::ManualAddNetwork {
+                admin_npub,
+                mesh_network_id,
+            } => {
+                self.manual_add_network(&admin_npub, &mesh_network_id)?;
+                if !self.vpn_enabled {
+                    self.connect_vpn()?;
+                }
+                Ok(())
+            }
             NativeAppAction::RemoveParticipant { network_id, npub } => {
                 self.config
                     .remove_participant_from_network(&network_id, &npub)?;
@@ -853,6 +864,32 @@ impl NativeAppRuntime {
             .id
             .clone();
         self.queue_network_join_request(&network_id)?;
+        self.save_reload_and_refresh()
+    }
+
+    fn manual_add_network(&mut self, admin_npub: &str, mesh_network_id: &str) -> Result<()> {
+        let admin = admin_npub.trim();
+        let mesh_id = mesh_network_id.trim();
+        if admin.is_empty() {
+            return Err(anyhow!("admin device id is empty"));
+        }
+        if mesh_id.is_empty() {
+            return Err(anyhow!("network id is empty"));
+        }
+        let synthetic = NetworkInvite {
+            v: NETWORK_INVITE_VERSION,
+            network_name: String::new(),
+            network_id: mesh_id.to_string(),
+            inviter_npub: admin.to_string(),
+            inviter_node_name: String::new(),
+            admins: vec![admin.to_string()],
+            participants: Vec::new(),
+            relays: Vec::new(),
+        };
+        let encoded = serde_json::to_string(&synthetic)
+            .map_err(|err| anyhow!("failed to encode manual invite: {err}"))?;
+        let parsed = parse_network_invite(&encoded)?;
+        apply_network_invite_to_active_network(&mut self.config, &parsed)?;
         self.save_reload_and_refresh()
     }
 
