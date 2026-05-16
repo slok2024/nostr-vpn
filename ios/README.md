@@ -28,8 +28,16 @@ XcodeGen, and builds the app for the iOS simulator.
 just ios-run
 ```
 
-The first native cut includes the SwiftUI state/action shell, invite QR,
-invite copy/share/import, roster, routing, settings, diagnostics, deep
-links, app icon, and a Packet Tunnel extension shell. The packet data-plane loop
-still needs to be wired to FIPS endpoint delivery before the iOS VPN runtime is
-complete.
+## Smoke
+
+```bash
+just ios-smoke
+```
+
+The simulator smoke verifies build, install, launch, and screenshot capture. Use
+`NVPN_IOS_DEVICE=<device-id> just ios-smoke-device` for the physical-device VPN
+permission and Packet Tunnel path; keep local device identifiers out of git.
+
+The native shell includes SwiftUI state/action surfaces, invite QR,
+copy/share/import, roster, routing, settings, diagnostics, deep links, app icon,
+and Packet Tunnel integration backed by the shared Rust core.

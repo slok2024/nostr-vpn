@@ -15,6 +15,10 @@ Before remote bench automation, make sure the SSH key is loaded into the agent (
 
 For ARMv6 Linux devices, build the daemon with `scripts/build-nvpn-armv6-musl` on a Linux Docker builder. The script uses a clean `git archive`, targets `arm-unknown-linux-musleabihf`, and can smoke-test the result with `NVPN_SMOKE_HOST=<ssh-host>` before any install. Do not use an ARMv7 binary on ARMv6 hardware; it may build successfully and then crash immediately. Keep machine names, usernames, and IP addresses out of committed docs/scripts; pass local details through environment variables or shell history instead.
 
+For mobile-sensitive changes, include Android/iOS in the standard kit. Run `just mobile-test-kit` for Rust app-core tests plus Android and iOS debug builds; use `just mobile-test-kit-sim` when simulator/emulator launch behavior matters; use `just mobile-test-kit-device` for real VPN dataplane, reconnect, LAN discovery, roster transfer, or packet-tunnel changes. Keep physical device identifiers, signing details, local hostnames, usernames, and IPs in environment variables such as `NVPN_ANDROID_SERIAL` and `NVPN_IOS_DEVICE`, never in committed files.
+
+Keep FIPS mobile coverage platform-neutral: protocol, routing, session, candidate, reconnect, and cross-target Rust tests belong in `fips`; Android `VpnService`, iOS NetworkExtension, FFI/JNI/C ABI, VPN permissions, and physical-device packet-path checks belong in this repo's mobile test kit.
+
 ## Before tagging a release
 
 The release workflow (`.github/workflows/release.yml`) is triggered by

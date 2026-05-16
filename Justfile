@@ -35,13 +35,21 @@ info:
     @echo "Android"
     @echo "  just android-build"
     @echo "  just android-install"
+    @echo "  just android-smoke"
+    @echo "  just android-smoke-vpn"
     @echo
     @echo "iOS"
     @echo "  just ios-build"
     @echo "  just ios-run"
+    @echo "  just ios-smoke"
+    @echo "  just ios-smoke-device"
     @echo
     @echo "Checks"
     @echo "  just test"
+    @echo "  just mobile-test-kit"
+    @echo "  just mobile-test-kit-rust"
+    @echo "  just mobile-test-kit-sim"
+    @echo "  just mobile-test-kit-device"
     @echo "  just release-gate"
     @echo "  just security-regressions"
     @echo "  just e2e"
@@ -101,11 +109,35 @@ android-build:
 android-install:
     ./tools/run-android install
 
+android-smoke:
+    ./scripts/mobile-android-smoke.sh
+
+android-smoke-vpn:
+    ./scripts/mobile-android-smoke.sh --vpn-cycle
+
 ios-build:
     ./tools/run-ios build
 
 ios-run:
     ./tools/run-ios run
+
+ios-smoke:
+    ./scripts/mobile-ios-smoke.sh simulator
+
+ios-smoke-device:
+    ./scripts/mobile-ios-smoke.sh device --vpn-cycle
+
+mobile-test-kit:
+    ./scripts/mobile-test-kit.sh fast
+
+mobile-test-kit-rust:
+    ./scripts/mobile-test-kit.sh rust
+
+mobile-test-kit-sim:
+    ./scripts/mobile-test-kit.sh simulator
+
+mobile-test-kit-device:
+    ./scripts/mobile-test-kit.sh device
 
 macos-gen-swift:
     ./scripts/macos-build macos-gen-swift

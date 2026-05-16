@@ -27,7 +27,17 @@ and packages it into the debug APK.
 just android-install
 ```
 
-The first cut includes native state, invite, roster, routing, diagnostics,
-deep-link, and VPN permission surfaces. Android app-core startup is mobile-aware
-and does not require the desktop `nvpn` CLI. The packet tunnel service is present
-but the Android data-plane loop still needs to be wired to FIPS endpoint delivery.
+## Smoke
+
+```bash
+just android-smoke
+```
+
+Use `NVPN_ANDROID_SERIAL=<adb-serial>` or `ANDROID_SERIAL=<adb-serial>` when more
+than one device or emulator is online. `just android-smoke-vpn` also cycles the
+debug VPN action and expects the VPN permission/config path to be usable on that
+device.
+
+The native shell includes state, invite, roster, routing, diagnostics,
+deep-link, VPN permission surfaces, and Android `VpnService` packet handling
+backed by the shared Rust core.
