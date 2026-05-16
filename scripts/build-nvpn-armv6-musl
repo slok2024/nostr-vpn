@@ -18,16 +18,20 @@ trap cleanup EXIT
 git -C "$WORKSPACE" archive --format=tar HEAD | tar -x -C "$WORK_DIR"
 mkdir -p "$TARGET_DIR"
 
-docker run --rm \
+docker run --rm -i \
+  -u "$(id -u):$(id -g)" \
   -v "$WORK_DIR":/home/rust/src \
   -v "$TARGET_DIR":/home/rust/src/target \
+  -e CARGO_HOME=/home/rust/src/.cargo-docker \
+  -e HOME=/home/rust/src \
+  -e CARGO_TARGET_ARM_UNKNOWN_LINUX_MUSLEABIHF_LINKER=arm-unknown-linux-musleabihf-gcc \
   -e BINDGEN_EXTRA_CLANG_ARGS_arm_unknown_linux_musleabihf=-I/usr/local/musl/arm-unknown-linux-musleabihf/include \
   "$IMAGE" \
   bash -se <<'CONTAINER'
 set -euo pipefail
 
 cd /home/rust/src
-cargo fetch -p nvpn --target arm-unknown-linux-musleabihf
+cargo fetch --target arm-unknown-linux-musleabihf
 
 rustables_src=$(find "${CARGO_HOME:-/root/.cargo}/registry/src" -maxdepth 3 -type d -name rustables-0.8.7 -print -quit)
 if [[ -z "$rustables_src" ]]; then
@@ -42,39 +46,38 @@ if ! grep -q '^rustables = { path = "vendor/rustables-0.8.7" }' Cargo.toml; then
   if grep -q '^\[patch.crates-io\]' Cargo.toml; then
     sed -i '/^\[patch.crates-io\]/a rustables = { path = "vendor/rustables-0.8.7" }' Cargo.toml
   else
-    patch -p0 <<'PATCH'
---- Cargo.toml
-+++ Cargo.toml
-@@
- nostr-vpn-wintun = { version = "4.0.16", path = "crates/nostr-vpn-wintun" }
- 
-+[patch.crates-io]
-+rustables = { path = "vendor/rustables-0.8.7" }
-+
- [workspace.lints.clippy]
+    cat >> Cargo.toml <<'PATCH'
+
+[patch.crates-io]
+rustables = { path = "vendor/rustables-0.8.7" }
 PATCH
   fi
 fi
 
 if ! grep -q 'NFTA_CHAIN_FLAGS' vendor/rustables-0.8.7/build.rs; then
-  patch -p0 <<'PATCH'
---- vendor/rustables-0.8.7/build.rs
-+++ vendor/rustables-0.8.7/build.rs
-@@
--    let s = bindings.to_string().replace(" ; ", ";\n");
-+    let mut s = bindings.to_string().replace(" ; ", ";\n");
-+    if !s.contains("NFTA_CHAIN_FLAGS") {
-+        s = s.replace(
-+            "pub const __NFTA_CHAIN_MAX: nft_chain_attributes = 10;\n",
-+            concat!(
-+                "pub const NFTA_CHAIN_FLAGS: nft_chain_attributes = 10;\n",
-+                "pub const NFTA_CHAIN_ID: nft_chain_attributes = 11;\n",
-+                "pub const NFTA_CHAIN_USERDATA: nft_chain_attributes = 12;\n",
-+                "pub const __NFTA_CHAIN_MAX: nft_chain_attributes = 13;\n",
-+            ),
-+        );
-+    }
-     let s = reformat_units(&s);
+  python3 - <<'PATCH'
+from pathlib import Path
+
+path = Path("vendor/rustables-0.8.7/build.rs")
+text = path.read_text()
+old = '    let s = bindings.to_string().replace(" ; ", ";\\n");\n    let s = reformat_units(&s);\n'
+new = '''    let mut s = bindings.to_string().replace(" ; ", ";\\n");
+    if !s.contains("NFTA_CHAIN_FLAGS") {
+        s = s.replace(
+            "pub const __NFTA_CHAIN_MAX: nft_chain_attributes = 10;\\n",
+            concat!(
+                "pub const NFTA_CHAIN_FLAGS: nft_chain_attributes = 10;\\n",
+                "pub const NFTA_CHAIN_ID: nft_chain_attributes = 11;\\n",
+                "pub const NFTA_CHAIN_USERDATA: nft_chain_attributes = 12;\\n",
+                "pub const __NFTA_CHAIN_MAX: nft_chain_attributes = 13;\\n",
+            ),
+        );
+    }
+    let s = reformat_units(&s);
+'''
+if old not in text:
+    raise SystemExit("expected rustables build.rs binding line was not found")
+path.write_text(text.replace(old, new))
 PATCH
 fi
 
