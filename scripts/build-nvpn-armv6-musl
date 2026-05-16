@@ -7,6 +7,8 @@ WORKSPACE=$(git rev-parse --show-toplevel)
 BUILD_ROOT=${NVPN_ARMV6_BUILD_ROOT:-${TMPDIR:-/tmp}}
 TARGET_DIR=${NVPN_ARMV6_TARGET_DIR:-$WORKSPACE/target/nvpn-armv6-musl}
 WORK_DIR=$(mktemp -d "$BUILD_ROOT/nvpn-armv6-musl.XXXXXX")
+FIPS_REPO_PATH=${NVPN_FIPS_REPO_PATH:-}
+DOCKER_ENV=()
 
 cleanup() {
   if [[ ${NVPN_ARMV6_KEEP_WORK:-0} != 1 ]]; then
@@ -18,6 +20,21 @@ trap cleanup EXIT
 git -C "$WORKSPACE" archive --format=tar HEAD | tar -x -C "$WORK_DIR"
 mkdir -p "$TARGET_DIR"
 
+if [[ -n "$FIPS_REPO_PATH" ]]; then
+  FIPS_PATCH_DIR="$WORK_DIR/.fips-patch"
+  mkdir -p "$FIPS_PATCH_DIR"
+  git -C "$FIPS_REPO_PATH" archive --format=tar HEAD | tar -x -C "$FIPS_PATCH_DIR"
+
+  if [[ -f "$FIPS_PATCH_DIR/crates/fips-endpoint/Cargo.toml" ]]; then
+    DOCKER_ENV+=(-e NVPN_FIPS_ENDPOINT_PATCH_PATH=/home/rust/src/.fips-patch/crates/fips-endpoint)
+  elif [[ -f "$FIPS_PATCH_DIR/Cargo.toml" ]]; then
+    DOCKER_ENV+=(-e NVPN_FIPS_ENDPOINT_PATCH_PATH=/home/rust/src/.fips-patch)
+  else
+    echo "NVPN_FIPS_REPO_PATH does not contain fips-endpoint sources" >&2
+    exit 1
+  fi
+fi
+
 docker run --rm -i \
   -u "$(id -u):$(id -g)" \
   -v "$WORK_DIR":/home/rust/src \
@@ -26,12 +43,18 @@ docker run --rm -i \
   -e HOME=/home/rust/src \
   -e CARGO_TARGET_ARM_UNKNOWN_LINUX_MUSLEABIHF_LINKER=arm-unknown-linux-musleabihf-gcc \
   -e BINDGEN_EXTRA_CLANG_ARGS_arm_unknown_linux_musleabihf=-I/usr/local/musl/arm-unknown-linux-musleabihf/include \
+  "${DOCKER_ENV[@]}" \
   "$IMAGE" \
   bash -se <<'CONTAINER'
 set -euo pipefail
 
 cd /home/rust/src
-cargo fetch --target arm-unknown-linux-musleabihf
+cargo_config_args=()
+if [[ -n ${NVPN_FIPS_ENDPOINT_PATCH_PATH:-} ]]; then
+  cargo_config_args+=(--config "patch.crates-io.fips-endpoint.path=\"${NVPN_FIPS_ENDPOINT_PATCH_PATH}\"")
+fi
+
+cargo "${cargo_config_args[@]}" fetch --target arm-unknown-linux-musleabihf
 
 rustables_src=$(find "${CARGO_HOME:-/root/.cargo}/registry/src" -maxdepth 3 -type d -name rustables-0.8.7 -print -quit)
 if [[ -z "$rustables_src" ]]; then
@@ -81,7 +104,7 @@ path.write_text(text.replace(old, new))
 PATCH
 fi
 
-cargo build -p nvpn --bin nvpn --release --target arm-unknown-linux-musleabihf
+cargo "${cargo_config_args[@]}" build -p nvpn --bin nvpn --release --target arm-unknown-linux-musleabihf
 CONTAINER
 
 BIN="$TARGET_DIR/$TARGET/release/nvpn"
@@ -93,7 +116,7 @@ fi
 if [[ -n ${NVPN_SMOKE_HOST:-} ]]; then
   REMOTE_PATH=${NVPN_SMOKE_PATH:-/tmp/nvpn-armv6-smoke}
   scp "$BIN" "$NVPN_SMOKE_HOST:$REMOTE_PATH"
-  ssh "$NVPN_SMOKE_HOST" "chmod +x '$REMOTE_PATH' && '$REMOTE_PATH' --version"
+  ssh "$NVPN_SMOKE_HOST" "chmod +x '$REMOTE_PATH' && '$REMOTE_PATH' --help >/dev/null"
 fi
 
 printf '%s\n' "$BIN"
