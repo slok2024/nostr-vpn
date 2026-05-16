@@ -1156,11 +1156,7 @@ fn fips_endpoint_peers_from_mesh(
             }
             // Same (npub, addr) from multiple sources: keep the freshest
             // timestamp. The dedup pass below collapses duplicates.
-            if let Some(existing) = peer
-                .addresses
-                .iter_mut()
-                .find(|hint| hint.addr == trimmed)
-            {
+            if let Some(existing) = peer.addresses.iter_mut().find(|hint| hint.addr == trimmed) {
                 existing.seen_at_ms = match (existing.seen_at_ms, Some(seen_at_ms)) {
                     (Some(a), Some(b)) => Some(a.max(b)),
                     (None, Some(b)) => Some(b),
@@ -1515,6 +1511,19 @@ impl FipsPrivateTunnelRuntime {
     }
 
     pub(crate) fn requires_endpoint_restart(&self, config: &FipsPrivateTunnelConfig) -> bool {
+        // `endpoint_peers` is deliberately NOT in this list. Its `addresses`
+        // field is fed from the recent-peers cache, which the same daemon
+        // refreshes every few seconds — gating restart on it caused a
+        // self-inflicted flap loop: cache observed a new public-IP hint
+        // for one peer → next config-sync tick saw `endpoint_peers !=
+        // self.config.endpoint_peers` → whole FIPS endpoint torn down and
+        // re-bound → every link briefly offline → cold-start retry
+        // backoff (5/10/20/40/80s) before any peer came back. Address
+        // hints get pushed via `FipsPrivateMeshRuntime::update_peers`
+        // (kicked from `update_recent_peers_from_runtime`) without
+        // tearing the endpoint down. Peer roster adds/removes still
+        // propagate via `apply_config` → `mesh.replace_peers`, which
+        // doesn't need a restart either.
         self.config.identity_nsec != config.identity_nsec
             || self.config.network_id != config.network_id
             || self.config.listen_port != config.listen_port
@@ -1523,13 +1532,15 @@ impl FipsPrivateTunnelRuntime {
             || self.config.stun_servers != config.stun_servers
             || self.config.nostr_relays != config.nostr_relays
             || self.config.share_local_candidates != config.share_local_candidates
-            || self.config.endpoint_peers != config.endpoint_peers
             || self.config.mesh_mtu.underlay_udp != config.mesh_mtu.underlay_udp
     }
 
     pub(crate) async fn apply_config(&mut self, config: FipsPrivateTunnelConfig) -> Result<()> {
         self.mesh
             .replace_peers(config.peers.clone(), config.local_allowed_ips())?;
+        if let Err(error) = self.mesh.update_peers(&config.endpoint_peers).await {
+            eprintln!("fips: update_peers during apply_config failed: {error}");
+        }
         self.apply_interface_config(&config).await?;
         self.config = config;
         Ok(())
@@ -2619,6 +2630,10 @@ impl FipsPrivateTunnelRuntime {
     }
 
     pub(crate) fn requires_endpoint_restart(&self, config: &FipsPrivateTunnelConfig) -> bool {
+        // See `requires_endpoint_restart` on the unix tunnel runtime for
+        // why `endpoint_peers` is not in this list — address hints flow
+        // through `update_peers` (no-restart), peer-set changes flow
+        // through `apply_config` → `mesh.replace_peers`.
         self.config.identity_nsec != config.identity_nsec
             || self.config.network_id != config.network_id
             || self.config.iface != config.iface
@@ -2627,13 +2642,15 @@ impl FipsPrivateTunnelRuntime {
             || self.config.advertised_endpoint != config.advertised_endpoint
             || self.config.advertise_endpoint != config.advertise_endpoint
             || self.config.stun_servers != config.stun_servers
-            || self.config.endpoint_peers != config.endpoint_peers
             || self.config.mesh_mtu.underlay_udp != config.mesh_mtu.underlay_udp
     }
 
     pub(crate) async fn apply_config(&mut self, config: FipsPrivateTunnelConfig) -> Result<()> {
         self.mesh
             .replace_peers(config.peers.clone(), config.local_allowed_ips())?;
+        if let Err(error) = self.mesh.update_peers(&config.endpoint_peers).await {
+            eprintln!("fips: update_peers during apply_config failed: {error}");
+        }
         if self.config.route_targets != config.route_targets {
             crate::windows_tunnel::remove_windows_routes(self.interface_index, &self.route_targets)
                 .context("failed to remove stale Windows FIPS routes")?;
@@ -3672,11 +3689,8 @@ mod tests {
             vec!["10.44.1.2/32".to_string()],
         )
         .expect("roster peer config");
-        let endpoint_peers = fips_endpoint_peers_from_mesh(
-            std::slice::from_ref(&mesh_peer),
-            Vec::new(),
-            Vec::new(),
-        );
+        let endpoint_peers =
+            fips_endpoint_peers_from_mesh(std::slice::from_ref(&mesh_peer), Vec::new(), Vec::new());
         let config = fips_endpoint_config(
             &endpoint_peers,
             None,

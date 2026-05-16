@@ -1,6 +1,11 @@
-repository: https://github.com/mmalmi/nostr-vpn
+repository: https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-vpn
 pubkey: npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm
-release_source: dist/nostr-vpn-v*-android-arm64.apk
+# Points to a stable filename rather than `dist/nostr-vpn-v*-android-arm64.apk`
+# because `dist/` accumulates APKs across releases (including legacy 0.3.x
+# builds with the old `to.iris.nvpn` package id), and zsp picks one match
+# from the glob without a clear "latest" rule. `scripts/local-release.mjs`
+# copies the current release's APK to this stable path before invoking zsp.
+release_source: dist/zapstore-current-android-arm64.apk
 
 name: Nostr VPN
 summary: Mesh VPN built on Nostr signaling and userspace WireGuard.
@@ -18,7 +23,7 @@ description: |
   - MagicDNS-style `.nvpn` naming inside the mesh
   - manual pairing fallback when relay-mediated invites aren't an option
 
-website: https://github.com/mmalmi/nostr-vpn
+website: https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-vpn
 icon: ios/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png
 license: MIT
 tags:

@@ -939,23 +939,37 @@ function publishZapstore({ env, tag, dryRun }) {
     return
   }
 
+  const zapstoreYaml = join(repoRoot, 'zapstore.yaml')
+  if (!existsSync(zapstoreYaml)) {
+    console.warn(`Skipping Zapstore publish: ${zapstoreYaml} not found.`)
+    return
+  }
+
   if (dryRun) {
     console.log(`Would publish ${apkName} to Zapstore`)
     return
   }
 
-  // `-r` provides the github repo so Zapstore can fetch metadata (release
-  // notes etc.) from the corresponding github release. `--quiet
-  // --skip-preview` skip the interactive prompts so this is CI-safe.
+  // Pass `zapstore.yaml` (not the APK path) so the kind-32267 app event
+  // carries the yaml's `name`, `summary`, `description`, `icon`, `tags`,
+  // `license`, `repository` (iris.to), and `url` — passing an APK file
+  // directly produces a bare event with just package id + name + arch.
+  //
+  // zsp's `release_source` glob is set to a stable filename, so copy this
+  // release's APK there. Without a stable name, the glob would pick a
+  // random (often legacy 0.3.x with the old `to.iris.nvpn` package id)
+  // APK out of `dist/`.
+  const stableApkPath = join(distDir, 'zapstore-current-android-arm64.apk')
+  copyFileSync(apkPath, stableApkPath)
+
   run(
     'zsp',
     [
       'publish',
       '--quiet',
       '--skip-preview',
-      apkPath,
-      '-r',
-      'https://github.com/mmalmi/nostr-vpn',
+      '--overwrite-release',
+      zapstoreYaml,
     ],
     {
       dryRun,

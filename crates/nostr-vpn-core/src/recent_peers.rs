@@ -150,7 +150,12 @@ impl RecentPeerEndpoints {
             .filter_map(|(participant, endpoints)| {
                 let mut addrs: Vec<(String, u64)> = endpoints
                     .iter()
-                    .map(|entry| (entry.addr.clone(), entry.last_success_at.saturating_mul(1000)))
+                    .map(|entry| {
+                        (
+                            entry.addr.clone(),
+                            entry.last_success_at.saturating_mul(1000),
+                        )
+                    })
                     .collect();
                 addrs.sort_by(|a, b| a.0.cmp(&b.0));
                 addrs.dedup_by(|a, b| a.0 == b.0);

@@ -1181,9 +1181,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.8"
+version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88469e28bca56dcbfcdaa936ed375d610a7850da7265e741e913aed81ef855b3"
+checksum = "5ed29d4f04c7361d3824a2d7f06b802d73d3b246fd17375024ef211c8e99127d"
 dependencies = [
  "bluer",
  "crossbeam-channel",
@@ -1219,9 +1219,9 @@ dependencies = [
 
 [[package]]
 name = "fips-endpoint"
-version = "0.3.8"
+version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa9b2734608e4abe1be54cd6cd5e33e10c61a4647a837b85e61d4edd506c0b61"
+checksum = "89eabde7b6c6aedba7d7dbbfdf9e457841b0f49ca636272cea68df47ad30fbee"
 dependencies = [
  "fips-core",
 ]
@@ -2544,7 +2544,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.0.21"
+version = "4.0.22"
 dependencies = [
  "anyhow",
  "base64",
@@ -2567,7 +2567,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.0.21"
+version = "4.0.22"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2598,7 +2598,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-web"
-version = "4.0.21"
+version = "4.0.22"
 dependencies = [
  "anyhow",
  "axum",
@@ -2617,7 +2617,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-wintun"
-version = "4.0.21"
+version = "4.0.22"
 dependencies = [
  "anyhow",
  "wintun",
@@ -2682,7 +2682,7 @@ dependencies = [
 
 [[package]]
 name = "nvpn"
-version = "4.0.21"
+version = "4.0.22"
 dependencies = [
  "anyhow",
  "base64",

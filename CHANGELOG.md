@@ -4,6 +4,34 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.22 - 2026-05-16
+
+### Fixed
+
+- Daemon: cold-start and roaming reconnect time drops from ~1 minute to
+  a few seconds. Two changes compose:
+    * `fips-endpoint` bumped to 0.3.9. fips's open-discovery sweep now
+      expedites the retry queue entry of a *configured* peer when a
+      fresh overlay advert lands — previously the sweep skipped
+      configured peers entirely, so on cold-start every initial
+      connection attempt failed before any overlay data arrived,
+      pushed the peer into the standard 5/10/20/40/80s exponential
+      backoff, and we just sat on the advert until the next backoff
+      slot.
+    * `FipsPrivateTunnelRuntime::requires_endpoint_restart` no longer
+      treats a change in `endpoint_peers.addresses` as a reason to tear
+      down and re-bind the FIPS endpoint. Address hints (recent-peers
+      cache) are now pushed via the new `FipsEndpoint::update_peers`
+      runtime API (no link teardown), and peer-roster
+      adds/removes still flow through `apply_config` →
+      `mesh.replace_peers`. The pre-existing "fresh public IP observed
+      → daemon restart → all peers flap offline → cold-start retry
+      backoff" loop is gone.
+- Recent-peers cache now passes `last_success_at` through as fips
+  `PeerAddress::seen_at_ms` (introduced in 0.3.8). Cached addresses
+  now race operator-supplied static hints in the same recency-ranked
+  dial pass instead of sorting last for lack of a freshness signal.
+
 ## 4.0.21 - 2026-05-16
 
 ### Added

@@ -11,7 +11,7 @@ exclude = ["linux"]
 resolver = "2"
 
 [workspace.package]
-version = "4.0.21"
+version = "4.0.22"
 edition = "2024"
 license = "MIT"
 authors = ["sirius"]
@@ -25,7 +25,7 @@ base64 = "0.22"
 boringtun = "0.7"
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = "0.3.8"
+fips-endpoint = "0.3.9"
 futures = "0.3"
 hex = "0.4"
 hickory-proto = "0.25"
