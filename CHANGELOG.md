@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.24 - 2026-05-17
+
+### Added
+
+- Join requests can now be rejected from Android, iOS, Linux, macOS,
+  Windows, and the web UI, with app-core support for clearing stale
+  pending requests.
+- Saved inactive networks now expose contextual activation controls in
+  the Devices view: compact desktop controls on macOS and a full-width
+  `Activate Network` action on iOS, while the header network picker
+  remains a view switcher.
+- Added a reusable Linux musl daemon build helper and updated the ARMv6
+  helper so Raspberry Pi builds can apply a local FIPS patch cleanly.
+
+### Fixed
+
+- FIPS event refreshes no longer starve behind unrelated public discovery
+  events, keeping configured-peer refresh work moving under noisy overlay
+  conditions.
+- Add-device actions now use a plain plus icon instead of the add-person
+  symbol.
+
 ## 4.0.23 - 2026-05-16
 
 ### Added
