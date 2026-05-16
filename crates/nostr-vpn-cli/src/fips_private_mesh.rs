@@ -59,6 +59,9 @@ const FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS: u64 = 5;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 8;
 const FIPS_NOSTR_FAILURE_STREAK_THRESHOLD: u32 = 2;
 const FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS: u64 = 300;
+const FIPS_PEER_ACTIVE_PING_INTERVAL_SECS: u64 = 10;
+const FIPS_PEER_LINK_PING_INTERVAL_SECS: u64 = 15;
+const FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS: u64 = 120;
 const MESH_LAN_UNDERLAY_UDP_MTU: u16 = 1420;
 const MESH_LAN_TUNNEL_MTU: u16 = 1290;
 const MESH_MIN_UNDERLAY_UDP_MTU: u16 = 1280;
@@ -132,6 +135,7 @@ impl TunPipelinePacket {
 #[derive(Debug, Clone, Default)]
 struct FipsPeerPresence {
     last_seen_at: Option<u64>,
+    last_ping_sent_at: Option<u64>,
     tx_bytes: u64,
     rx_bytes: u64,
     error: Option<String>,
@@ -244,12 +248,34 @@ fn fips_peer_liveness(
         return (true, None);
     }
     if link_connected {
-        return (false, Some("fips ping pending".to_string()));
+        return (true, None);
     }
     (
         false,
         peer_error.or_else(|| Some("fips link pending".to_string())),
     )
+}
+
+fn fips_peer_ping_interval_secs(last_seen_at: Option<u64>, link_connected: bool, now: u64) -> u64 {
+    if last_seen_at
+        .is_some_and(|last_seen_at| now.saturating_sub(last_seen_at) <= FIPS_PEER_ONLINE_GRACE_SECS)
+    {
+        FIPS_PEER_ACTIVE_PING_INTERVAL_SECS
+    } else if link_connected {
+        FIPS_PEER_LINK_PING_INTERVAL_SECS
+    } else {
+        FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS
+    }
+}
+
+fn fips_peer_ping_due(
+    last_seen_at: Option<u64>,
+    last_ping_sent_at: Option<u64>,
+    link_connected: bool,
+    now: u64,
+) -> bool {
+    let interval = fips_peer_ping_interval_secs(last_seen_at, link_connected, now);
+    last_ping_sent_at.is_none_or(|sent_at| now.saturating_sub(sent_at) >= interval)
 }
 
 fn peer_endpoint_hint_addr(hint: &PeerEndpointHint) -> Option<String> {
@@ -680,6 +706,35 @@ impl FipsPrivateMeshRuntime {
             .unwrap_or_default()
     }
 
+    fn ping_due_participants(&self, now: u64) -> Result<Vec<String>> {
+        let participants = self
+            .mesh
+            .read()
+            .map_err(|_| anyhow!("FIPS mesh route table lock poisoned"))?
+            .peer_pubkeys();
+        let presence = self
+            .presence
+            .read()
+            .map_err(|_| anyhow!("FIPS mesh presence lock poisoned"))?;
+        let link_status = self
+            .link_status
+            .read()
+            .map_err(|_| anyhow!("FIPS mesh link status lock poisoned"))?;
+        Ok(participants
+            .into_iter()
+            .filter(|participant| {
+                let peer_presence = presence.get(participant);
+                let link_connected = link_status.contains_key(participant);
+                fips_peer_ping_due(
+                    peer_presence.and_then(|value| value.last_seen_at),
+                    peer_presence.and_then(|value| value.last_ping_sent_at),
+                    link_connected,
+                    now,
+                )
+            })
+            .collect())
+    }
+
     /// Snapshot `(endpoint_npub, transport_addr)` pairs for every peer that
     /// currently has an authenticated FIPS link, including open-discovery
     /// transit peers outside the private-network roster. Used by the daemon
@@ -817,7 +872,15 @@ impl FipsPrivateMeshRuntime {
             network_id: network_id.to_string(),
             sent_at: now,
         };
-        self.broadcast_control_frame(&frame).await
+        let participants = self.ping_due_participants(now)?;
+        let mut sent = 0usize;
+        for participant in participants {
+            self.note_ping_attempt(&participant, now)?;
+            if self.send_control_frame(&participant, &frame).await.is_ok() {
+                sent += 1;
+            }
+        }
+        Ok(sent)
     }
 
     pub(crate) async fn send_join_request(
@@ -939,6 +1002,23 @@ impl FipsPrivateMeshRuntime {
         Ok(())
     }
 
+    fn note_ping_attempt(&self, participant: &str, now: u64) -> Result<()> {
+        let mut presence = self
+            .presence
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh presence lock poisoned"))?;
+        if let Some(entry) = presence.get_mut(participant) {
+            entry.last_ping_sent_at = Some(now);
+        } else {
+            let entry = FipsPeerPresence {
+                last_ping_sent_at: Some(now),
+                ..Default::default()
+            };
+            presence.insert(participant.to_string(), entry);
+        }
+        Ok(())
+    }
+
     fn note_rx(&self, participant: &str, len: usize, now: u64) -> Result<()> {
         // Hot path; see note_tx for why the EC-point normalize is omitted
         // and why we side-step the entry API to avoid per-packet allocs.
@@ -953,9 +1033,9 @@ impl FipsPrivateMeshRuntime {
         } else {
             let entry = FipsPeerPresence {
                 last_seen_at: Some(now),
-                tx_bytes: 0,
                 rx_bytes: len as u64,
                 error: None,
+                ..Default::default()
             };
             presence.insert(participant.to_string(), entry);
         }
@@ -3395,23 +3475,36 @@ mod tests {
     }
 
     #[test]
-    fn fips_peer_liveness_requires_recent_authenticated_presence() {
+    fn fips_peer_liveness_trusts_authenticated_link_snapshot() {
         assert_eq!(
             super::fips_peer_liveness(Some(100), true, None, 120),
             (true, None)
         );
         assert_eq!(
             super::fips_peer_liveness(None, true, None, 120),
-            (false, Some("fips ping pending".to_string()))
+            (true, None)
         );
         assert_eq!(
             super::fips_peer_liveness(Some(10), true, None, 120),
-            (false, Some("fips ping pending".to_string()))
+            (true, None)
         );
         assert_eq!(
             super::fips_peer_liveness(None, false, Some("dial failed".to_string()), 120),
             (false, Some("dial failed".to_string()))
         );
+    }
+
+    #[test]
+    fn fips_peer_ping_due_uses_peer_state_intervals() {
+        assert!(super::fips_peer_ping_due(Some(100), None, true, 120));
+        assert!(!super::fips_peer_ping_due(Some(100), Some(115), true, 120));
+        assert!(super::fips_peer_ping_due(Some(100), Some(110), true, 120));
+
+        assert!(!super::fips_peer_ping_due(None, Some(110), true, 120));
+        assert!(super::fips_peer_ping_due(None, Some(105), true, 120));
+
+        assert!(!super::fips_peer_ping_due(None, Some(1), false, 120));
+        assert!(super::fips_peer_ping_due(None, Some(0), false, 120));
     }
 
     #[test]
