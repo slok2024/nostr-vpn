@@ -278,6 +278,8 @@ private struct DevicesPage: View {
 
 private struct ToolbarVpnSwitch: View {
     @ObservedObject var model: AppModel
+    @AppStorage(AppModel.vpnDisclosureAcceptedKey) private var vpnDisclosureAccepted = false
+    @State private var vpnDisclosurePresented = false
 
     private var enabled: Bool {
         !model.actionInFlight && model.state.vpnControlSupported && model.activeNetwork != nil
@@ -285,7 +287,11 @@ private struct ToolbarVpnSwitch: View {
 
     var body: some View {
         Button {
-            model.toggleVpn()
+            if !model.state.vpnEnabled && !vpnDisclosureAccepted {
+                vpnDisclosurePresented = true
+            } else {
+                model.toggleVpn()
+            }
         } label: {
             ZStack(alignment: model.state.vpnEnabled ? .trailing : .leading) {
                 Capsule()
@@ -305,6 +311,47 @@ private struct ToolbarVpnSwitch: View {
         .disabled(!enabled)
         .accessibilityLabel(model.state.vpnEnabled ? "Turn VPN off" : "Turn VPN on")
         .accessibilityValue(model.state.vpnEnabled ? "On" : "Off")
+        .sheet(isPresented: $vpnDisclosurePresented) {
+            VpnDisclosureSheet {
+                vpnDisclosureAccepted = true
+                vpnDisclosurePresented = false
+                model.toggleVpn()
+            } cancel: {
+                vpnDisclosurePresented = false
+            }
+        }
+    }
+}
+
+private struct VpnDisclosureSheet: View {
+    let accept: () -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Nostr VPN is a private VPN and generic WireGuard exit-node utility. It is not a public VPN, anonymity, stealth, or consumer proxy service.")
+                Text("The app uses VPN data only to operate networks you configure: device identity, peer lists, routes, exit-node settings, endpoints, invite/join metadata, traffic counters, and connection health.")
+                Text("Packet traffic is encrypted. User-selected peers, relays, bridge paths, and exit nodes receive only the data needed to provide the connection you asked them to provide.")
+                Text("The developer does not sell VPN data, use it for ads or tracking, or disclose it to third parties.")
+                Spacer()
+            }
+            .font(.body)
+            .foregroundStyle(.primary)
+            .padding()
+            .navigationTitle("Before Turning VPN On")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: cancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Continue", action: accept)
+                        .fontWeight(.semibold)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 

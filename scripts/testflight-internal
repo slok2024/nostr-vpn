@@ -155,8 +155,11 @@ DEFAULT_REVIEW_NOTES = (
     "tunnel APIs for VPN control. Nostr VPN is a private VPN and generic WireGuard "
     "exit-node utility: users choose their own networks, peers, routes, services, and "
     "exit nodes. It does not sell or operate public VPN exits and is not a public "
-    "internet stealth, anonymity, or proxy provider. On iOS, a VPN data disclosure is "
-    "shown on the main app screen before using the tunnel."
+    "internet stealth, anonymity, or proxy provider. On iOS, first VPN activation "
+    "opens an in-app disclosure before starting the tunnel. The disclosure explains "
+    "what VPN data is used, how it is used for configured private networks and "
+    "WireGuard exit nodes, and that the developer does not sell, use for ads/tracking, "
+    "or disclose VPN data to third parties."
 )
 
 

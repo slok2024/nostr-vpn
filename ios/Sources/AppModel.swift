@@ -4,6 +4,8 @@ import UIKit
 
 @MainActor
 final class AppModel: ObservableObject {
+    static let vpnDisclosureAcceptedKey = "vpnDisclosureAccepted"
+
     @Published var state: AppState
     @Published var actionInFlight = false
     @Published var statusMessage = ""
@@ -54,7 +56,11 @@ final class AppModel: ObservableObject {
         let launchAutomationHandled = runLaunchAutomationIfRequested()
         if !launchAutomationHandled, state.autoconnect, !state.vpnEnabled, activeNetwork != nil {
             debugLog("autoconnect starting PacketTunnel")
-            setVpnEnabled(true)
+            if UserDefaults.standard.bool(forKey: Self.vpnDisclosureAcceptedKey) {
+                setVpnEnabled(true)
+            } else {
+                statusMessage = "Review VPN data use before turning VPN on."
+            }
         }
     }
 

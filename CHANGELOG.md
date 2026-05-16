@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.25 - 2026-05-17
+
+### Added
+
+- iOS now shows a VPN data-use disclosure before the first tunnel
+  activation, explaining private-network data use, user-selected
+  relays/exit nodes, and the no sale/tracking/third-party disclosure
+  policy.
+
+### Changed
+
+- Public TestFlight review metadata and the privacy policy now describe
+  Nostr VPN as a private VPN and generic WireGuard exit-node utility,
+  not a public VPN, anonymity, stealth, or consumer proxy service.
+
+### Fixed
+
+- FIPS peer config initializers compile against the current local FIPS
+  discovery fallback transit setting.
+
 ## 4.0.24 - 2026-05-17
 
 ### Added
