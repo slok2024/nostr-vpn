@@ -751,6 +751,12 @@ struct RootView: View {
                         }
                         Spacer()
                         copyButton(value: request.requesterNpub, copied: .peerNpub, peerNpub: request.requesterNpub, systemImage: "doc.on.doc")
+                        Button(role: .destructive) {
+                            manager.rejectJoinRequest(networkId: network.id, requesterNpub: request.requesterNpub)
+                        } label: {
+                            Text("Reject")
+                        }
+                        .disabled(!network.localIsAdmin || manager.actionInFlight)
                         Button("Accept") {
                             manager.acceptJoinRequest(networkId: network.id, requesterNpub: request.requesterNpub)
                         }
@@ -792,13 +798,13 @@ struct RootView: View {
                         .disabled(invite.isEmpty)
                     }
                     HStack {
-                        Toggle("Join requests", isOn: Binding(
+                        Toggle("Allow join requests", isOn: Binding(
                             get: { network.joinRequestsEnabled },
                             set: { manager.setJoinRequests(networkId: network.id, enabled: $0) }
                         ))
                         .disabled(!network.localIsAdmin || manager.actionInFlight)
-                        .help("Listen for join requests")
-                        badge(network.joinRequestsEnabled ? "Open" : "Closed", style: network.joinRequestsEnabled ? .ok : .muted)
+                        .help("Allow devices with an invite to request access")
+                        badge(network.joinRequestsEnabled ? "Allowed" : "Blocked", style: network.joinRequestsEnabled ? .ok : .muted)
                         Spacer()
                         Button {
                             state.inviteBroadcastActive ? manager.stopInviteBroadcast() : manager.startInviteBroadcast()
@@ -1244,14 +1250,14 @@ struct RootView: View {
                         copyButton(value: network.networkId, copied: .meshId, systemImage: "doc.on.doc")
                     }
                     GridRow {
-                        label("Join")
+                        label("Requests")
                         Toggle("", isOn: Binding(
                             get: { network.joinRequestsEnabled },
                             set: { manager.setJoinRequests(networkId: network.id, enabled: $0) }
                         ))
                         .labelsHidden()
                         .disabled(!network.localIsAdmin || manager.actionInFlight)
-                        Text(network.joinRequestsEnabled ? "Open" : "Closed")
+                        Text(network.joinRequestsEnabled ? "Allowed" : "Blocked")
                             .foregroundStyle(.secondary)
                     }
                     GridRow {

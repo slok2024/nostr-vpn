@@ -1217,6 +1217,24 @@ fn build_devices_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
             }
             row.append(&copy);
 
+            let reject = icon_text_button("Reject", "");
+            reject.add_css_class("destructive-action");
+            {
+                let app = app.clone();
+                let network_id = network.id.clone();
+                let requester_npub = request.requester_npub.clone();
+                reject.connect_clicked(move |_| {
+                    dispatch(
+                        &app,
+                        NativeAppAction::RejectJoinRequest {
+                            network_id: network_id.clone(),
+                            requester_npub: requester_npub.clone(),
+                        },
+                    );
+                });
+            }
+            row.append(&reject);
+
             let accept = icon_text_button("Accept", "");
             accept.add_css_class("suggested-action");
             {
@@ -1785,7 +1803,7 @@ fn build_share_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     switch_row_enabled(
         app,
         &column,
-        "Join requests",
+        "Allow join requests",
         network.join_requests_enabled,
         network.local_is_admin,
         {
@@ -2300,7 +2318,7 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         switch_row_enabled(
             app,
             &network,
-            "Join requests",
+            "Allow join requests",
             active.join_requests_enabled,
             active.local_is_admin,
             {

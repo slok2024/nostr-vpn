@@ -385,15 +385,17 @@ private fun androidx.compose.foundation.lazy.LazyListScope.devicesPage(
                     Text(request.requesterNodeName.ifBlank { "Join request" }, fontWeight = FontWeight.SemiBold)
                     Text(request.requestedAtText, color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
-                Button(onClick = {
-                    dispatch(
-                        JSONObject()
-                            .put("type", "accept_join_request")
-                            .put("networkId", network.id)
-                            .put("requesterNpub", request.requesterNpub),
-                    )
-                }) {
-                    Text("Accept")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        dispatch(NativeActions.rejectJoinRequest(network.id, request.requesterNpub))
+                    }) {
+                        Text("Reject", color = Color(0xFFB00020))
+                    }
+                    Button(onClick = {
+                        dispatch(NativeActions.acceptJoinRequest(network.id, request.requesterNpub))
+                    }) {
+                        Text("Accept")
+                    }
                 }
             }
         }
@@ -635,6 +637,16 @@ private fun AddDevicesDialog(
                     if (state.activeNetworkInvite.isNotBlank()) {
                         QrCode(invite = state.activeNetworkInvite, qrJson = qrJson)
                         CopyLine(state.activeNetworkInvite)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(
+                            checked = network.joinRequestsEnabled,
+                            onCheckedChange = { enabled ->
+                                dispatch(NativeActions.setJoinRequests(network.id, enabled))
+                            },
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Allow join requests")
                     }
                     Button(onClick = {
                         dispatch(

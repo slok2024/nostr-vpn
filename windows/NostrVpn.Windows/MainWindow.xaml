@@ -341,7 +341,10 @@
                 <DataTemplate>
                   <Border Style="{StaticResource Card}">
                     <DockPanel>
-                      <Button DockPanel.Dock="Right" Content="Accept" Tag="{Binding}" Click="AcceptJoin_Click" />
+                      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <Button Content="Reject" Tag="{Binding}" Click="RejectJoin_Click" Margin="0,0,8,0" />
+                        <Button Content="Accept" Tag="{Binding}" Click="AcceptJoin_Click" />
+                      </StackPanel>
                       <StackPanel>
                         <TextBlock Text="{Binding RequesterNodeName}" FontWeight="SemiBold" />
                         <TextBlock Text="{Binding RequestedAtText}" Foreground="{StaticResource TextSecondary}" />
@@ -447,7 +450,7 @@
                   <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                     <Button Content="Copy" Command="{Binding CopyInviteCommand}" Margin="0,0,8,0" />
                     <Button Content="{Binding InviteBroadcastButtonText}" Command="{Binding ToggleInviteBroadcastCommand}" />
-                    <CheckBox Content="Join requests"
+                    <CheckBox Content="Allow join requests"
                               IsChecked="{Binding ActiveNetwork.JoinRequestsEnabled, Mode=OneWay}"
                               IsEnabled="{Binding ActiveNetwork.LocalIsAdmin}"
                               Click="JoinRequests_Click"
@@ -637,7 +640,7 @@
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <CheckBox Margin="0,12,0,0" Content="Accept join requests" IsChecked="{Binding ActiveNetwork.JoinRequestsEnabled, Mode=OneWay}" Click="JoinRequests_Click" />
+                <CheckBox Margin="0,12,0,0" Content="Allow join requests" IsChecked="{Binding ActiveNetwork.JoinRequestsEnabled, Mode=OneWay}" Click="JoinRequests_Click" />
               </StackPanel>
             </Border>
 

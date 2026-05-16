@@ -186,6 +186,14 @@ enum NativeActions {
         ]
     }
 
+    static func rejectJoinRequest(networkId: String, requesterNpub: String) -> [String: Any] {
+        [
+            "type": "reject_join_request",
+            "networkId": networkId,
+            "requesterNpub": requesterNpub,
+        ]
+    }
+
     static func setJoinRequests(networkId: String, enabled: Bool) -> [String: Any] {
         [
             "type": "set_network_join_requests_enabled",

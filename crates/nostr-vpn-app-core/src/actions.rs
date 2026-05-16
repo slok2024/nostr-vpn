@@ -84,6 +84,10 @@ pub enum NativeAppAction {
         network_id: String,
         requester_npub: String,
     },
+    RejectJoinRequest {
+        network_id: String,
+        requester_npub: String,
+    },
     SetParticipantAlias {
         npub: String,
         alias: String,

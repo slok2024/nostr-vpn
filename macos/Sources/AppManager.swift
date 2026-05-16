@@ -441,6 +441,10 @@ final class AppManager: ObservableObject {
         dispatch(.acceptJoinRequest(networkId: networkId, requesterNpub: requesterNpub), status: "Accepting join request")
     }
 
+    func rejectJoinRequest(networkId: String, requesterNpub: String) {
+        dispatch(.rejectJoinRequest(networkId: networkId, requesterNpub: requesterNpub), status: "Rejecting join request")
+    }
+
     func setParticipantAlias(npub: String, alias: String) {
         dispatch(.setParticipantAlias(npub: npub, alias: alias), status: "Saving alias")
     }

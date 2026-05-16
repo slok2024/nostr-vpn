@@ -19,6 +19,7 @@ public static class NativeActions
     public static string SetNetworkJoinRequestsEnabled(string networkId, bool enabled) => AppCoreClient.Action(new { type = "set_network_join_requests_enabled", networkId, enabled });
     public static string RequestNetworkJoin(string networkId) => AppCoreClient.Action(new { type = "request_network_join", networkId });
     public static string AcceptJoinRequest(string networkId, string requesterNpub) => AppCoreClient.Action(new { type = "accept_join_request", networkId, requesterNpub });
+    public static string RejectJoinRequest(string networkId, string requesterNpub) => AppCoreClient.Action(new { type = "reject_join_request", networkId, requesterNpub });
     public static string ImportNetworkInvite(string invite) => AppCoreClient.Action(new { type = "import_network_invite", invite });
     public static string StartInviteBroadcast() => AppCoreClient.Action(new { type = "start_invite_broadcast" });
     public static string StopInviteBroadcast() => AppCoreClient.Action(new { type = "stop_invite_broadcast" });

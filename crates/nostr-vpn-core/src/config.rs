@@ -1161,6 +1161,17 @@ impl AppConfig {
         }
     }
 
+    pub fn reject_inbound_join_request(&mut self, network_id: &str, requester: &str) -> Result<()> {
+        let requester = normalize_nostr_pubkey(requester)?;
+        let network = self
+            .network_by_id_mut(network_id)
+            .ok_or_else(|| anyhow::anyhow!("network not found"))?;
+        network
+            .inbound_join_requests
+            .retain(|pending| pending.requester != requester);
+        Ok(())
+    }
+
     pub fn set_network_mesh_id(&mut self, network_id: &str, mesh_id: &str) -> Result<()> {
         let normalized = normalize_runtime_network_id(mesh_id);
         if normalized.is_empty() {

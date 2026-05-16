@@ -47,6 +47,15 @@ object NativeActions {
     fun setNetworkEnabled(networkId: String, enabled: Boolean) =
         action("set_network_enabled", "networkId" to networkId, "enabled" to enabled)
 
+    fun setJoinRequests(networkId: String, enabled: Boolean) =
+        action("set_network_join_requests_enabled", "networkId" to networkId, "enabled" to enabled)
+
+    fun acceptJoinRequest(networkId: String, requesterNpub: String) =
+        action("accept_join_request", "networkId" to networkId, "requesterNpub" to requesterNpub)
+
+    fun rejectJoinRequest(networkId: String, requesterNpub: String) =
+        action("reject_join_request", "networkId" to networkId, "requesterNpub" to requesterNpub)
+
     fun removeNetwork(networkId: String) = action("remove_network", "networkId" to networkId)
 
     fun updateSettings(vararg settings: Pair<String, Any?>): JSONObject =

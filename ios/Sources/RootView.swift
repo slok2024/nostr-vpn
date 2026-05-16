@@ -201,6 +201,14 @@ private struct DevicesPage: View {
                                 ),
                                 status: "Accepting request"
                             )
+                        } reject: {
+                            model.dispatch(
+                                NativeActions.rejectJoinRequest(
+                                    networkId: network.id,
+                                    requesterNpub: request.requesterNpub
+                                ),
+                                status: "Rejecting request"
+                            )
                         }
                     }
                     Button(role: .destructive) {
@@ -466,7 +474,7 @@ private struct AddDeviceSheet: View {
         ScrollView {
             LazyVStack(spacing: 14) {
                 if network.enabled {
-                    InviteToMyNetworkCard(model: model)
+                    InviteToMyNetworkCard(model: model, network: network)
                 }
                 ManualPairingInfoCard(model: model, network: network)
                 AddDeviceCard(network: network) { npub, alias in
@@ -517,6 +525,7 @@ private struct ManualPairingInfoCard: View {
 
 private struct InviteToMyNetworkCard: View {
     @ObservedObject var model: AppModel
+    let network: NetworkState
 
     var body: some View {
         AppCard {
@@ -535,6 +544,16 @@ private struct InviteToMyNetworkCard: View {
                             Label("Share", systemImage: "square.and.arrow.up")
                         }
                     }
+                    Toggle("Allow join requests", isOn: Binding(
+                        get: { network.joinRequestsEnabled },
+                        set: { enabled in
+                            model.dispatch(
+                                NativeActions.setJoinRequests(networkId: network.id, enabled: enabled),
+                                status: "Saving join request setting"
+                            )
+                        }
+                    ))
+                    .disabled(!network.localIsAdmin || model.actionInFlight)
                     Button {
                         if model.state.inviteBroadcastActive {
                             model.dispatch(NativeActions.stopInviteBroadcast(), status: "Stopped broadcasting")
@@ -971,6 +990,7 @@ private struct AddDeviceCard: View {
 private struct JoinRequestRow: View {
     let request: InboundJoinRequest
     let accept: () -> Void
+    let reject: () -> Void
 
     var body: some View {
         AppCard {
@@ -983,8 +1003,12 @@ private struct JoinRequestRow: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Accept", action: accept)
-                    .buttonStyle(.borderedProminent)
+                HStack(spacing: 8) {
+                    Button("Reject", role: .destructive, action: reject)
+                        .buttonStyle(.bordered)
+                    Button("Accept", action: accept)
+                        .buttonStyle(.borderedProminent)
+                }
             }
         }
     }

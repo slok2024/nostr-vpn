@@ -133,6 +133,14 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void RejectJoin_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: NativeInboundJoinRequestState request })
+        {
+            await ViewModel.RejectJoinRequestAsync(request);
+        }
+    }
+
     private void JoinLanPeer_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: string invite })

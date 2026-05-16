@@ -164,6 +164,7 @@ async fn main() -> Result<()> {
         .route("/api/remove_participant", post(remove_participant))
         .route("/api/remove_admin", post(remove_admin))
         .route("/api/accept_join_request", post(accept_join_request))
+        .route("/api/reject_join_request", post(reject_join_request))
         .route("/api/set_participant_alias", post(set_participant_alias))
         .route("/api/update_settings", post(update_settings))
         .with_state(state.clone());
@@ -472,6 +473,16 @@ async fn accept_join_request(
         set_action_status(&state, "Join request accepted.");
     }
     Ok(Json(build_ui_state(&state).map_err(internal_error)?))
+}
+
+async fn reject_join_request(
+    State(state): State<ServerState>,
+    Json(request): Json<JoinRequestAction>,
+) -> ApiResult<Json<UiState>> {
+    update_config_and_reload(&state, |config| {
+        config.reject_inbound_join_request(&request.network_id, &request.requester_npub)?;
+        Ok("Join request rejected.".to_string())
+    })
 }
 
 async fn set_participant_alias(

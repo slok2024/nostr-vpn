@@ -848,6 +848,14 @@ impl NativeAppRuntime {
                 network_id,
                 requester_npub,
             } => self.accept_join_request(&network_id, &requester_npub),
+            NativeAppAction::RejectJoinRequest {
+                network_id,
+                requester_npub,
+            } => {
+                self.config
+                    .reject_inbound_join_request(&network_id, &requester_npub)?;
+                self.save_reload_and_refresh()
+            }
             NativeAppAction::SetParticipantAlias { npub, alias } => {
                 self.config.set_peer_alias(&npub, &alias)?;
                 self.save_reload_and_refresh()
@@ -983,6 +991,7 @@ impl NativeAppRuntime {
         if network_setup_required_for_config(&self.config) {
             return Err(anyhow!("Create or join a network first"));
         }
+        self.ensure_active_network_accepts_join_requests()?;
         self.refresh_lan_pairing();
         let announcement = self.build_lan_pairing_announcement()?;
         let expires_at = lan_pairing_deadline();
@@ -993,6 +1002,19 @@ impl NativeAppRuntime {
         }
         self.invite_broadcast_expires_at = Some(expires_at);
         Ok(())
+    }
+
+    fn ensure_active_network_accepts_join_requests(&mut self) -> Result<()> {
+        let Some(network) = self.config.active_network_opt() else {
+            return Ok(());
+        };
+        if network.listen_for_join_requests {
+            return Ok(());
+        }
+        let network_id = network.id.clone();
+        self.config
+            .set_network_join_requests_enabled(&network_id, true)?;
+        self.save_reload_and_refresh()
     }
 
     fn stop_invite_broadcast(&mut self) {
@@ -2747,6 +2769,35 @@ mod tests {
     }
 
     #[test]
+    fn invite_broadcast_enables_join_requests() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-broadcast-joins-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.mobile_runtime = true;
+        runtime.config_path = dir.join("config.toml");
+        create_test_network(&mut runtime, "Home");
+        runtime.config.networks[0].listen_for_join_requests = false;
+
+        runtime.dispatch(NativeAppAction::StartInviteBroadcast);
+
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        assert!(runtime.config.networks[0].listen_for_join_requests);
+        assert!(runtime.state().networks[0].join_requests_enabled);
+
+        let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
+        assert!(saved.networks[0].listen_for_join_requests);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn accepting_join_request_uses_requester_node_name_as_alias() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2798,6 +2849,55 @@ mod tests {
             saved.peer_alias(&requester_hex).as_deref(),
             Some("ubuntu-dev")
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejecting_join_request_removes_it_without_adding_participant() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-reject-join-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+
+        let requester_npub = Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("requester npub");
+        let requester_hex = normalize_nostr_pubkey(&requester_npub).expect("normalize requester");
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.mobile_runtime = true;
+        runtime.config_path = dir.join("config.toml");
+        create_test_network(&mut runtime, "Home");
+        let network_id = runtime.config.networks[0].id.clone();
+        runtime.config.networks[0]
+            .inbound_join_requests
+            .push(PendingInboundJoinRequest {
+                requester: requester_hex.clone(),
+                requester_node_name: "Ubuntu Dev".to_string(),
+                requested_at: 1_726_000_000,
+            });
+
+        runtime.dispatch(NativeAppAction::RejectJoinRequest {
+            network_id,
+            requester_npub,
+        });
+
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        assert!(
+            !runtime.config.networks[0]
+                .participants
+                .contains(&requester_hex)
+        );
+        assert!(runtime.config.networks[0].inbound_join_requests.is_empty());
+
+        let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
+        assert!(saved.networks[0].inbound_join_requests.is_empty());
 
         let _ = fs::remove_dir_all(&dir);
     }

@@ -524,3 +524,26 @@ fn record_inbound_join_request_updates_matching_listening_network() {
         "alice-phone"
     );
 }
+
+#[test]
+fn reject_inbound_join_request_removes_matching_request() {
+    let requester = Keys::generate().public_key().to_hex();
+    let other = Keys::generate().public_key().to_hex();
+    let mut config = AppConfig::generated();
+    let network_id = config.networks[0].id.clone();
+    config.networks[0].network_id = "mesh-home".to_string();
+
+    config
+        .record_inbound_join_request("mesh-home", &requester, "alice-phone", 1_726_000_000)
+        .expect("record requester");
+    config
+        .record_inbound_join_request("mesh-home", &other, "bob-phone", 1_726_000_001)
+        .expect("record other");
+
+    config
+        .reject_inbound_join_request(&network_id, &requester)
+        .expect("reject join request");
+
+    assert_eq!(config.networks[0].inbound_join_requests.len(), 1);
+    assert_eq!(config.networks[0].inbound_join_requests[0].requester, other);
+}

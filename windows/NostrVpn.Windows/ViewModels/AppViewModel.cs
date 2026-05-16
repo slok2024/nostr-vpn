@@ -795,6 +795,14 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
             : Task.CompletedTask;
     }
 
+    public Task RejectJoinRequestAsync(NativeInboundJoinRequestState request)
+    {
+        var network = ActiveNetwork;
+        return network?.LocalIsAdmin == true
+            ? DispatchAsync(NativeActions.RejectJoinRequest(network.Id, request.RequesterNpub), "Rejecting join request")
+            : Task.CompletedTask;
+    }
+
     public Task SetParticipantAliasAsync(NativeParticipantState participant, string alias)
     {
         return ActiveNetwork?.LocalIsAdmin == true

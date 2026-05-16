@@ -3095,6 +3095,8 @@ public enum NativeAppAction {
     )
     case acceptJoinRequest(networkId: String, requesterNpub: String
     )
+    case rejectJoinRequest(networkId: String, requesterNpub: String
+    )
     case setParticipantAlias(npub: String, alias: String
     )
     case updateSettings(patch: SettingsPatch
@@ -3186,10 +3188,13 @@ public struct FfiConverterTypeNativeAppAction: FfiConverterRustBuffer {
         case 28: return .acceptJoinRequest(networkId: try FfiConverterString.read(from: &buf), requesterNpub: try FfiConverterString.read(from: &buf)
         )
 
-        case 29: return .setParticipantAlias(npub: try FfiConverterString.read(from: &buf), alias: try FfiConverterString.read(from: &buf)
+        case 29: return .rejectJoinRequest(networkId: try FfiConverterString.read(from: &buf), requesterNpub: try FfiConverterString.read(from: &buf)
         )
 
-        case 30: return .updateSettings(patch: try FfiConverterTypeSettingsPatch.read(from: &buf)
+        case 30: return .setParticipantAlias(npub: try FfiConverterString.read(from: &buf), alias: try FfiConverterString.read(from: &buf)
+        )
+
+        case 31: return .updateSettings(patch: try FfiConverterTypeSettingsPatch.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -3337,14 +3342,20 @@ public struct FfiConverterTypeNativeAppAction: FfiConverterRustBuffer {
             FfiConverterString.write(requesterNpub, into: &buf)
 
 
-        case let .setParticipantAlias(npub,alias):
+        case let .rejectJoinRequest(networkId,requesterNpub):
             writeInt(&buf, Int32(29))
+            FfiConverterString.write(networkId, into: &buf)
+            FfiConverterString.write(requesterNpub, into: &buf)
+
+
+        case let .setParticipantAlias(npub,alias):
+            writeInt(&buf, Int32(30))
             FfiConverterString.write(npub, into: &buf)
             FfiConverterString.write(alias, into: &buf)
 
 
         case let .updateSettings(patch):
-            writeInt(&buf, Int32(30))
+            writeInt(&buf, Int32(31))
             FfiConverterTypeSettingsPatch.write(patch, into: &buf)
 
         }
