@@ -13,6 +13,8 @@ For macOS launchd env-var A/Bs, edit `EnvironmentVariables` and then `launchctl 
 
 Before remote bench automation, make sure the SSH key is loaded into the agent (for example with `ssh-add --apple-use-keychain <key>` from an interactive shell on macOS); `BatchMode=yes` fails if the key is only in Keychain and user interaction is unavailable.
 
+For ARMv6 Linux devices, build the daemon with `scripts/build-nvpn-armv6-musl` on a Linux Docker builder. The script uses a clean `git archive`, targets `arm-unknown-linux-musleabihf`, and can smoke-test the result with `NVPN_SMOKE_HOST=<ssh-host>` before any install. Do not use an ARMv7 binary on ARMv6 hardware; it may build successfully and then crash immediately. Keep machine names, usernames, and IP addresses out of committed docs/scripts; pass local details through environment variables or shell history instead.
+
 ## Before tagging a release
 
 The release workflow (`.github/workflows/release.yml`) is triggered by
