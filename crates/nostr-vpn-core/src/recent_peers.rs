@@ -4,7 +4,9 @@
 //! address is the strongest hint we have that they can reach each other again
 //! without first dialing a Nostr relay. Persist a TTL'd snapshot to disk so
 //! the daemon can re-seed FIPS with those addresses on the next boot, before
-//! relays come up.
+//! relays come up. Entries are not limited to the private-network roster:
+//! authenticated open-discovery transit peers are useful overlay neighbors
+//! too, while the nvpn data plane still admits only roster-owned packets.
 //!
 //! LAN addresses (RFC1918, CGNAT, link-local, loopback, ULA) are excluded:
 //! they're either re-learned via mDNS instantly or genuinely useless after a
@@ -91,8 +93,9 @@ impl RecentPeerEndpoints {
         changed
     }
 
-    /// Keep only entries for npubs in `participants`, drop the rest. Used
-    /// when peers leave a network so we don't accumulate dead entries.
+    /// Keep only entries for npubs in `participants`, drop the rest. Available
+    /// for callers that want a roster-scoped cache; nvpn's FIPS overlay keeps
+    /// authenticated non-roster transit peers until TTL expiry.
     pub fn retain_participants(&mut self, participants: &HashSet<String>) -> bool {
         let before = self.entries.len();
         self.entries

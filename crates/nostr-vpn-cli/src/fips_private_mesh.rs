@@ -18,6 +18,7 @@ use nostr_vpn_core::fips_control::{
 };
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
 use nostr_vpn_core::join_requests::MeshJoinRequest;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -49,6 +50,7 @@ use tokio::sync::mpsc;
 
 const FIPS_PEER_ONLINE_GRACE_SECS: u64 = 45;
 const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
+const FIPS_LAN_DISCOVERY_SCOPE_PREFIX: &str = "nostr-vpn";
 const FIPS_PEER_CAPS_GRACE_SECS: u64 = 600;
 const FIPS_CONTROL_FRAGMENT_TTL_SECS: u64 = 120;
 const FIPS_CONTROL_MAX_FRAGMENTS: u16 = 128;
@@ -66,6 +68,14 @@ const FIPS_MESH_SEND_BURST: usize = 64;
 const WINDOWS_FIPS_TUN_READ_BURST: usize = 64;
 #[cfg(target_os = "windows")]
 const WINDOWS_FIPS_TUN_WRITE_BURST: usize = 64;
+
+fn fips_lan_discovery_scope(network_id: &str) -> String {
+    let digest = Sha256::digest(network_id.trim().as_bytes());
+    format!(
+        "{FIPS_LAN_DISCOVERY_SCOPE_PREFIX}:{}",
+        hex::encode(&digest[..16])
+    )
+}
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use boringtun::device::{Error as TunError, tun::TunSocket};
@@ -498,7 +508,7 @@ impl FipsPrivateMeshRuntime {
         network_id: impl AsRef<str>,
         peers: Vec<FipsMeshPeerConfig>,
     ) -> Result<Self> {
-        let scope = format!("nostr-vpn:{}", network_id.as_ref().trim());
+        let scope = fips_lan_discovery_scope(network_id.as_ref());
         let endpoint_peers = fips_endpoint_peers_from_mesh(&peers, Vec::new(), Vec::new());
         let config = fips_endpoint_config(&endpoint_peers, None, private_mesh_mtu_from_app(None));
         Self::bind_with_config(identity_nsec, scope, peers, config, Vec::new()).await
@@ -805,21 +815,21 @@ impl FipsPrivateMeshRuntime {
             .unwrap_or_default()
     }
 
-    /// Snapshot `(participant_pubkey, transport_addr)` pairs for peers that
-    /// currently have an authenticated link. Used by the daemon heartbeat
-    /// to update the on-disk recent-peers cache.
-    pub(crate) fn authenticated_peer_transport_addrs(&self) -> Vec<(String, String)> {
-        let Ok(link_status) = self.link_status.read() else {
-            return Vec::new();
-        };
-        link_status
-            .iter()
-            .filter_map(|(participant, peer)| {
-                peer.transport_addr
-                    .as_ref()
-                    .map(|addr| (participant.clone(), addr.clone()))
-            })
-            .collect()
+    /// Snapshot `(endpoint_npub, transport_addr)` pairs for every peer that
+    /// currently has an authenticated FIPS link, including open-discovery
+    /// transit peers outside the private-network roster. Used by the daemon
+    /// heartbeat to update the on-disk recent-peers cache so restarts can
+    /// seed useful overlay peers before relay discovery has warmed up.
+    pub(crate) async fn authenticated_peer_transport_addrs(&self) -> Result<Vec<(String, String)>> {
+        let peers = self
+            .endpoint
+            .peers()
+            .await
+            .context("failed to snapshot FIPS endpoint peers")?;
+        Ok(peers
+            .into_iter()
+            .filter_map(|peer| peer.transport_addr.map(|addr| (peer.npub, addr)))
+            .collect())
     }
 
     #[cfg(target_os = "linux")]
@@ -1216,13 +1226,16 @@ fn fips_endpoint_config(
     config.node.discovery.nostr.share_local_candidates = transport
         .map(|transport| transport.share_local_candidates)
         .unwrap_or(false);
+    config.node.discovery.lan.enabled = transport
+        .map(|transport| transport.share_local_candidates)
+        .unwrap_or(false);
     // Leave the relay-side `app` at fips-core's default ("fips-overlay-v1").
     // We deliberately do NOT bake the per-network mesh id into it: the relay
     // `protocol` tag is publicly visible, so per-network apps would let any
-    // observer count members of each private network. The mesh id is still
-    // used as the LAN `discovery_scope` (mDNS-only, doesn't leave the
-    // physical LAN) and is enforced cryptographically inside FIPS handshake
-    // payloads.
+    // observer count members of each private network. The builder receives a
+    // hashed per-network LAN discovery scope separately; that scope is carried
+    // only in mDNS TXT records on the local link, while the private data plane
+    // still enforces roster ownership before packets reach the tun.
     let bind_addr = transport.map(fips_udp_bind_addr);
     let external_addr = transport.and_then(fips_udp_external_addr);
     if let Some(transport) = transport {
@@ -1308,15 +1321,18 @@ fn fips_endpoint_peers_from_mesh(
 
     // Recent-peers cache entries arrive with `last_success_at_ms` so the
     // fips dialer ranks them ahead of unstamped operator hints in the
-    // same try-everything pass. Mesh-carried live hints are merged through
-    // this same stamped path and are accepted only for peers already in
-    // the private-network roster; operator-configured static transit peers
-    // above remain the explicit opt-in for outside-roster dialing.
+    // same try-everything pass. Authenticated non-roster entries are kept
+    // too: those are overlay transit peers we successfully handshook with
+    // before, and reseeding them on restart keeps the FIPS overlay warm
+    // before relay discovery catches up.
     for (npub, addresses) in recent_peer_endpoints {
         let npub = normalize_fips_endpoint_npub(&npub);
-        let Some(peer) = peers.get_mut(&npub) else {
-            continue;
-        };
+        let peer = peers
+            .entry(npub.clone())
+            .or_insert_with(|| FipsEndpointPeerTransportConfig {
+                npub,
+                addresses: Vec::new(),
+            });
         for (addr, seen_at_ms) in addresses {
             let trimmed = addr.trim();
             if trimmed.is_empty() {
@@ -1473,11 +1489,11 @@ impl FipsPrivateTunnelConfig {
         let mut recent_peer_endpoints = recent_peers
             .map(|cache| cache.as_static_peer_endpoints_with_seen_at())
             .unwrap_or_default();
-        recent_peer_endpoints.retain(|(participant, _)| {
-            desired_endpoint_hint_npubs.contains(&normalize_fips_endpoint_npub(participant))
-        });
         recent_peer_endpoints =
             filter_stamped_tunnel_endpoints(recent_peer_endpoints, &tunnel_endpoint_hosts);
+        // Live capability hints are accepted only for roster peers because
+        // they are claims carried by that peer. The disk cache above is
+        // different: it records peers this endpoint already authenticated.
         recent_peer_endpoints.extend(
             filter_stamped_tunnel_endpoints(
                 live_peer_endpoints
@@ -1595,7 +1611,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
 impl FipsPrivateTunnelRuntime {
     pub(crate) async fn start(config: FipsPrivateTunnelConfig) -> Result<Self> {
         crate::pipeline_profile::maybe_spawn_reporter();
-        let scope = format!("nostr-vpn:{}", config.network_id.trim());
+        let scope = fips_lan_discovery_scope(&config.network_id);
         let transport = FipsEndpointTransportConfig {
             listen_port: config.listen_port,
             advertised_endpoint: config.advertised_endpoint.clone(),
@@ -1696,8 +1712,8 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.peer_pubkeys()
     }
 
-    pub(crate) fn authenticated_peer_transport_addrs(&self) -> Vec<(String, String)> {
-        self.mesh.authenticated_peer_transport_addrs()
+    pub(crate) async fn authenticated_peer_transport_addrs(&self) -> Result<Vec<(String, String)>> {
+        self.mesh.authenticated_peer_transport_addrs().await
     }
 
     pub(crate) fn peer_endpoint_hints(&self) -> Vec<(String, Vec<(String, u64)>)> {
@@ -2733,7 +2749,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
 #[cfg(target_os = "windows")]
 impl FipsPrivateTunnelRuntime {
     pub(crate) async fn start(config: FipsPrivateTunnelConfig) -> Result<Self> {
-        let scope = format!("nostr-vpn:{}", config.network_id.trim());
+        let scope = fips_lan_discovery_scope(&config.network_id);
         let transport = FipsEndpointTransportConfig {
             listen_port: config.listen_port,
             advertised_endpoint: config.advertised_endpoint.clone(),
@@ -2830,8 +2846,8 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.peer_pubkeys()
     }
 
-    pub(crate) fn authenticated_peer_transport_addrs(&self) -> Vec<(String, String)> {
-        self.mesh.authenticated_peer_transport_addrs()
+    pub(crate) async fn authenticated_peer_transport_addrs(&self) -> Result<Vec<(String, String)>> {
+        self.mesh.authenticated_peer_transport_addrs().await
     }
 
     pub(crate) fn peer_endpoint_hints(&self) -> Vec<(String, Vec<(String, u64)>)> {
@@ -3211,8 +3227,8 @@ impl FipsPrivateTunnelRuntime {
         Vec::new()
     }
 
-    pub(crate) fn authenticated_peer_transport_addrs(&self) -> Vec<(String, String)> {
-        Vec::new()
+    pub(crate) async fn authenticated_peer_transport_addrs(&self) -> Result<Vec<(String, String)>> {
+        Ok(Vec::new())
     }
 
     pub(crate) fn peer_endpoint_hints(&self) -> Vec<(String, Vec<(String, u64)>)> {
@@ -3304,10 +3320,10 @@ fn unix_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ControlFragmentBuffer, FIPS_NOSTR_DISCOVERY_APP, FipsEndpointTransportConfig,
-        FipsPrivateMeshRuntime, FipsPrivateTunnelConfig, control_frame_destination_npub,
-        control_frame_source_pubkey, fips_endpoint_config, fips_endpoint_peers_from_mesh,
-        strip_cidr,
+        ControlFragmentBuffer, FIPS_LAN_DISCOVERY_SCOPE_PREFIX, FIPS_NOSTR_DISCOVERY_APP,
+        FipsEndpointTransportConfig, FipsPrivateMeshRuntime, FipsPrivateTunnelConfig,
+        control_frame_destination_npub, control_frame_source_pubkey, fips_endpoint_config,
+        fips_endpoint_peers_from_mesh, fips_lan_discovery_scope, strip_cidr,
     };
     use fips_endpoint::{
         Config, ConnectPolicy, PeerConfig as FipsPeerConfig, RoutingMode, TransportInstances,
@@ -3850,6 +3866,7 @@ mod tests {
             fips_endpoint::NostrDiscoveryPolicy::Open
         );
         assert!(!config.node.discovery.nostr.share_local_candidates);
+        assert!(!config.node.discovery.lan.enabled);
         // The mesh id must NOT appear in the publicly visible relay app tag.
         assert_eq!(config.node.discovery.nostr.app, FIPS_NOSTR_DISCOVERY_APP);
         let udp = match config.transports.udp {
@@ -3861,6 +3878,14 @@ mod tests {
         assert!(!udp.accept_connections());
         assert_eq!(config.peers.len(), 1);
         assert!(config.peers[0].addresses.is_empty());
+    }
+
+    #[test]
+    fn lan_discovery_scope_is_hashed_from_network_id() {
+        let scope = fips_lan_discovery_scope(" private-network-id ");
+        assert!(scope.starts_with(&format!("{FIPS_LAN_DISCOVERY_SCOPE_PREFIX}:")));
+        assert!(!scope.contains("private-network-id"));
+        assert_eq!(scope, fips_lan_discovery_scope("private-network-id"));
     }
 
     #[test]
@@ -3895,6 +3920,7 @@ mod tests {
             fips_endpoint::NostrDiscoveryPolicy::Open
         );
         assert!(config.node.discovery.nostr.share_local_candidates);
+        assert!(config.node.discovery.lan.enabled);
         assert_eq!(config.node.discovery.nostr.app, FIPS_NOSTR_DISCOVERY_APP);
         assert_eq!(
             config.node.discovery.nostr.stun_servers,
@@ -3951,6 +3977,7 @@ mod tests {
 
         assert!(config.node.discovery.nostr.enabled);
         assert!(!config.node.discovery.nostr.advertise);
+        assert!(!config.node.discovery.lan.enabled);
         assert_eq!(endpoint_peers.len(), 2);
         assert_eq!(config.peers.len(), 2);
         let bob = config
@@ -3970,11 +3997,12 @@ mod tests {
     }
 
     #[test]
-    fn stamped_endpoint_hints_are_ignored_for_outside_roster_peers() {
+    fn stamped_endpoint_hints_seed_outside_roster_transit_peers() {
         let bob_keys = Keys::generate();
         let charlie_keys = Keys::generate();
         let bob_pubkey = bob_keys.public_key().to_hex();
         let charlie_pubkey = charlie_keys.public_key().to_hex();
+        let charlie_npub = charlie_keys.public_key().to_bech32().expect("charlie npub");
         let mesh_peer =
             FipsMeshPeerConfig::from_participant_pubkey(&bob_pubkey, vec!["10.44.1.2/32".into()])
                 .expect("mesh peer");
@@ -3988,9 +4016,19 @@ mod tests {
             )],
         );
 
-        assert_eq!(endpoint_peers.len(), 1);
-        assert_eq!(endpoint_peers[0].npub, mesh_peer.endpoint_npub);
-        assert!(endpoint_peers[0].addresses.is_empty());
+        assert_eq!(endpoint_peers.len(), 2);
+        let bob = endpoint_peers
+            .iter()
+            .find(|peer| peer.npub == mesh_peer.endpoint_npub)
+            .expect("mesh peer should remain configured");
+        assert!(bob.addresses.is_empty());
+        let charlie = endpoint_peers
+            .iter()
+            .find(|peer| peer.npub == charlie_npub)
+            .expect("recent non-roster peer should be retained as transit");
+        assert_eq!(charlie.addresses.len(), 1);
+        assert_eq!(charlie.addresses[0].addr, "10.203.0.12:51820");
+        assert_eq!(charlie.addresses[0].seen_at_ms, Some(123_000));
     }
 
     #[test]
@@ -4046,6 +4084,53 @@ mod tests {
             .find(|peer| peer.npub == admin_npub)
             .expect("admin endpoint peer");
         assert!(admin.addresses.is_empty());
+    }
+
+    #[test]
+    fn tunnel_config_seeds_recent_outside_roster_transit_peers() {
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let charlie_keys = Keys::generate();
+        let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
+        let alice_pubkey = alice_keys.public_key().to_hex();
+        let bob_pubkey = bob_keys.public_key().to_hex();
+        let charlie_pubkey = charlie_keys.public_key().to_hex();
+        let charlie_npub = charlie_keys.public_key().to_bech32().expect("charlie npub");
+        let network_id = "fips-recent-transit-test";
+
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = alice_nsec;
+        app.networks[0].network_id = network_id.to_string();
+        app.networks[0].participants = vec![alice_pubkey.clone(), bob_pubkey.clone()];
+
+        let mut recent = nostr_vpn_core::recent_peers::RecentPeerEndpoints::default();
+        assert!(recent.note_success(&charlie_pubkey, "203.0.113.55:51820", 123));
+
+        let config = FipsPrivateTunnelConfig::from_app(
+            &app,
+            network_id,
+            "utun-test",
+            Some(&alice_pubkey),
+            Some(&recent),
+            &[],
+        )
+        .expect("fips tunnel config");
+
+        assert!(
+            config
+                .peers
+                .iter()
+                .all(|peer| peer.participant_pubkey != charlie_pubkey),
+            "non-roster transit peers must not get private-network routes",
+        );
+        let charlie = config
+            .endpoint_peers
+            .iter()
+            .find(|peer| peer.npub == charlie_npub)
+            .expect("recent non-roster peer should seed endpoint config");
+        assert_eq!(charlie.addresses.len(), 1);
+        assert_eq!(charlie.addresses[0].addr, "203.0.113.55:51820");
+        assert_eq!(charlie.addresses[0].seen_at_ms, Some(123_000));
     }
 
     #[test]

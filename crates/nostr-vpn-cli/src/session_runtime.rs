@@ -117,8 +117,9 @@ fn endpoint_peer_signature(
 /// the on-disk recent-peers cache, and hand fips the refreshed peer hint
 /// list via `update_peers` so new direct candidates race the existing ones
 /// in the next dial cycle without restarting the endpoint. Public (non-LAN)
-/// endpoints get rotated into the cache; mesh-carried live hints can include
-/// LAN endpoints but stay in memory only.
+/// endpoints get rotated into the cache, including authenticated non-roster
+/// transit peers; mesh-carried live hints can include LAN endpoints but stay
+/// in memory only.
 #[cfg(feature = "embedded-fips")]
 async fn update_recent_peers_from_runtime(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
@@ -130,7 +131,13 @@ async fn update_recent_peers_from_runtime(
     last_endpoint_peer_signature: &mut EndpointPeerSignature,
     now: u64,
 ) {
-    let snapshot = runtime.authenticated_peer_transport_addrs();
+    let snapshot = match runtime.authenticated_peer_transport_addrs().await {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            eprintln!("fips: peer endpoint snapshot failed: {error}");
+            Vec::new()
+        }
+    };
     let mut changed = false;
     for (participant, addr) in snapshot {
         if recent_peers.note_success(&participant, &addr, now) {
