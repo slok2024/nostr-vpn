@@ -1182,17 +1182,11 @@ fn fips_endpoint_config(
     let nostr_enabled = advertise_udp || !peers.is_empty();
     config.node.discovery.nostr.enabled = nostr_enabled;
     config.node.discovery.nostr.advertise = advertise_udp;
-    // Open discovery so we can FIPS-handshake with any nvpn node we see on
-    // relays, not just configured roster peers. This is what lets us route
-    // app-mesh traffic through transit hops that aren't in our network roster
-    // (a friend-of-a-friend nvpn node can ferry our packets when direct
-    // traversal fails). Security boundary: the FIPS handshake is open; the
-    // per-network data plane is NOT. `FipsMeshRuntime::receive_endpoint_data*`
-    // drops every inbound packet whose source npub doesn't own the inner
-    // source IP per our roster, so a non-roster transit peer can carry frames
-    // but cannot inject anything that surfaces on the tun. See the
-    // `inbound_endpoint_data_*` tests in `nostr-vpn-core::fips_mesh`.
-    config.node.discovery.nostr.policy = NostrDiscoveryPolicy::Open;
+    // Use Nostr adverts for configured roster peers only. The public FIPS
+    // graph may still carry encrypted traffic once a route exists, but nvpn
+    // should not proactively join ambient public peers for private roster
+    // discovery.
+    config.node.discovery.nostr.policy = NostrDiscoveryPolicy::ConfiguredOnly;
     config.node.discovery.nostr.open_discovery_max_pending = FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING;
     config.node.discovery.nostr.failure_streak_threshold = FIPS_NOSTR_FAILURE_STREAK_THRESHOLD;
     config.node.discovery.nostr.startup_sweep_max_age_secs = FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS;
@@ -3879,7 +3873,7 @@ mod tests {
         assert!(!config.node.discovery.nostr.advertise);
         assert_eq!(
             config.node.discovery.nostr.policy,
-            fips_endpoint::NostrDiscoveryPolicy::Open
+            fips_endpoint::NostrDiscoveryPolicy::ConfiguredOnly
         );
         assert_eq!(
             config.node.discovery.nostr.open_discovery_max_pending,
@@ -3945,7 +3939,7 @@ mod tests {
         assert!(config.node.discovery.nostr.advertise);
         assert_eq!(
             config.node.discovery.nostr.policy,
-            fips_endpoint::NostrDiscoveryPolicy::Open
+            fips_endpoint::NostrDiscoveryPolicy::ConfiguredOnly
         );
         assert_eq!(
             config.node.discovery.nostr.open_discovery_max_pending,
@@ -4245,14 +4239,14 @@ mod tests {
     /// peers). The data plane MUST stay closed: a packet whose FIPS source
     /// npub doesn't own its inner-source IP per the local roster is dropped
     /// before it reaches the tun. This test wires both halves together so a
-    /// future "fix" that re-pins policy to ConfiguredOnly OR loosens the
-    /// roster gate will fail loudly.
+    /// future "fix" that opens ambient discovery OR loosens the roster gate
+    /// will fail loudly.
     ///
     /// The cross-platform integration variants (T1: live handshake, T4:
     /// transit through non-roster peer) live in the FIPS docker continuity
     /// suite — they need a real endpoint pair and can't run as unit tests.
     #[test]
-    fn open_discovery_does_not_loosen_tun_roster_gate() {
+    fn configured_discovery_does_not_loosen_tun_roster_gate() {
         let roster_peer = Keys::generate();
         let stranger = Keys::generate();
         let roster_pubkey = roster_peer.public_key().to_hex();
@@ -4274,8 +4268,8 @@ mod tests {
 
         assert_eq!(
             config.node.discovery.nostr.policy,
-            fips_endpoint::NostrDiscoveryPolicy::Open,
-            "FIPS handshake must stay open so non-roster peers can carry transit",
+            fips_endpoint::NostrDiscoveryPolicy::ConfiguredOnly,
+            "nvpn must not join ambient public FIPS peers for private roster traffic",
         );
 
         let mesh = FipsMeshRuntime::new(vec![mesh_peer.clone()]);

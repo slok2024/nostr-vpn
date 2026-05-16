@@ -1113,10 +1113,9 @@ fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> FipsConfig 
     // not placed in that public advert; when enabled, they are carried inside
     // encrypted traversal signaling/control frames.
     config.node.discovery.nostr.advertise = nostr_enabled;
-    // Open discovery: handshake with any nvpn node we see, gate the data plane
-    // by roster downstream. See fips_private_mesh::fips_endpoint_config for the
-    // full rationale and security model.
-    config.node.discovery.nostr.policy = NostrDiscoveryPolicy::Open;
+    // Use Nostr adverts for configured roster peers only; mobile should not
+    // proactively join ambient public FIPS peers for private roster discovery.
+    config.node.discovery.nostr.policy = NostrDiscoveryPolicy::ConfiguredOnly;
     config.node.discovery.nostr.open_discovery_max_pending =
         MOBILE_NOSTR_OPEN_DISCOVERY_MAX_PENDING;
     config.node.discovery.nostr.failure_streak_threshold = MOBILE_NOSTR_FAILURE_STREAK_THRESHOLD;
@@ -1500,7 +1499,7 @@ mod tests {
         assert!(config.node.discovery.lan.enabled);
         assert_eq!(
             config.node.discovery.nostr.policy,
-            NostrDiscoveryPolicy::Open
+            NostrDiscoveryPolicy::ConfiguredOnly
         );
         assert_eq!(
             config.node.discovery.nostr.open_discovery_max_pending,
