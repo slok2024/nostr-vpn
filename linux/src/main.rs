@@ -9,16 +9,17 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use gtk::{gio, glib};
 use nostr_vpn_app_core::{
     FfiApp, NativeAppAction, NativeAppState, NativeNetworkState, NativeParticipantState,
-    SettingsPatch,
+    SettingsPatch, UpdateAutoCheckPolicy,
 };
 
 const APP_ID: &str = "to.iris.nvpn";
+const DEFAULT_UPDATE_POLL_INTERVAL_SECS: u32 = 6 * 60 * 60;
 
 type AppRef = Rc<RefCell<AppModel>>;
 
@@ -89,6 +90,7 @@ struct AppModel {
     notice: String,
     tray: tray::TrayRuntime,
     update: updater::UpdateState,
+    update_policy: UpdateAutoCheckPolicy,
     update_sender: Sender<updater::UpdateEvent>,
     update_receiver: Receiver<updater::UpdateEvent>,
     allow_close: bool,
@@ -116,6 +118,8 @@ impl AppModel {
         let (update_sender, update_receiver) = mpsc::channel();
         let mut update = updater::UpdateState::default();
         update.auto_install = load_auto_install_updates();
+        let update_policy =
+            UpdateAutoCheckPolicy::new(Duration::from_secs(update_poll_interval_secs() as u64));
         Self {
             core,
             state,
@@ -132,6 +136,7 @@ impl AppModel {
             notice: String::new(),
             tray,
             update,
+            update_policy,
             update_sender,
             update_receiver,
             allow_close: false,
@@ -425,8 +430,15 @@ fn build_ui(app: &adw::Application, runtime: &AppRuntime, present: bool) {
             glib::ControlFlow::Continue
         });
     }
+    {
+        let model = model.clone();
+        glib::timeout_add_seconds_local(update_poll_interval_secs(), move || {
+            check_updates_if_due(&model);
+            glib::ControlFlow::Continue
+        });
+    }
 
-    check_updates(&model, false);
+    check_updates_if_due(&model);
 
     if present {
         window.present();
@@ -531,6 +543,9 @@ fn check_updates(app: &AppRef, manual: bool) {
         if model.update.checking || model.update.downloading {
             return;
         }
+        if manual {
+            model.update_policy.note_manual_check_started(Instant::now());
+        }
         model.update.checking = true;
         if manual {
             model.update.status = "Checking for updates".to_string();
@@ -539,6 +554,16 @@ fn check_updates(app: &AppRef, manual: bool) {
     };
     render(app);
     updater::check(current_version, manual, sender);
+}
+
+fn check_updates_if_due(app: &AppRef) {
+    let due = {
+        let mut model = app.borrow_mut();
+        model.update_policy.should_start_check(true, Instant::now())
+    };
+    if due {
+        check_updates(app, false);
+    }
 }
 
 fn download_update(app: &AppRef) {
@@ -3428,6 +3453,15 @@ fn save_auto_install_updates(enabled: bool) {
         "auto_install=false\n"
     };
     let _ = std::fs::write(path, value);
+}
+
+fn update_poll_interval_secs() -> u32 {
+    std::env::var("NVPN_UPDATE_POLL_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map(|seconds| seconds.min(u32::MAX as u64) as u32)
+        .unwrap_or(DEFAULT_UPDATE_POLL_INTERVAL_SECS)
 }
 
 fn update_preferences_path() -> PathBuf {

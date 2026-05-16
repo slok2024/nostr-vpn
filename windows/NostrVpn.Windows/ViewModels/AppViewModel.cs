@@ -27,6 +27,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly AppCoreClient _core;
     private readonly DispatcherTimer _refreshTimer;
+    private readonly DispatcherTimer _updateTimer;
     private readonly UpdateService _updateService = new();
     private NativeAppState _state = new();
     private AppPage _page = AppPage.Devices;
@@ -57,6 +58,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     private bool _autoInstallUpdates;
     private string _updateVersion = "";
     private QrMatrix _inviteQr = new();
+    private static readonly TimeSpan UpdatePollInterval = LoadUpdatePollInterval();
     private static readonly Brush HeaderDangerBrush = new SolidColorBrush(Color.FromRgb(220, 38, 38));
     private static readonly Brush TextSecondaryBrush = new SolidColorBrush(Color.FromRgb(104, 113, 124));
 
@@ -116,6 +118,10 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         _refreshTimer.Tick += async (_, _) => await RefreshAsync();
         _refreshTimer.Start();
         _ = CheckUpdatesAsync(manual: false);
+
+        _updateTimer = new DispatcherTimer { Interval = UpdatePollInterval };
+        _updateTimer.Tick += async (_, _) => await CheckUpdatesAsync(manual: false);
+        _updateTimer.Start();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -784,6 +790,10 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
 
     public async Task CheckUpdatesAsync(bool manual = true)
     {
+        if (UpdateChecking || UpdateInstalling)
+        {
+            return;
+        }
         UpdateChecking = true;
         if (manual)
         {
@@ -865,6 +875,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public void Dispose()
     {
         _refreshTimer.Stop();
+        _updateTimer.Stop();
         _core.Dispose();
     }
 
@@ -1192,6 +1203,14 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     {
         using var key = Registry.CurrentUser.CreateSubKey(@"Software\Nostr VPN");
         key?.SetValue("AutoInstallUpdates", enabled ? 1 : 0, RegistryValueKind.DWord);
+    }
+
+    private static TimeSpan LoadUpdatePollInterval()
+    {
+        var raw = Environment.GetEnvironmentVariable("NVPN_UPDATE_POLL_SECONDS");
+        return double.TryParse(raw, out var seconds) && seconds > 0
+            ? TimeSpan.FromSeconds(seconds)
+            : TimeSpan.FromHours(6);
     }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string propertyName = "")

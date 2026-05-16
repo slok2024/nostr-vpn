@@ -7,6 +7,7 @@ mod mobile_tunnel;
 pub mod native_state;
 pub mod platform;
 pub mod state;
+pub mod update_policy;
 mod wg_upstream_nat;
 
 pub use actions::NativeAppAction;
@@ -21,5 +22,6 @@ pub use state::{
     OutboundJoinRequestView, ParticipantView, SettingsPatch, TrayExitNodeEntry, TrayMenuItemSpec,
     TrayNetworkGroup, TrayRuntimeState, UiState,
 };
+pub use update_policy::UpdateAutoCheckPolicy;
 
 uniffi::setup_scaffolding!();

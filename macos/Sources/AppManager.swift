@@ -9,6 +9,7 @@ private let githubUpdateManifestUrl = URL(string: "https://api.github.com/repos/
 private let defaultUpdateManifestUrl = URL(string: "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json")!
 private let updateRequestTimeout: TimeInterval = 8
 private let updateUserAgent = "nvpn-updater"
+private let defaultUpdatePollIntervalNanoseconds: UInt64 = 6 * 60 * 60 * 1_000_000_000
 
 @MainActor
 final class AppManager: ObservableObject {
@@ -26,6 +27,11 @@ final class AppManager: ObservableObject {
     @Published var autoCheckUpdates = UserDefaults.standard.object(forKey: "updates.autoCheck") as? Bool ?? true {
         didSet {
             UserDefaults.standard.set(autoCheckUpdates, forKey: "updates.autoCheck")
+            if autoCheckUpdates {
+                startAutomaticUpdateChecks()
+            } else {
+                stopAutomaticUpdateChecks()
+            }
         }
     }
     @Published var autoInstallUpdates = UserDefaults.standard.bool(forKey: "updates.autoInstall") {
@@ -41,6 +47,7 @@ final class AppManager: ObservableObject {
     private var actionStatusClearTask: Task<Void, Never>?
     private var serviceSettlementTask: Task<Void, Never>?
     private var updateTask: Task<Void, Never>?
+    private var updatePollTask: Task<Void, Never>?
     private var startupUrlsDrained = false
     private var startupUpdateCheckDone = false
     private var updateAssetUrl: URL?
@@ -52,6 +59,15 @@ final class AppManager: ObservableObject {
         return [githubUpdateManifestUrl, defaultUpdateManifestUrl]
     }()
     let launchedHidden: Bool
+
+    private static var updatePollIntervalNanoseconds: UInt64 {
+        if let raw = ProcessInfo.processInfo.environment["NVPN_UPDATE_POLL_SECONDS"],
+           let seconds = Double(raw),
+           seconds > 0 {
+            return UInt64(seconds * 1_000_000_000)
+        }
+        return defaultUpdatePollIntervalNanoseconds
+    }
 
     init() {
         let dataDir = FileManager.default
@@ -116,10 +132,7 @@ final class AppManager: ObservableObject {
 
     func start() {
         drainStartupUrls()
-        if autoCheckUpdates && !startupUpdateCheckDone {
-            startupUpdateCheckDone = true
-            checkForUpdates(manual: false)
-        }
+        startAutomaticUpdateChecks()
         guard refreshTask == nil else {
             return
         }
@@ -129,6 +142,15 @@ final class AppManager: ObservableObject {
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
             }
         }
+    }
+
+    deinit {
+        refreshTask?.cancel()
+        copyClearTask?.cancel()
+        actionStatusClearTask?.cancel()
+        serviceSettlementTask?.cancel()
+        updateTask?.cancel()
+        updatePollTask?.cancel()
     }
 
     func refresh() {
@@ -519,6 +541,38 @@ final class AppManager: ObservableObject {
                 }
             }
         }
+    }
+
+    private func startAutomaticUpdateChecks() {
+        guard autoCheckUpdates else {
+            stopAutomaticUpdateChecks()
+            return
+        }
+        if !startupUpdateCheckDone {
+            startupUpdateCheckDone = true
+            checkForUpdates(manual: false)
+        }
+        guard updatePollTask == nil else {
+            return
+        }
+        updatePollTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.updatePollIntervalNanoseconds)
+                guard let self, !Task.isCancelled else {
+                    return
+                }
+                guard self.autoCheckUpdates else {
+                    self.stopAutomaticUpdateChecks()
+                    return
+                }
+                self.checkForUpdates(manual: false)
+            }
+        }
+    }
+
+    private func stopAutomaticUpdateChecks() {
+        updatePollTask?.cancel()
+        updatePollTask = nil
     }
 
     func installUpdate() {
