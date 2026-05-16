@@ -1,0 +1,31 @@
+repository: https://github.com/mmalmi/nostr-vpn
+pubkey: npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm
+release_source: dist/nostr-vpn-v*-android-arm64.apk
+
+name: Nostr VPN
+summary: Mesh VPN built on Nostr signaling and userspace WireGuard.
+description: |
+  Nostr VPN is a Tailscale-style mesh VPN for your own devices and trusted peers.
+
+  Nostr is used for peer discovery and encrypted signaling; the data plane
+  is userspace WireGuard, with the FIPS overlay handling NAT traversal and
+  transit through friend-of-a-friend nodes when direct paths are blocked.
+
+  Current app capabilities:
+  - private mesh networking between approved participants
+  - admin-driven invite + join flows
+  - exit nodes and route advertisement (incl. WireGuard upstream)
+  - MagicDNS-style `.nvpn` naming inside the mesh
+  - manual pairing fallback when relay-mediated invites aren't an option
+
+website: https://github.com/mmalmi/nostr-vpn
+icon: ios/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png
+license: MIT
+tags:
+  - nostr
+  - vpn
+  - wireguard
+  - privacy
+  - mesh
+metadata_sources:
+  - github

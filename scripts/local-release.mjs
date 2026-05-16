@@ -60,6 +60,9 @@ Options:
                             without --publish (e.g. to retry a partial release)
   --skip-cargo-publish      With --publish, stage and publish the htree tree
                             but don't push the crates to crates.io
+  --skip-zapstore           With --publish, skip the Android APK publish to
+                            Zapstore (default: publish when zsp is on PATH
+                            and a Nostr signing key is configured)
   --dry-run                 Print the plan without running build or publish commands
   --skip-verify            Skip fmt/clippy/test verification
   --tag <tag>              Release tag (defaults to workspace version, for example v4.0.0)
@@ -81,6 +84,7 @@ function parseArgs(argv) {
     publish: false,
     cargoPublish: false,
     skipCargoPublish: false,
+    skipZapstore: false,
     skipVerify: false,
     releaseTree: null,
     stageDir: null,
@@ -106,6 +110,9 @@ function parseArgs(argv) {
         break
       case '--skip-cargo-publish':
         options.skipCargoPublish = true
+        break
+      case '--skip-zapstore':
+        options.skipZapstore = true
         break
       case '--dry-run':
         options.dryRun = true
@@ -894,6 +901,82 @@ function publishRustCrates({ dryRun }) {
   run('bash', dryRun ? [script, '--dry-run'] : [script], { dryRun })
 }
 
+/**
+ * Publish the Android APK for this release to Zapstore.
+ *
+ * Zapstore signs and uploads kind-32267 app + kind-30063 release events to
+ * relay.zapstore.dev so users on Android with a Zapstore client can discover
+ * + auto-update. The APK is the one CI built and we just downloaded into
+ * `dist/` — Zapstore needs the actual .apk file, not the .aab.
+ *
+ * Soft-skips with a warning instead of aborting when:
+ *   - `zsp` is not on PATH (zapstore CLI not installed yet on this host)
+ *   - No Nostr signing key is configured (`SIGN_WITH` env or
+ *     `NOSTR_KEY_PATH` from .env.zapstore.local)
+ *   - The expected `dist/nostr-vpn-{tag}-android-arm64.apk` doesn't exist
+ *     (Android build was skipped or failed; we shouldn't block the rest
+ *     of the release on it)
+ *
+ * Hard-fails when zsp itself returns non-zero.
+ */
+function publishZapstore({ env, tag, dryRun }) {
+  const apkName = `nostr-vpn-${tag}-android-arm64.apk`
+  const apkPath = join(distDir, apkName)
+  if (!existsSync(apkPath)) {
+    console.warn(`Skipping Zapstore publish: ${apkPath} not found.`)
+    return
+  }
+  if (!commandExists('zsp')) {
+    console.warn('Skipping Zapstore publish: zsp not on PATH (install: go install github.com/zapstore/zsp@latest).')
+    return
+  }
+
+  const signWith = resolveZapstoreSignWith(env)
+  if (!signWith) {
+    console.warn(
+      'Skipping Zapstore publish: no Nostr signing key. Set SIGN_WITH=nsec1... or NOSTR_KEY_PATH=/path/to/nsec in .env.zapstore.local.',
+    )
+    return
+  }
+
+  if (dryRun) {
+    console.log(`Would publish ${apkName} to Zapstore`)
+    return
+  }
+
+  // `-r` provides the github repo so Zapstore can fetch metadata (release
+  // notes etc.) from the corresponding github release. `--quiet
+  // --skip-preview` skip the interactive prompts so this is CI-safe.
+  run(
+    'zsp',
+    [
+      'publish',
+      '--quiet',
+      '--skip-preview',
+      apkPath,
+      '-r',
+      'https://github.com/mmalmi/nostr-vpn',
+    ],
+    {
+      dryRun,
+      env: { ...process.env, SIGN_WITH: signWith },
+    },
+  )
+}
+
+function resolveZapstoreSignWith(env) {
+  const fromEnv = (process.env.SIGN_WITH ?? env.SIGN_WITH ?? '').trim()
+  if (fromEnv) {
+    return fromEnv
+  }
+
+  const keyPath = (process.env.NOSTR_KEY_PATH ?? env.NOSTR_KEY_PATH ?? '').trim()
+  if (keyPath && existsSync(keyPath)) {
+    return readFileSync(keyPath, 'utf8').trim()
+  }
+  return ''
+}
+
 function resolveReleaseCommit(tag, { dryRun = false } = {}) {
   const normalizedTag = normalizeTag(tag)
   if (dryRun) {
@@ -1002,6 +1085,10 @@ function main() {
     options.cargoPublish || (options.publish && !options.skipCargoPublish)
   if (shouldPublishCrates) {
     publishRustCrates({ dryRun: options.dryRun })
+  }
+
+  if (options.publish && !options.skipZapstore) {
+    publishZapstore({ env, tag, dryRun: options.dryRun })
   }
 }
 
