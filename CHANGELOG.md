@@ -4,11 +4,35 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.27 - 2026-05-17
+
+### Added
+
+- iOS debug builds now support fixture mode for App Store screenshots,
+  using non-real mesh, device, exit-node, and WireGuard data.
+- Added App Store Connect draft tooling that can update metadata, attach
+  the release build, and upload iPhone/iPad screenshot sets.
+- Added repeatable iPhone and iPad simulator screenshot capture for the
+  required App Store display classes.
+- Umbrel now has a responsive web control panel path with app-core API
+  routing and Docker e2e coverage for the VPN toggle flow.
+
+### Changed
+
+- iOS mobile flows now use the manual add-network path and a quieter VPN
+  disclosure notice.
+- Native and web device lists show calmer, more consistent peer status
+  labels, with MagicDNS names treated as authoritative when present.
+- Exit-node leak protection is enabled by default.
+
 ### Fixed
 
 - iOS now persists the generated Nostr identity when first-run device-name
   seeding creates a partial config file, avoiding a fresh install that shows no
   saved identity until another config write happens.
+- Android peer presence and GUI autostart now recover correctly.
+- Mobile FIPS reachability state is reported correctly.
+- The final saved network can be deleted.
 
 ## 4.0.26 - 2026-05-17
 

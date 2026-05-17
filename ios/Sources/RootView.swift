@@ -7,6 +7,7 @@ struct RootView: View {
     @State private var vpnDisclosurePresented = false
     @State private var startVpnAfterDisclosure = false
     @State private var shownNetworkId: String?
+    @State private var selectedTab = Self.initialTab()
 
     private var shownNetwork: NetworkState? {
         if let shownNetworkId,
@@ -30,12 +31,13 @@ struct RootView: View {
                         .navigationBarTitleDisplayMode(.inline)
                 }
             } else {
-                TabView {
+                TabView(selection: $selectedTab) {
                     NavigationStack {
                         DevicesPage(model: model, network: shownNetwork)
                             .toolbar { networkSwitcherToolbar }
                     }
                     .tabItem { Label("Devices", systemImage: "circle.grid.2x2.fill") }
+                    .tag(AppTab.devices)
 
                     NavigationStack {
                         ExitNodesPage(model: model, network: shownNetwork)
@@ -43,6 +45,7 @@ struct RootView: View {
                             .toolbar { networkSwitcherToolbar }
                     }
                     .tabItem { Label("Exit Nodes", systemImage: "arrow.triangle.branch") }
+                    .tag(AppTab.exitNodes)
 
                     NavigationStack {
                         SettingsPage(model: model)
@@ -50,6 +53,7 @@ struct RootView: View {
                             .toolbar { networkSwitcherToolbar }
                     }
                     .tabItem { Label("Settings", systemImage: "gearshape") }
+                    .tag(AppTab.settings)
                 }
             }
         }
@@ -127,6 +131,23 @@ struct RootView: View {
         startVpnAfterDisclosure = startVpnAfterAccept
         vpnDisclosurePresented = true
     }
+
+    private static func initialTab() -> AppTab {
+        switch AppModel.screenshotTabArgument()?.lowercased() {
+        case "exit", "exit-node", "exit-nodes", "routes", "routing":
+            return .exitNodes
+        case "settings", "diagnostics":
+            return .settings
+        default:
+            return .devices
+        }
+    }
+}
+
+private enum AppTab: Hashable {
+    case devices
+    case exitNodes
+    case settings
 }
 
 /// Header dropdown that shows the active network's name and lets the user
@@ -215,6 +236,7 @@ private struct AddNetworkPage: View {
             }
             .padding()
         }
+        .safeAreaPadding(.bottom, 92)
         .background(AppColors.background)
     }
 }
@@ -294,6 +316,7 @@ private struct DevicesPage: View {
             }
             .padding()
         }
+        .safeAreaPadding(.bottom, 92)
         .background(AppColors.background)
         .sheet(isPresented: $addDevicePresented) {
             if let network {
@@ -578,6 +601,7 @@ private struct AddDeviceSheet: View {
             }
             .padding()
         }
+        .safeAreaPadding(.bottom, 92)
         .background(AppColors.background)
     }
 }
@@ -779,6 +803,7 @@ private struct ExitNodesPage: View {
             }
             .padding()
         }
+        .safeAreaPadding(.bottom, 92)
         .background(AppColors.background)
     }
 }

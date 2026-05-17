@@ -11,7 +11,7 @@ exclude = ["linux"]
 resolver = "2"
 
 [workspace.package]
-version = "4.0.26"
+version = "4.0.27"
 edition = "2024"
 license = "MIT"
 authors = ["sirius"]

@@ -42,6 +42,7 @@ info:
     @echo "  just ios-build"
     @echo "  just ios-run"
     @echo "  just ios-smoke"
+    @echo "  just ios-screenshots"
     @echo "  just ios-smoke-device"
     @echo
     @echo "Checks"
@@ -124,6 +125,9 @@ ios-run:
 
 ios-smoke:
     ./scripts/mobile-ios-smoke.sh simulator
+
+ios-screenshots:
+    ./scripts/ios-screenshots
 
 ios-smoke-device:
     ./scripts/mobile-ios-smoke.sh device --vpn-cycle

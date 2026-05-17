@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-to.iris.nvpn}"
+OUTPUT_ROOT="${NVPN_IOS_SCREENSHOT_DIR:-$ROOT/artifacts/appstore-screenshots}"
+LOCALE="${NVPN_APPSTORE_LOCALE:-en-US}"
+BUILD_DIR="$ROOT/ios/.build"
+
+usage() {
+  cat <<'EOF'
+usage: ./scripts/ios-screenshots [capture]
+
+Builds the iOS simulator app, launches it in debug-only fixture mode, and
+captures App Store screenshots with non-real UI data.
+
+Environment:
+  NVPN_IOS_SCREENSHOT_DIR   output directory (default artifacts/appstore-screenshots)
+  NVPN_APPSTORE_LOCALE      locale directory (default en-US)
+  NVPN_IOS_BUNDLE_ID        app bundle id (default to.iris.nvpn)
+  NVPN_IOS_SCREENSHOT_ERASE erase simulators before capture (default 0)
+  NVPN_IOS_SCREENSHOT_SETTLE_SECONDS
+                            wait after boot before launch (default 30)
+  NVPN_IOS_SCREENSHOT_TAB_SECONDS
+                            wait after tab launch before capture (default 6)
+EOF
+}
+
+latest_ios_runtime() {
+  xcrun simctl list runtimes available |
+    sed -n 's/.*(\(com\.apple\.CoreSimulator\.SimRuntime\.iOS-[^)]*\)).*/\1/p' |
+    tail -n 1
+}
+
+device_id_for_name() {
+  local name="$1"
+  xcrun simctl list devices available |
+    sed -n "s/.*$name (\([0-9A-F-]\{36\}\)).*/\1/p" |
+    head -n 1
+}
+
+ensure_device() {
+  local name="$1"
+  local type="$2"
+  local device
+  device="$(device_id_for_name "$name")"
+  if [[ -n "$device" ]]; then
+    printf '%s\n' "$device"
+    return
+  fi
+
+  local runtime
+  runtime="$(latest_ios_runtime)"
+  if [[ -z "$runtime" ]]; then
+    echo "No available iOS simulator runtime found" >&2
+    exit 1
+  fi
+  xcrun simctl create "$name" "$type" "$runtime"
+}
+
+install_app() {
+  local device="$1"
+  local app_path
+  app_path="$(find "$BUILD_DIR/DerivedData/Build/Products/Debug-iphonesimulator" -maxdepth 1 -name '*.app' -type d | head -n 1)"
+  if [[ -z "$app_path" ]]; then
+    echo "Built iOS app not found" >&2
+    exit 1
+  fi
+
+  xcrun simctl boot "$device" >/dev/null 2>&1 || true
+  xcrun simctl bootstatus "$device" -b
+  sleep "${NVPN_IOS_SCREENSHOT_SETTLE_SECONDS:-30}"
+  xcrun simctl terminate "$device" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl uninstall "$device" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl install "$device" "$app_path"
+}
+
+capture_tab() {
+  local device="$1"
+  local display_type="$2"
+  local width="$3"
+  local height="$4"
+  local tab="$5"
+  local index="$6"
+  local output_dir="$OUTPUT_ROOT/$LOCALE/$display_type"
+  local raw_dir="$OUTPUT_ROOT/raw/$display_type"
+  local raw="$raw_dir/${index}-${tab}.png"
+  local output="$output_dir/${index}-${tab}.png"
+
+  mkdir -p "$output_dir" "$raw_dir"
+  xcrun simctl terminate "$device" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl launch "$device" "$BUNDLE_ID" \
+    --nvpn-fixture-mode \
+    --nvpn-screenshot-tab "$tab" >/dev/null
+  sleep "${NVPN_IOS_SCREENSHOT_TAB_SECONDS:-6}"
+  xcrun simctl io "$device" screenshot "$raw"
+  sips -s format png -z "$height" "$width" "$raw" --out "$output" >/dev/null
+  printf '%s\n' "$output"
+}
+
+capture_device() {
+  local name="$1"
+  local type="$2"
+  local display_type="$3"
+  local width="$4"
+  local height="$5"
+  local device
+  device="$(ensure_device "$name" "$type")"
+
+  if [[ "${NVPN_IOS_SCREENSHOT_ERASE:-0}" == "1" ]]; then
+    xcrun simctl shutdown "$device" >/dev/null 2>&1 || true
+    xcrun simctl erase "$device" >/dev/null
+  fi
+  install_app "$device"
+
+  capture_tab "$device" "$display_type" "$width" "$height" devices 01
+  capture_tab "$device" "$display_type" "$width" "$height" exit-nodes 02
+  capture_tab "$device" "$display_type" "$width" "$height" settings 03
+}
+
+case "${1:-capture}" in
+  capture)
+    "$ROOT/tools/run-ios" build
+    rm -rf "$OUTPUT_ROOT/$LOCALE" "$OUTPUT_ROOT/raw"
+    capture_device \
+      "iPhone 17 Pro Max" \
+      "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max" \
+      "APP_IPHONE_67" \
+      1290 \
+      2796
+    capture_device \
+      "iPad Pro 13-inch (M5)" \
+      "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB" \
+      "APP_IPAD_PRO_3GEN_129" \
+      2048 \
+      2732
+    echo "Captured App Store screenshots in $OUTPUT_ROOT/$LOCALE"
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

@@ -54,8 +54,12 @@ fn build_magic_dns_records_includes_self_name_and_suffixes_peer_collision() {
     config.node_name = "Home Server".to_string();
     if let Some(network) = config.networks.first_mut() {
         network.participants = vec![peer_hex.clone()];
+        network.admins = vec![own_hex.clone()];
     }
     config.ensure_defaults();
+    config
+        .set_peer_alias(&own_hex, "home-server")
+        .expect("set own alias");
     config
         .set_peer_alias(&peer_hex, "home-server")
         .expect("set colliding alias");
