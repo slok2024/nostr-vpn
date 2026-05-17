@@ -5,11 +5,13 @@ import UIKit
 @MainActor
 final class AppModel: ObservableObject {
     static let vpnDisclosureAcceptedKey = "vpnDisclosureAccepted"
+    static let vpnDisclosurePromptMessage = "Review VPN data use before turning VPN on."
 
     @Published var state: AppState
     @Published var actionInFlight = false
     @Published var statusMessage = ""
     @Published var copiedValue = ""
+    @Published var vpnDisclosurePromptVisible = false
 
     private let core: NativeCoreClient
     private let vpnController = PacketTunnelController()
@@ -59,7 +61,7 @@ final class AppModel: ObservableObject {
             if UserDefaults.standard.bool(forKey: Self.vpnDisclosureAcceptedKey) {
                 setVpnEnabled(true)
             } else {
-                statusMessage = "Review VPN data use before turning VPN on."
+                requireVpnDisclosureReview()
             }
         }
     }
@@ -81,6 +83,26 @@ final class AppModel: ObservableObject {
 
     func toggleVpn() {
         setVpnEnabled(!state.vpnEnabled)
+    }
+
+    func requireVpnDisclosureReview() {
+        vpnDisclosurePromptVisible = true
+        statusMessage = Self.vpnDisclosurePromptMessage
+    }
+
+    func markVpnDisclosureAccepted() {
+        UserDefaults.standard.set(true, forKey: Self.vpnDisclosureAcceptedKey)
+        vpnDisclosurePromptVisible = false
+        if statusMessage == Self.vpnDisclosurePromptMessage {
+            statusMessage = ""
+        }
+    }
+
+    func dismissVpnDisclosurePrompt() {
+        vpnDisclosurePromptVisible = false
+        if statusMessage == Self.vpnDisclosurePromptMessage {
+            statusMessage = ""
+        }
     }
 
     private func setVpnEnabled(_ enabled: Bool, force: Bool = false) {

@@ -2,7 +2,10 @@ import SwiftUI
 
 struct RootView: View {
     @ObservedObject var model: AppModel
+    @AppStorage(AppModel.vpnDisclosureAcceptedKey) private var vpnDisclosureAccepted = false
     @State private var addNetworkPresented = false
+    @State private var vpnDisclosurePresented = false
+    @State private var startVpnAfterDisclosure = false
     @State private var shownNetworkId: String?
 
     private var shownNetwork: NetworkState? {
@@ -17,14 +20,21 @@ struct RootView: View {
         Group {
             if model.activeNetwork == nil {
                 NavigationStack {
-                    AddNetworkPage(model: model)
+                    AddNetworkPage(
+                        model: model,
+                        onReviewVpnDisclosure: {
+                            presentVpnDisclosure(startVpnAfterAccept: true)
+                        }
+                    )
                         .navigationTitle("Add Network")
                         .navigationBarTitleDisplayMode(.inline)
                 }
             } else {
                 TabView {
                     NavigationStack {
-                        DevicesPage(model: model, network: shownNetwork)
+                        DevicesPage(model: model, network: shownNetwork) {
+                            presentVpnDisclosure(startVpnAfterAccept: true)
+                        }
                             .toolbar { networkSwitcherToolbar }
                     }
                     .tabItem { Label("Devices", systemImage: "circle.grid.2x2.fill") }
@@ -48,14 +58,46 @@ struct RootView: View {
         .tint(.purple)
         .sheet(isPresented: $addNetworkPresented) {
             NavigationStack {
-                AddNetworkPage(model: model, onCreated: { addNetworkPresented = false })
+                AddNetworkPage(
+                    model: model,
+                    onCreated: { addNetworkPresented = false },
+                    onReviewVpnDisclosure: {
+                        presentVpnDisclosure(startVpnAfterAccept: true)
+                    }
+                )
                     .navigationTitle("Add Network")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Cancel") { addNetworkPresented = false }
                         }
-                    }
+                }
+            }
+        }
+        .sheet(isPresented: $vpnDisclosurePresented) {
+            VpnDisclosureSheet {
+                let shouldStartVpn = startVpnAfterDisclosure
+                vpnDisclosureAccepted = true
+                startVpnAfterDisclosure = false
+                vpnDisclosurePresented = false
+                model.markVpnDisclosureAccepted()
+                if shouldStartVpn, !model.state.vpnEnabled {
+                    model.toggleVpn()
+                }
+            } cancel: {
+                startVpnAfterDisclosure = false
+                vpnDisclosurePresented = false
+                model.dismissVpnDisclosurePrompt()
+            }
+        }
+        .onAppear {
+            if model.vpnDisclosurePromptVisible && !vpnDisclosureAccepted {
+                presentVpnDisclosure(startVpnAfterAccept: true)
+            }
+        }
+        .onChange(of: model.vpnDisclosurePromptVisible) { _, visible in
+            if visible && !vpnDisclosureAccepted {
+                presentVpnDisclosure(startVpnAfterAccept: true)
             }
         }
         .onChange(of: model.state.rev) { _, _ in
@@ -77,8 +119,19 @@ struct RootView: View {
             )
         }
         ToolbarItem(placement: .topBarTrailing) {
-            ToolbarVpnSwitch(model: model)
+            ToolbarVpnSwitch(
+                model: model,
+                vpnDisclosureAccepted: vpnDisclosureAccepted,
+                onReviewVpnDisclosure: {
+                    presentVpnDisclosure(startVpnAfterAccept: true)
+                }
+            )
         }
+    }
+
+    private func presentVpnDisclosure(startVpnAfterAccept: Bool) {
+        startVpnAfterDisclosure = startVpnAfterAccept
+        vpnDisclosurePresented = true
     }
 }
 
@@ -150,12 +203,19 @@ private struct AddNetworkPage: View {
     /// visible. The setup case (no active network) doesn't pass this:
     /// the root view's `if activeNetwork == nil` flips on its own.
     var onCreated: (() -> Void)? = nil
+    var onReviewVpnDisclosure: () -> Void = {}
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
                 if !model.state.error.isEmpty || !model.statusMessage.isEmpty {
-                    NoticeCard(text: model.state.error.isEmpty ? model.statusMessage : model.state.error)
+                    NoticeCard(
+                        text: model.state.error.isEmpty ? model.statusMessage : model.state.error,
+                        actionTitle: model.state.error.isEmpty && model.vpnDisclosurePromptVisible ? "Review" : nil,
+                        action: onReviewVpnDisclosure,
+                        secondaryTitle: model.state.error.isEmpty && model.vpnDisclosurePromptVisible ? "Later" : nil,
+                        secondaryAction: model.dismissVpnDisclosurePrompt
+                    )
                 }
                 CreateNetworkCard(model: model, onCreated: onCreated)
                 JoinNetworkCard(model: model)
@@ -170,6 +230,7 @@ private struct AddNetworkPage: View {
 private struct DevicesPage: View {
     @ObservedObject var model: AppModel
     let network: NetworkState?
+    var onReviewVpnDisclosure: () -> Void = {}
     @State private var addDevicePresented = false
     @State private var pendingNetworkRemoval: NetworkState?
 
@@ -177,7 +238,13 @@ private struct DevicesPage: View {
         ScrollView {
             LazyVStack(spacing: 14) {
                 if !model.state.error.isEmpty || !model.statusMessage.isEmpty {
-                    NoticeCard(text: model.state.error.isEmpty ? model.statusMessage : model.state.error)
+                    NoticeCard(
+                        text: model.state.error.isEmpty ? model.statusMessage : model.state.error,
+                        actionTitle: model.state.error.isEmpty && model.vpnDisclosurePromptVisible ? "Review" : nil,
+                        action: onReviewVpnDisclosure,
+                        secondaryTitle: model.state.error.isEmpty && model.vpnDisclosurePromptVisible ? "Later" : nil,
+                        secondaryAction: model.dismissVpnDisclosurePrompt
+                    )
                 }
                 if let network {
                     if !network.enabled {
@@ -278,8 +345,8 @@ private struct DevicesPage: View {
 
 private struct ToolbarVpnSwitch: View {
     @ObservedObject var model: AppModel
-    @AppStorage(AppModel.vpnDisclosureAcceptedKey) private var vpnDisclosureAccepted = false
-    @State private var vpnDisclosurePresented = false
+    let vpnDisclosureAccepted: Bool
+    let onReviewVpnDisclosure: () -> Void
 
     private var enabled: Bool {
         !model.actionInFlight && model.state.vpnControlSupported && model.activeNetwork != nil
@@ -288,7 +355,8 @@ private struct ToolbarVpnSwitch: View {
     var body: some View {
         Button {
             if !model.state.vpnEnabled && !vpnDisclosureAccepted {
-                vpnDisclosurePresented = true
+                model.requireVpnDisclosureReview()
+                onReviewVpnDisclosure()
             } else {
                 model.toggleVpn()
             }
@@ -311,15 +379,6 @@ private struct ToolbarVpnSwitch: View {
         .disabled(!enabled)
         .accessibilityLabel(model.state.vpnEnabled ? "Turn VPN off" : "Turn VPN on")
         .accessibilityValue(model.state.vpnEnabled ? "On" : "Off")
-        .sheet(isPresented: $vpnDisclosurePresented) {
-            VpnDisclosureSheet {
-                vpnDisclosureAccepted = true
-                vpnDisclosurePresented = false
-                model.toggleVpn()
-            } cancel: {
-                vpnDisclosurePresented = false
-            }
-        }
     }
 }
 
@@ -343,7 +402,7 @@ private struct VpnDisclosureSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: cancel)
+                    Button("Later", action: cancel)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Continue", action: accept)
@@ -361,13 +420,11 @@ private struct CreateNetworkCard: View {
     @State private var networkName = "My Network"
 
     var body: some View {
-        AppCard {
-            Text("Create Network")
-                .font(.headline)
-            HStack {
+        SetupCard(title: "Create Network", systemImage: "plus.circle.fill", tint: AppColors.create) {
+            VStack(alignment: .leading, spacing: 10) {
                 TextField("Network name", text: $networkName)
                     .textFieldStyle(.roundedBorder)
-                Button("Create") {
+                Button {
                     let name = networkName.trimmingCharacters(in: .whitespacesAndNewlines)
                     model.dispatch(
                         NativeActions.addNetwork(name.isEmpty ? "My Network" : name),
@@ -375,6 +432,9 @@ private struct CreateNetworkCard: View {
                     )
                     networkName = "My Network"
                     onCreated?()
+                } label: {
+                    Label("Create", systemImage: "plus")
+                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(model.actionInFlight)
@@ -403,9 +463,7 @@ private struct JoinNetworkCard: View {
     }
 
     var body: some View {
-        AppCard {
-            Text("Join Network")
-                .font(.headline)
+        SetupCard(title: "Join Network", systemImage: "arrow.down.circle.fill", tint: AppColors.join) {
             TextField("nvpn://invite/…", text: $inviteInput)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -417,21 +475,25 @@ private struct JoinNetworkCard: View {
                         inviteInput = ""
                     }
                 }
-            HStack {
+            HStack(spacing: 10) {
                 Button {
                     if let text = UIPasteboard.general.string {
                         inviteInput = text.trimmingCharacters(in: .whitespacesAndNewlines)
                     }
                 } label: {
                     Label("Paste", systemImage: "doc.on.clipboard")
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.bordered)
                 Button {
                     qrScannerPresented = true
                 } label: {
                     Label("Scan", systemImage: "camera.viewfinder")
+                        .frame(maxWidth: .infinity)
                 }
-                Spacer()
+                .buttonStyle(.bordered)
             }
+            .controlSize(.regular)
 
             DisclosureGroup("Add manually", isExpanded: $manualExpanded) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -1277,13 +1339,67 @@ private struct AppCard<Content: View>: View {
     }
 }
 
+private struct SetupCard<Content: View>: View {
+    let title: String
+    let systemImage: String
+    let tint: Color
+    let content: Content
+
+    init(title: String, systemImage: String, tint: Color, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.systemImage = systemImage
+        self.tint = tint
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(tint)
+            content
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.background)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(tint)
+                .frame(width: 4)
+                .padding(.vertical, 14)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(tint.opacity(0.24), lineWidth: 1)
+        }
+        .tint(tint)
+    }
+}
+
 private struct NoticeCard: View {
     let text: String
+    var actionTitle: String? = nil
+    var action: () -> Void = {}
+    var secondaryTitle: String? = nil
+    var secondaryAction: () -> Void = {}
 
     var body: some View {
         AppCard {
             Text(text)
                 .foregroundStyle(.brown)
+            if let actionTitle {
+                HStack(spacing: 8) {
+                    Button(actionTitle, action: action)
+                        .buttonStyle(.borderedProminent)
+                    if let secondaryTitle {
+                        Button(secondaryTitle, action: secondaryAction)
+                            .buttonStyle(.bordered)
+                    }
+                }
+                .controlSize(.regular)
+            }
         }
     }
 }
@@ -1382,6 +1498,8 @@ private struct QrCodeView: View {
 private enum AppColors {
     static let background = Color(uiColor: .systemGroupedBackground)
     static let accent = Color.purple
+    static let create = Color.green
+    static let join = Color.blue
     static let ok = Color.green
 }
 

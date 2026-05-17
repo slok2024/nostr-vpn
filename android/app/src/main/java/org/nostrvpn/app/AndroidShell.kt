@@ -8,6 +8,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -462,110 +463,136 @@ private fun NetworkSetupCard(
         context.getSystemService(android.content.ClipboardManager::class.java)
     }
 
-    AppCard {
-        Text("Create Network", style = MaterialTheme.typography.titleMedium)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = networkName,
-                onValueChange = { networkName = it },
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                label = { Text("Network name") },
-            )
-            Spacer(Modifier.width(8.dp))
-            Button(onClick = {
-                dispatch(NativeActions.addNetwork(networkName.trim().ifBlank { "My Network" }))
-                networkName = "My Network"
-                onCreated?.invoke()
-            }) {
-                Text("Create")
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-        Text("Join Network", style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(
-            value = inviteInput,
-            onValueChange = { newValue ->
-                inviteInput = newValue
-                val trimmed = newValue.trim()
-                if (trimmed.startsWith("nvpn://invite/", ignoreCase = true)) {
-                    dispatch(NativeActions.importInvite(trimmed))
-                    inviteInput = ""
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SetupChoiceCard("Create Network", Color(0xFF16A34A)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = networkName,
+                    onValueChange = { networkName = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Network name") },
+                )
+                Button(
+                    onClick = {
+                        dispatch(NativeActions.addNetwork(networkName.trim().ifBlank { "My Network" }))
+                        networkName = "My Network"
+                        onCreated?.invoke()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Create")
                 }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text("nvpn://invite/…") },
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = {
-                val item = clipboard?.primaryClip?.getItemAt(0)?.coerceToText(context)
-                item?.toString()?.let { inviteInput = it.trim() }
-            }) {
-                Text("Paste")
-            }
-            OutlinedButton(onClick = scanQr) {
-                Text("Scan")
             }
         }
 
-        // Manual join: hand off admin device id + mesh network id directly
-        // to the core's `manual_add_network` action. The core builds a
-        // synthetic NetworkInvite and runs it through the same parse +
-        // apply path as a regular invite — the network shows up locally
-        // with admin seeded and a join request is queued for them.
-        Spacer(Modifier.height(8.dp))
-        var manualExpanded by remember { mutableStateOf(false) }
-        var manualAdminId by remember { mutableStateOf("") }
-        var manualNetworkId by remember { mutableStateOf("") }
-        TextButton(onClick = { manualExpanded = !manualExpanded }) {
-            Text(if (manualExpanded) "Add manually ▴" else "Add manually ▾")
-        }
-        if (manualExpanded) {
-            val adminTrim = manualAdminId.trim()
-            val meshTrim = manualNetworkId.trim()
-            val adminInvalid = adminTrim.isNotEmpty() && !isValidDeviceId(adminTrim)
-            val canSubmit = adminTrim.isNotEmpty() && meshTrim.isNotEmpty() && !adminInvalid
-            Text(
-                "Both sides have to add each other. Get the admin's Device ID and the network ID from them, then have the admin add your Device ID on their Add device page.",
-                style = MaterialTheme.typography.bodySmall,
-                color = Muted,
-            )
+        SetupChoiceCard("Join Network", Color(0xFF2563EB)) {
             OutlinedTextField(
-                value = manualAdminId,
-                onValueChange = { manualAdminId = it },
+                value = inviteInput,
+                onValueChange = { newValue ->
+                    inviteInput = newValue
+                    val trimmed = newValue.trim()
+                    if (trimmed.startsWith("nvpn://invite/", ignoreCase = true)) {
+                        dispatch(NativeActions.importInvite(trimmed))
+                        inviteInput = ""
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                label = { Text("Admin Device ID") },
-                isError = adminInvalid,
-                supportingText = if (adminInvalid) {
-                    { Text("Not a valid device ID") }
-                } else {
-                    null
-                },
+                label = { Text("nvpn://invite/…") },
             )
-            OutlinedTextField(
-                value = manualNetworkId,
-                onValueChange = { manualNetworkId = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("Network ID") },
-            )
-            Button(
-                enabled = canSubmit,
-                onClick = {
-                    dispatch(NativeActions.manualAddNetwork(adminTrim, meshTrim))
-                    manualAdminId = ""
-                    manualNetworkId = ""
-                    manualExpanded = false
-                },
-            ) {
-                Text("Add")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        val item = clipboard?.primaryClip?.getItemAt(0)?.coerceToText(context)
+                        item?.toString()?.let { inviteInput = it.trim() }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Paste")
+                }
+                OutlinedButton(
+                    onClick = scanQr,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Scan")
+                }
+            }
+
+            // Manual join: hand off admin device id + mesh network id directly
+            // to the core's `manual_add_network` action. The core builds a
+            // synthetic NetworkInvite and runs it through the same parse +
+            // apply path as a regular invite — the network shows up locally
+            // with admin seeded and a join request is queued for them.
+            var manualExpanded by remember { mutableStateOf(false) }
+            var manualAdminId by remember { mutableStateOf("") }
+            var manualNetworkId by remember { mutableStateOf("") }
+            TextButton(onClick = { manualExpanded = !manualExpanded }) {
+                Text(if (manualExpanded) "Add manually ▴" else "Add manually ▾")
+            }
+            if (manualExpanded) {
+                val adminTrim = manualAdminId.trim()
+                val meshTrim = manualNetworkId.trim()
+                val adminInvalid = adminTrim.isNotEmpty() && !isValidDeviceId(adminTrim)
+                val canSubmit = adminTrim.isNotEmpty() && meshTrim.isNotEmpty() && !adminInvalid
+                Text(
+                    "Both sides have to add each other. Get the admin's Device ID and the network ID from them, then have the admin add your Device ID on their Add device page.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Muted,
+                )
+                OutlinedTextField(
+                    value = manualAdminId,
+                    onValueChange = { manualAdminId = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Admin Device ID") },
+                    isError = adminInvalid,
+                    supportingText = if (adminInvalid) {
+                        { Text("Not a valid device ID") }
+                    } else {
+                        null
+                    },
+                )
+                OutlinedTextField(
+                    value = manualNetworkId,
+                    onValueChange = { manualNetworkId = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Network ID") },
+                )
+                Button(
+                    enabled = canSubmit,
+                    onClick = {
+                        dispatch(NativeActions.manualAddNetwork(adminTrim, meshTrim))
+                        manualAdminId = ""
+                        manualNetworkId = ""
+                        manualExpanded = false
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Add")
+                }
             }
         }
     }
-    NearbyCard(state, dispatch)
+}
+
+@Composable
+private fun SetupChoiceCard(
+    title: String,
+    accent: Color,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    AppCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Canvas(Modifier.size(10.dp)) {
+                drawCircle(accent)
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(title, style = MaterialTheme.typography.titleMedium, color = accent)
+        }
+        content()
+    }
 }
 
 // LazyListScope wrapper for the Add Network body, used as the entire
