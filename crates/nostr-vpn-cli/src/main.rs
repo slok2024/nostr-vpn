@@ -60,6 +60,8 @@ use nostr_vpn_core::diagnostics::{
     HealthIssue, HealthSeverity, NetworkSummary, PortMappingStatus, ProbeState,
 };
 use nostr_vpn_core::fips_control::{NetworkRoster, PeerCapabilities, PeerEndpointHint};
+#[cfg(feature = "embedded-fips")]
+use nostr_vpn_core::join_requests::{FIPS_JOIN_REQUEST_RETRY_SECS, MeshJoinRequest};
 use nostr_vpn_core::magic_dns::{
     MagicDnsResolverConfig, MagicDnsServer, build_magic_dns_records, install_system_resolver,
     uninstall_system_resolver,
@@ -2747,7 +2749,7 @@ async fn send_pending_fips_join_requests(
     if recipients.is_empty() {
         return Ok(0);
     }
-    let request = nostr_vpn_core::join_requests::MeshJoinRequest {
+    let request = MeshJoinRequest {
         network_id: normalize_runtime_network_id(&network.network_id),
         requester_node_name: app.node_name.trim().to_string(),
     };
@@ -2760,7 +2762,7 @@ async fn send_pending_fips_join_requests(
         );
         if sent_cache
             .get(&fingerprint)
-            .is_some_and(|last_sent| now.saturating_sub(*last_sent) < 10)
+            .is_some_and(|last_sent| now.saturating_sub(*last_sent) < FIPS_JOIN_REQUEST_RETRY_SECS)
         {
             continue;
         }

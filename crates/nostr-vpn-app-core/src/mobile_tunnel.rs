@@ -30,7 +30,7 @@ use nostr_vpn_core::fips_control::{
     decode_fips_control_frame, encode_fips_control_frame, peer_endpoint_hint_addr,
 };
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
-use nostr_vpn_core::join_requests::MeshJoinRequest;
+use nostr_vpn_core::join_requests::{FIPS_JOIN_REQUEST_RETRY_SECS, MeshJoinRequest};
 use nostr_vpn_core::wg_upstream::{DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT, WgUpstreamRuntime};
 use serde::{Deserialize, Serialize};
 
@@ -64,7 +64,6 @@ const MOBILE_MAX_FIPS_LINKS: usize = 64;
 const MOBILE_CAPABILITIES_BROADCAST_SECS: u64 = 30;
 const MOBILE_CAPABILITIES_STARTUP_BURST_COUNT: usize = 4;
 const MOBILE_CAPABILITIES_STARTUP_BURST_INTERVAL_MS: u64 = 750;
-const MOBILE_JOIN_REQUEST_RETRY_SECS: u64 = 10;
 const MOBILE_RUNTIME_STATE_REFRESH_SECS: u64 = 2;
 const MOBILE_RUNTIME_STATE_FILE: &str = "mobile-runtime-state.json";
 const MOBILE_PEER_ONLINE_GRACE_SECS: u64 = 45;
@@ -597,7 +596,7 @@ impl MobileTunnel {
                 };
                 while join_request_active_for_task.load(Ordering::Relaxed) {
                     let _ = endpoint.send(recipient_npub.clone(), encoded.clone()).await;
-                    tokio::time::sleep(Duration::from_secs(MOBILE_JOIN_REQUEST_RETRY_SECS)).await;
+                    tokio::time::sleep(Duration::from_secs(FIPS_JOIN_REQUEST_RETRY_SECS)).await;
                 }
             }));
         }
