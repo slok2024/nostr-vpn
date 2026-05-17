@@ -70,11 +70,14 @@ test('bundled UI loads, navigates, renders QR, and stays responsive', async ({ p
   await expectNoConsoleErrors(page, async () => {
     await page.goto('/');
     await expect(page).toHaveTitle('Nostr VPN');
-    await expect(page.locator('.hero')).toBeVisible();
+    await expect(page.locator('.app-header')).toBeVisible();
+    await expect(page.locator('.devices-layout')).toBeVisible();
+    await expect(page.locator('.device-list-column')).toBeVisible();
+    await expect(page.locator('.device-detail-column')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Devices' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Add Network' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Add Device' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Connect' })).toBeVisible();
+    await expect(page.locator('.vpn-switch')).toBeVisible();
 
     await page.getByRole('button', { name: 'Add Device' }).click();
     await expect(page.getByRole('heading', { name: 'Add Device' })).toBeVisible();
@@ -95,7 +98,8 @@ test('bundled UI loads, navigates, renders QR, and stays responsive', async ({ p
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/');
-    await expect(page.locator('.hero')).toBeVisible();
+    await expect(page.locator('.app-header')).toBeVisible();
+    await expect(page.locator('.devices-layout')).toBeVisible();
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - window.innerWidth,
     );
