@@ -132,6 +132,16 @@ code {
   background: #242b20;
 }
 
+.sidebar-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.sidebar-actions .secondary-button,
+.sidebar-actions .small-button {
+  width: 100%;
+}
+
 .sidebar-summary {
   display: flex;
   align-items: center;
@@ -388,6 +398,21 @@ code {
   overflow-wrap: anywhere;
 }
 
+.detail-list.two-column {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.detail-list.two-column > div {
+  padding: 12px;
+  border-radius: 8px;
+  background: #11140f;
+}
+
+.detail-list.two-column button {
+  justify-self: start;
+  margin-top: 6px;
+}
+
 .empty-state {
   min-height: 64px;
   display: grid;
@@ -563,13 +588,6 @@ textarea:focus {
   min-width: 0;
 }
 
-.share-panel {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 18px;
-}
-
 .qr-frame {
   display: grid;
   place-items: center;
@@ -607,6 +625,81 @@ textarea:focus {
 
 .share-copy textarea {
   min-height: 120px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(6, 8, 5, 0.74);
+}
+
+.modal-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(720px, 100%);
+  max-height: min(760px, calc(100vh - 36px));
+  border: 1px solid rgba(246, 241, 229, 0.12);
+  border-radius: 8px;
+  background: #171c15;
+  box-shadow: 0 20px 80px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(246, 241, 229, 0.08);
+}
+
+.modal-header h3,
+.modal-section h3 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.modal-body {
+  display: grid;
+  gap: 14px;
+  min-height: 0;
+  padding: 18px;
+  overflow: auto;
+}
+
+.modal-section {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border-radius: 8px;
+  background: #11140f;
+}
+
+.modal-section .section-heading {
+  margin-bottom: 0;
+}
+
+.invite-section {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.qr-frame.compact {
+  width: 168px;
+  height: 168px;
+  padding: 10px;
+}
+
+.inline-switch {
+  width: auto;
+  min-height: 40px;
+  margin-top: 0;
 }
 
 .choice-list {
@@ -673,7 +766,11 @@ textarea:focus {
   }
 
   .nav {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .sidebar-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .nav button {
@@ -699,11 +796,12 @@ textarea:focus {
     width: 100%;
   }
 
-  .share-panel {
+  .invite-section {
     grid-template-columns: 1fr;
   }
 
-  .qr-frame {
+  .qr-frame,
+  .qr-frame.compact {
     width: min(100%, 260px);
     height: auto;
     aspect-ratio: 1;
@@ -713,7 +811,8 @@ textarea:focus {
 
 @media (max-width: 620px) {
   .form-grid,
-  .network-fields {
+  .network-fields,
+  .detail-list.two-column {
     grid-template-columns: 1fr;
   }
 

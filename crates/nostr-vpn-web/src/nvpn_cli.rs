@@ -23,10 +23,11 @@ pub(crate) fn load_config(path: &Path) -> Result<AppConfig> {
 }
 
 pub(crate) fn ensure_config_exists(path: &Path) -> Result<()> {
-    if path.exists() {
-        return Ok(());
-    }
-    let mut config = AppConfig::generated();
+    let mut config = if path.exists() {
+        AppConfig::load(path).with_context(|| format!("failed to load {}", path.display()))?
+    } else {
+        AppConfig::generated()
+    };
     config.ensure_defaults();
     maybe_autoconfigure_node(&mut config);
     save_config(path, &config)

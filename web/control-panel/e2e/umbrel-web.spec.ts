@@ -72,13 +72,22 @@ test('bundled UI loads, navigates, renders QR, and stays responsive', async ({ p
     await expect(page).toHaveTitle('Nostr VPN');
     await expect(page.locator('.hero')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Devices' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Add Network' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Add Device' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Connect' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Share' }).click();
+    await page.getByRole('button', { name: 'Add Device' }).click();
+    await expect(page.getByRole('heading', { name: 'Add Device' })).toBeVisible();
     await expect(page.locator('.qr-frame')).toBeVisible();
     expect(await page.locator('.qr-grid span.dark').count()).toBeGreaterThan(0);
+    await page.getByRole('button', { name: 'Done' }).click();
 
-    await page.getByRole('button', { name: 'Exit' }).click();
+    await page.getByRole('button', { name: 'Add Network' }).click();
+    await expect(page.getByRole('heading', { name: 'Add Network' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Join Network' })).toBeVisible();
+    await page.getByRole('button', { name: 'Done' }).click();
+
+    await page.getByRole('button', { name: 'Exit Nodes' }).click();
     await expect(page.getByRole('heading', { name: 'Route' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Settings' }).click();
@@ -100,6 +109,8 @@ test('API supports the Umbrel web config action surface', async ({ request }) =>
 
   let state = await postJson<UiState>(request, '/api/tick');
   const originalNetwork = activeNetwork(state);
+  expect(originalNetwork.networkId).not.toBe('nostr-vpn');
+  expect(originalNetwork.networkId).toMatch(/^[0-9a-f]{16}$/);
 
   const qr = await postJson<QrMatrix>(request, '/api/qr_matrix', {
     text: state.activeNetworkInvite,

@@ -3,7 +3,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use nostr_sdk::prelude::{Keys, PublicKey, ToBech32};
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::network_routes::derive_mesh_tunnel_ip;
@@ -15,33 +14,6 @@ pub(crate) fn default_relays() -> Vec<String> {
         .iter()
         .map(|relay| relay.to_string())
         .collect()
-}
-
-/// Derive a deterministic mesh id from a network's participants.
-///
-/// Length is 8 hex chars / 32 bits. This is a disambiguation token,
-/// not a security secret — peers who already know each other (admin
-/// and invitee) just need to land on the same mesh slot. With ~32
-/// bits of entropy the birthday collision threshold is ~65k networks,
-/// more than enough for nvpn's user base. Going shorter (e.g. 4 chars
-/// / 16 bits) starts colliding around a few hundred networks globally.
-///
-/// Existing networks created on prior versions kept the old 16-char
-/// hex id; nothing in the runtime cares about the length, so they
-/// continue to work side-by-side with new 8-char ids.
-pub fn derive_network_id_from_participants(participants: &[String]) -> String {
-    let mut normalized: Vec<String> = participants.to_vec();
-    normalized.sort();
-    normalized.dedup();
-
-    let mut hasher = Sha256::new();
-    for participant in normalized {
-        hasher.update(participant.as_bytes());
-        hasher.update(b"\n");
-    }
-
-    let digest = hasher.finalize();
-    hex::encode(digest)[..8].to_string()
 }
 
 pub fn normalize_runtime_network_id(value: &str) -> String {
@@ -123,10 +95,10 @@ pub(crate) const fn default_listen_port() -> u16 {
 }
 
 pub(crate) fn default_network_id() -> String {
-    "nostr-vpn".to_string()
+    Uuid::new_v4().simple().to_string()[..16].to_string()
 }
 
-pub(crate) fn uses_default_network_id(value: &str) -> bool {
+pub(crate) fn needs_generated_network_id(value: &str) -> bool {
     value.trim().is_empty() || value.trim() == "nostr-vpn"
 }
 

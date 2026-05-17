@@ -7,24 +7,6 @@ fn default_relays_match_hashtree_defaults() {
 }
 
 #[test]
-fn network_id_derivation_is_order_independent() {
-    let left =
-        derive_network_id_from_participants(&["b".to_string(), "a".to_string(), "c".to_string()]);
-    let right =
-        derive_network_id_from_participants(&["c".to_string(), "b".to_string(), "a".to_string()]);
-
-    assert_eq!(left, right);
-    assert!(!left.contains(':'));
-}
-
-#[test]
-fn derived_network_id_is_short_hex_disambiguator() {
-    let id = derive_network_id_from_participants(&["a".to_string(), "b".to_string()]);
-    assert_eq!(id.len(), 8);
-    assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
-}
-
-#[test]
 fn generated_config_auto_populates_keys() {
     let config = AppConfig::generated();
 
@@ -170,7 +152,7 @@ fn maybe_autoconfigure_node_assigns_tunnel_ip_from_participants() {
 }
 
 #[test]
-fn active_network_network_id_takes_precedence_over_participant_hash() {
+fn explicit_active_network_id_is_preserved() {
     let keys = Keys::generate();
     let peer = Keys::generate();
     let own_hex = keys.public_key().to_hex();

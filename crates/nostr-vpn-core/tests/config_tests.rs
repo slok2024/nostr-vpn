@@ -4,8 +4,8 @@ use nostr_sdk::prelude::{Keys, ToBech32};
 use nostr_vpn_core::config::{
     AppConfig, DEFAULT_RELAYS, NetworkConfig, default_node_name_for_hostname_or_pubkey,
     default_node_name_for_pubkey, default_node_name_from_hostname, derive_mesh_tunnel_ip,
-    derive_network_id_from_participants, maybe_autoconfigure_node, needs_endpoint_autoconfig,
-    needs_tunnel_ip_autoconfig, normalize_nostr_pubkey,
+    maybe_autoconfigure_node, needs_endpoint_autoconfig, needs_tunnel_ip_autoconfig,
+    normalize_nostr_pubkey,
 };
 
 fn set_default_network_participants(config: &mut AppConfig, participants: Vec<String>) {
@@ -17,6 +17,12 @@ fn set_default_network_participants(config: &mut AppConfig, participants: Vec<St
 
 fn keep_endpoint_autoconfig_off(config: &mut AppConfig) {
     config.node.endpoint = "198.51.100.10:51820".to_string();
+}
+
+fn assert_generated_network_id(value: &str) {
+    assert_ne!(value, "nostr-vpn");
+    assert_eq!(value.len(), 16);
+    assert!(value.chars().all(|c| c.is_ascii_hexdigit()));
 }
 
 fn unique_temp_config_path(name: &str) -> std::path::PathBuf {

@@ -27,11 +27,11 @@ use crate::config_defaults::{
     default_listen_for_join_requests, default_listen_port, default_nat_discovery_timeout_secs,
     default_nat_enabled, default_nat_stun_servers, default_network_enabled, default_network_id,
     default_node_id, default_relays, default_tunnel_ip, generate_nostr_identity, is_true, is_zero,
-    npub_for_pubkey_hex, uses_default_network_id,
+    needs_generated_network_id, npub_for_pubkey_hex,
 };
 pub use crate::config_defaults::{
-    derive_network_id_from_participants, maybe_autoconfigure_node, needs_endpoint_autoconfig,
-    needs_tunnel_ip_autoconfig, normalize_nostr_pubkey, normalize_runtime_network_id,
+    maybe_autoconfigure_node, needs_endpoint_autoconfig, needs_tunnel_ip_autoconfig,
+    normalize_nostr_pubkey, normalize_runtime_network_id,
 };
 use crate::config_magic_dns::{
     default_magic_dns_suffix, default_network_entry_id, default_network_name, default_node_name,
@@ -834,7 +834,7 @@ impl AppConfig {
         }
 
         self.ensure_single_active_network();
-        self.derive_default_network_ids();
+        self.generate_placeholder_network_ids();
         self.normalize_selected_exit_node();
         self.normalize_fips_peer_endpoints();
         self.normalize_peer_aliases();
@@ -1599,29 +1599,13 @@ impl AppConfig {
         self.fips_peer_endpoints = normalized;
     }
 
-    fn derive_default_network_ids(&mut self) {
-        let own_pubkey = self.own_nostr_pubkey_hex().ok();
-
+    fn generate_placeholder_network_ids(&mut self) {
         for network in &mut self.networks {
-            if !uses_default_network_id(&network.network_id) {
+            if !needs_generated_network_id(&network.network_id) {
                 continue;
             }
 
-            let Some(own_pubkey) = own_pubkey.as_ref() else {
-                network.network_id = default_network_id();
-                continue;
-            };
-
-            if network.participants.is_empty() {
-                network.network_id = default_network_id();
-                continue;
-            }
-
-            let mut mesh_members = network.participants.clone();
-            mesh_members.push(own_pubkey.clone());
-            mesh_members.sort();
-            mesh_members.dedup();
-            network.network_id = derive_network_id_from_participants(&mesh_members);
+            network.network_id = default_network_id();
         }
     }
 
