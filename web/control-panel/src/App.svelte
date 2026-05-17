@@ -267,7 +267,7 @@
 
   function participantName(participant: ParticipantView): string {
     if (isSelf(participant)) {
-      const selfName = displayNameValue(state?.nodeName);
+      const selfName = displayNameValue(state?.selfMagicDnsName);
       if (selfName) {
         return selfName;
       }

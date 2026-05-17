@@ -89,6 +89,35 @@ fn self_magic_dns_name_uses_node_name_and_resolves_to_own_pubkey() {
 }
 
 #[test]
+fn add_first_network_formats_seeded_device_name_as_self_magic_dns_label() {
+    let mut config = AppConfig::generated_without_networks();
+    config.node_name = "Sirius's Mac mini".to_string();
+
+    config.add_network("Home");
+
+    assert_eq!(config.node_name, "sirius-s-mac-mini");
+    assert_eq!(
+        config.self_magic_dns_name().as_deref(),
+        Some("sirius-s-mac-mini.nvpn")
+    );
+}
+
+#[test]
+fn adding_later_network_preserves_configured_device_name() {
+    let mut config = AppConfig::generated_without_networks();
+
+    config.add_network("Home");
+    config.node_name = "My Pocket Router".to_string();
+    config.add_network("Work");
+
+    assert_eq!(config.node_name, "My Pocket Router");
+    assert_eq!(
+        config.self_magic_dns_name().as_deref(),
+        Some("my-pocket-router.nvpn")
+    );
+}
+
+#[test]
 fn self_magic_dns_label_keeps_node_name_and_suffixes_colliding_peer_aliases() {
     let own = Keys::generate();
     let peer = Keys::generate();
