@@ -1778,11 +1778,11 @@ struct RootView: View {
     }
 
     private func deviceName(_ participant: NativeParticipantState) -> String {
-        if isSelf(participant), !state.selfMagicDnsName.isEmpty {
-            return state.selfMagicDnsName
-        }
         if !participant.magicDnsName.isEmpty {
             return participant.magicDnsName
+        }
+        if isSelf(participant), !state.selfMagicDnsName.isEmpty {
+            return state.selfMagicDnsName
         }
         if !participant.alias.isEmpty {
             return participant.alias

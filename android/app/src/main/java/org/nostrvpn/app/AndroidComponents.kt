@@ -543,8 +543,8 @@ private fun ParticipantState.isSelf(state: AppState): Boolean =
     (state.ownNpub.isNotBlank() && npub == state.ownNpub) || meshState == "local"
 
 private fun ParticipantState.displayName(state: AppState): String {
-    if (isSelf(state) && state.selfMagicDnsName.isNotBlank()) return state.selfMagicDnsName
     if (magicDnsName.isNotBlank()) return magicDnsName
+    if (isSelf(state) && state.selfMagicDnsName.isNotBlank()) return state.selfMagicDnsName
     if (alias.isNotBlank()) return alias
     if (magicDnsAlias.isNotBlank()) return magicDnsAlias
     return npub.shortNpub()

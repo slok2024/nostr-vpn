@@ -266,14 +266,9 @@
   }
 
   function participantName(participant: ParticipantView): string {
-    if (isSelf(participant)) {
-      const selfName = displayNameValue(state?.selfMagicDnsName);
-      if (selfName) {
-        return selfName;
-      }
-    }
     for (const value of [
       participant.magicDnsName,
+      isSelf(participant) ? state?.selfMagicDnsName : '',
       participant.alias,
       participant.magicDnsAlias,
     ]) {

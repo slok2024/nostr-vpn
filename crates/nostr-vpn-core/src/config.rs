@@ -701,6 +701,7 @@ impl AppConfig {
     pub fn generated_without_networks() -> Self {
         let mut config = Self::default();
         config.networks.clear();
+        config.peer_aliases.clear();
         config
     }
 
@@ -994,8 +995,6 @@ impl AppConfig {
     }
 
     pub fn add_network(&mut self, name: &str) -> String {
-        self.format_self_node_name_for_first_network();
-
         let ordinal = self.networks.len() + 1;
         let mut used_ids = self
             .networks
@@ -1026,16 +1025,6 @@ impl AppConfig {
         });
         let _ = self.note_network_roster_local_change(&id);
         id
-    }
-
-    fn format_self_node_name_for_first_network(&mut self) {
-        if !self.networks.is_empty() {
-            return;
-        }
-
-        if let Some(label) = normalize_magic_dns_label(&self.node_name) {
-            self.node_name = label;
-        }
     }
 
     pub fn rename_network(&mut self, network_id: &str, name: &str) -> Result<()> {

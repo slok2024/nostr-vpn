@@ -1488,11 +1488,11 @@ private func isSelf(_ participant: ParticipantState, state: AppState) -> Bool {
 }
 
 private func deviceName(_ participant: ParticipantState, state: AppState) -> String {
-    if isSelf(participant, state: state), !state.selfMagicDnsName.isEmpty {
-        return state.selfMagicDnsName
-    }
     if !participant.magicDnsName.isEmpty {
         return participant.magicDnsName
+    }
+    if isSelf(participant, state: state), !state.selfMagicDnsName.isEmpty {
+        return state.selfMagicDnsName
     }
     if !participant.alias.isEmpty {
         return participant.alias
