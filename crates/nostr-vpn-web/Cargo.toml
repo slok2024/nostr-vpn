@@ -24,3 +24,4 @@ tracing-subscriber.workspace = true
 tower-http = { version = "0.6", features = ["fs"] }
 
 nostr-vpn-core.workspace = true
+nostr-vpn-app-core = { path = "../nostr-vpn-app-core" }

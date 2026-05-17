@@ -114,6 +114,21 @@ impl FfiApp {
 }
 
 impl FfiApp {
+    #[must_use]
+    pub fn new_with_config_path(
+        config_path: PathBuf,
+        app_version: String,
+        nvpn_bin: Option<PathBuf>,
+    ) -> Arc<Self> {
+        let runtime = NativeAppRuntime::new_with_config_path(config_path, app_version, nvpn_bin)
+            .unwrap_or_else(|error| NativeAppRuntime::from_startup_error(&error));
+        Arc::new(Self {
+            runtime: Mutex::new(runtime),
+        })
+    }
+}
+
+impl FfiApp {
     fn with_runtime(
         &self,
         f: impl FnOnce(&mut NativeAppRuntime) -> NativeAppState,
@@ -296,6 +311,14 @@ struct ExitNodeUiStatus {
 impl NativeAppRuntime {
     fn new(data_dir: &str, app_version: String) -> Result<Self> {
         let config_path = native_config_path(data_dir);
+        Self::new_with_config_path(config_path, app_version, None)
+    }
+
+    fn new_with_config_path(
+        config_path: PathBuf,
+        app_version: String,
+        nvpn_bin: Option<PathBuf>,
+    ) -> Result<Self> {
         let config_exists = config_path
             .try_exists()
             .with_context(|| format!("failed to inspect config {}", config_path.display()))?;
@@ -323,7 +346,7 @@ impl NativeAppRuntime {
             app_version,
             config_path,
             config,
-            nvpn_bin: resolve_nvpn_cli_path().ok(),
+            nvpn_bin: nvpn_bin.or_else(|| resolve_nvpn_cli_path().ok()),
             mobile_runtime: capabilities.mobile,
             startup_error: None,
             last_error: String::new(),
@@ -1694,6 +1717,7 @@ impl NativeAppRuntime {
         });
         let is_local = participant == own_pubkey_hex;
         let reachable = vpn_active && (is_local || daemon_peer.is_some_and(|peer| peer.reachable));
+        let access_pending = self.network_access_pending(network, own_pubkey_hex) && !is_local;
         let magic_dns_alias = if is_local {
             self.config.self_magic_dns_label().unwrap_or_default()
         } else {
@@ -1726,8 +1750,25 @@ impl NativeAppRuntime {
         } else {
             peer_offers_exit_node(&advertised_routes)
         };
-        let peer_state = self.peer_state_label(participant, daemon_peer, is_local, vpn_active);
+        let peer_state = if access_pending {
+            "pending".to_string()
+        } else {
+            self.peer_state_label(participant, daemon_peer, is_local, vpn_active)
+        };
         let mesh_state = Self::peer_mesh_label(daemon_peer, is_local, vpn_active);
+        let status_text = if access_pending {
+            if network
+                .outbound_join_request
+                .as_ref()
+                .is_some_and(|request| request.recipient == participant)
+            {
+                "join request sent".to_string()
+            } else {
+                "waiting for admin".to_string()
+            }
+        } else {
+            Self::peer_status_text(daemon_peer, is_local, &peer_state)
+        };
 
         NativeParticipantState {
             npub: to_npub(participant),
@@ -1758,9 +1799,20 @@ impl NativeAppRuntime {
             fips_bytes_recv: daemon_peer.map_or(0, |peer| peer.fips_bytes_recv),
             state: peer_state.clone(),
             mesh_state,
-            status_text: Self::peer_status_text(daemon_peer, is_local, &peer_state),
+            status_text,
             last_seen_text: Self::peer_last_fips_seen_text(daemon_peer, is_local),
         }
+    }
+
+    fn network_access_pending(&self, network: &NetworkConfig, own_pubkey_hex: &str) -> bool {
+        if own_pubkey_hex.is_empty() || network.outbound_join_request.is_none() {
+            return false;
+        }
+        !network
+            .participants
+            .iter()
+            .chain(network.admins.iter())
+            .any(|member| member == own_pubkey_hex)
     }
 
     fn refresh_service_status_if_due(&mut self) {
@@ -2805,6 +2857,52 @@ mod tests {
         assert_eq!(state.networks[0].network_id, "8d4f34f5425bc50e");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn native_state_marks_reachable_invite_admin_as_pending_until_join_is_accepted() {
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.daemon_running = true;
+        runtime.vpn_enabled = true;
+        runtime.vpn_active = true;
+        create_test_network(&mut runtime, "Home");
+
+        let admin_hex = Keys::generate().public_key().to_hex();
+        runtime.config.networks[0].network_id = "mesh-home".to_string();
+        runtime.config.networks[0].participants = Vec::new();
+        runtime.config.networks[0].admins = vec![admin_hex.clone()];
+        runtime.config.networks[0].invite_inviter = admin_hex.clone();
+        runtime.config.networks[0].outbound_join_request = Some(PendingOutboundJoinRequest {
+            recipient: admin_hex.clone(),
+            requested_at: 1_726_000_000,
+        });
+        runtime.daemon_state = Some(DaemonRuntimeState {
+            vpn_enabled: true,
+            vpn_active: true,
+            expected_peer_count: 1,
+            connected_peer_count: 1,
+            mesh_ready: true,
+            peers: vec![DaemonPeerState {
+                participant_pubkey: admin_hex.clone(),
+                tunnel_ip: "10.44.135.191".to_string(),
+                reachable: true,
+                ..DaemonPeerState::default()
+            }],
+            ..DaemonRuntimeState::default()
+        });
+
+        let state = runtime.state();
+        let admin = state.networks[0]
+            .participants
+            .iter()
+            .find(|participant| participant.pubkey_hex == admin_hex)
+            .expect("admin participant should be visible");
+
+        assert!(admin.reachable);
+        assert_eq!(admin.state, "pending");
+        assert_eq!(admin.status_text, "join request sent");
     }
 
     #[test]

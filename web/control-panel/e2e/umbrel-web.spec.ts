@@ -15,11 +15,17 @@ type NetworkView = {
 };
 
 type UiState = {
+  platform: string;
+  daemonRunning: boolean;
+  serviceSupported: boolean;
+  serviceStatusDetail: string;
   vpnStatus: string;
   activeNetworkInvite: string;
   nodeName: string;
   magicDnsSuffix: string;
   autoconnect: boolean;
+  inviteBroadcastActive: boolean;
+  nearbyDiscoveryActive: boolean;
   networks: NetworkView[];
 };
 
@@ -78,6 +84,8 @@ test('bundled UI loads, navigates, renders QR, and stays responsive', async ({ p
     await expect(page.getByRole('button', { name: 'Add Network' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Add Device' })).toBeVisible();
     await expect(page.locator('.vpn-switch')).toBeVisible();
+    await expect(page.getByText('Daemon not running', { exact: true })).toHaveCount(0);
+    await expect(page.locator('.header-vpn-text')).toHaveText('VPN off');
 
     await page.getByRole('button', { name: 'Add Device' }).click();
     await expect(page.getByRole('heading', { name: 'Add Device' })).toBeVisible();
@@ -112,6 +120,12 @@ test('API supports the Umbrel web config action surface', async ({ request }) =>
   test.skip(!peerNpub, 'NVPN_UMBREL_WEB_PEER_NPUB is required for participant actions');
 
   let state = await postJson<UiState>(request, '/api/tick');
+  expect(state.platform).toBe('umbrel');
+  expect(state.serviceSupported).toBeFalsy();
+  expect(state.serviceStatusDetail).toBe('Managed directly by the Umbrel app');
+  expect(state.daemonRunning).toBeFalsy();
+  expect(state.vpnStatus).toBe('VPN off');
+  expect(state.vpnStatus).not.toContain('Daemon');
   const originalNetwork = activeNetwork(state);
   expect(originalNetwork.networkId).not.toBe('nostr-vpn');
   expect(originalNetwork.networkId).toMatch(/^[0-9a-f]{16}$/);
@@ -193,8 +207,17 @@ test('API supports the Umbrel web config action surface', async ({ request }) =>
   workNetwork = byName(state, 'E2E Renamed');
   expect(workNetwork.participants.some((participant) => participant.npub === peerNpub)).toBeFalsy();
 
+  state = await postJson<UiState>(request, '/api/start_invite_broadcast');
+  expect(state.inviteBroadcastActive).toBeTruthy();
+
+  state = await postJson<UiState>(request, '/api/stop_invite_broadcast');
+  expect(state.inviteBroadcastActive).toBeFalsy();
+
   state = await postJson<UiState>(request, '/api/start_nearby_discovery');
-  expect(state.vpnStatus).toContain('LAN pairing is not available');
+  expect(state.nearbyDiscoveryActive).toBeTruthy();
+
+  state = await postJson<UiState>(request, '/api/stop_nearby_discovery');
+  expect(state.nearbyDiscoveryActive).toBeFalsy();
 
   state = await postJson<UiState>(request, '/api/set_network_enabled', {
     networkId: originalNetwork.id,

@@ -710,8 +710,7 @@ impl MobileTunnel {
     pub(crate) fn runtime_state_json(&self) -> Result<String> {
         let endpoint = self
             .endpoint
-            .as_ref()
-            .cloned()
+            .clone()
             .ok_or_else(|| anyhow!("mobile tunnel stopped"))?;
         let mesh = Arc::clone(&self.mesh);
         let config = self
@@ -1082,8 +1081,7 @@ fn mobile_runtime_state(
                 endpoint: String::new(),
                 runtime_endpoint: link.and_then(|peer| peer.transport_addr.clone()),
                 fips_endpoint_npub: link
-                    .map(|peer| peer.npub.clone())
-                    .unwrap_or_else(|| status.endpoint_npub.clone()),
+                    .map_or_else(|| status.endpoint_npub.clone(), |peer| peer.npub.clone()),
                 fips_transport_addr: link
                     .and_then(|peer| peer.transport_addr.clone())
                     .unwrap_or_default(),

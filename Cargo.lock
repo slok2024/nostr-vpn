@@ -2619,6 +2619,7 @@ dependencies = [
  "clap",
  "dirs",
  "nostr-sdk 0.35.0",
+ "nostr-vpn-app-core",
  "nostr-vpn-core",
  "qrcode",
  "serde",
