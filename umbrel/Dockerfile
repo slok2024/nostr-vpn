@@ -1,10 +1,13 @@
+# syntax=docker/dockerfile:1.7
+
 FROM node:24-bookworm AS web-builder
 WORKDIR /work/web/control-panel
 
 COPY web/control-panel/package.json web/control-panel/pnpm-lock.yaml ./
-RUN corepack enable \
+RUN --mount=type=cache,id=nostr-vpn-umbrel-pnpm-store,target=/pnpm/store \
+    corepack enable \
     && corepack prepare pnpm@10.28.2 --activate \
-    && pnpm install --frozen-lockfile
+    && pnpm install --frozen-lockfile --store-dir /pnpm/store
 
 COPY web/control-panel ./
 RUN pnpm run build
@@ -23,7 +26,13 @@ RUN apt-get update \
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
-RUN cargo build --release -p nvpn -p nostr-vpn-web
+RUN --mount=type=cache,id=nostr-vpn-umbrel-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=nostr-vpn-umbrel-cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=nostr-vpn-umbrel-cargo-target,target=/work/target \
+    cargo build --release -p nvpn -p nostr-vpn-web \
+    && mkdir -p /out \
+    && cp /work/target/release/nvpn /out/nvpn \
+    && cp /work/target/release/nostr-vpn-web /out/nvpn-web
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
@@ -37,8 +46,8 @@ RUN apt-get update \
       wireguard-tools \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=rust-builder /work/target/release/nvpn /usr/local/bin/nvpn
-COPY --from=rust-builder /work/target/release/nostr-vpn-web /usr/local/bin/nvpn-web
+COPY --from=rust-builder /out/nvpn /usr/local/bin/nvpn
+COPY --from=rust-builder /out/nvpn-web /usr/local/bin/nvpn-web
 COPY --from=web-builder /work/web/control-panel/dist /usr/share/nostr-vpn/web
 
 ENV HOME=/data/home \

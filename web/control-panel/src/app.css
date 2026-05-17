@@ -575,6 +575,10 @@ code {
   align-items: flex-start;
 }
 
+.device-detail-back {
+  display: none;
+}
+
 .detail-status {
   display: flex;
   align-items: center;
@@ -925,6 +929,18 @@ textarea:focus {
 @media (max-width: 1040px) {
   .devices-layout {
     grid-template-columns: 1fr;
+  }
+
+  .devices-layout:not(.showing-detail) .device-detail-column,
+  .devices-layout.showing-detail .device-list-column {
+    display: none;
+  }
+
+  .device-detail-back {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    justify-self: start;
   }
 
   .device-list-column {

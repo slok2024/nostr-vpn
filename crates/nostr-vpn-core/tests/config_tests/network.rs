@@ -37,6 +37,12 @@ fn default_node_name_from_hostname_ignores_localhost_placeholders() {
 }
 
 #[test]
+fn default_node_name_from_hostname_ignores_container_hex_names() {
+    assert_eq!(default_node_name_from_hostname("2ce2e39b4cf9"), None);
+    assert_eq!(default_node_name_from_hostname("2ce2e39b4cf9.local"), None);
+}
+
+#[test]
 fn default_node_name_resolution_prefers_hostname_over_petname() {
     let keys = Keys::generate();
     let own_hex = keys.public_key().to_hex();
@@ -70,6 +76,25 @@ fn legacy_default_node_name_migrates_to_non_generic_default() {
 
     assert!(!config.node_name.trim().is_empty());
     assert_ne!(config.node_name, "nostr-vpn-node");
+}
+
+#[test]
+fn legacy_hex_default_node_name_migrates_to_non_hex_default() {
+    let keys = Keys::generate();
+    let mut config = AppConfig::generated();
+    config.nostr.secret_key = keys.secret_key().to_secret_hex();
+    config.nostr.public_key = keys.public_key().to_hex();
+    config.node_name = "b637a4dc34b5".to_string();
+
+    config.ensure_defaults();
+
+    assert!(!config.node_name.trim().is_empty());
+    assert_ne!(config.node_name, "b637a4dc34b5");
+    assert!(
+        !(config.node_name.len() >= 12
+            && config.node_name.chars().all(|ch| ch.is_ascii_hexdigit())),
+        "node name should not remain a generated hex label"
+    );
 }
 
 #[test]

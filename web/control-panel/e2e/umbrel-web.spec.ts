@@ -2,8 +2,11 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 
 type ParticipantView = {
   npub: string;
+  pubkeyHex: string;
+  alias: string;
   isAdmin: boolean;
   magicDnsAlias: string;
+  magicDnsName: string;
 };
 
 type NetworkView = {
@@ -80,7 +83,7 @@ test('bundled UI loads, navigates, renders QR, and stays responsive', async ({ p
     await expect(page.locator('.devices-layout')).toBeVisible();
     await expect(page.locator('.device-list-column')).toBeVisible();
     await expect(page.locator('.device-detail-column')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Devices' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Back to Devices' })).toBeHidden();
     await expect(page.getByRole('button', { name: 'Add Network' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Add Device' })).toBeVisible();
     await expect(page.locator('.vpn-switch')).toBeVisible();
@@ -108,6 +111,19 @@ test('bundled UI loads, navigates, renders QR, and stays responsive', async ({ p
     await page.goto('/');
     await expect(page.locator('.app-header')).toBeVisible();
     await expect(page.locator('.devices-layout')).toBeVisible();
+    await expect(page.locator('.device-detail-column')).toBeHidden();
+    const deviceRows = page.locator('.device-list-row');
+    await expect(deviceRows).not.toHaveCount(0);
+    await deviceRows.first().click();
+    await expect(page.locator('.device-list-column')).toBeHidden();
+    await expect(page.locator('.device-detail-column')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Back to Devices' })).toBeVisible();
+    await expect(page.locator('.device-detail-column .detail-header h2')).not.toHaveText(
+      /^[0-9a-f]{12,64}(\.nvpn)?$/,
+    );
+    await page.getByRole('button', { name: 'Back to Devices' }).click();
+    await expect(page.locator('.device-list-column')).toBeVisible();
+    await expect(page.locator('.device-detail-column')).toBeHidden();
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - window.innerWidth,
     );

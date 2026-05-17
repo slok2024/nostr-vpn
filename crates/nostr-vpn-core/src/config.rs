@@ -1691,10 +1691,15 @@ impl AppConfig {
 
     pub fn self_magic_dns_label(&self) -> Option<String> {
         let preferred = self.preferred_self_magic_dns_label()?;
+        let own_npub = self
+            .own_nostr_pubkey_hex()
+            .ok()
+            .map(|pubkey_hex| npub_for_pubkey_hex(&pubkey_hex));
         let mut used_aliases = self
             .peer_aliases
-            .values()
-            .cloned()
+            .iter()
+            .filter(|(participant, _)| Some(*participant) != own_npub.as_ref())
+            .map(|(_, alias)| alias.clone())
             .collect::<HashSet<String>>();
         Some(uniquify_magic_dns_label(preferred, &mut used_aliases))
     }

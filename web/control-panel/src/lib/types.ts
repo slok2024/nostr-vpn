@@ -35,6 +35,7 @@ export type NetworkSummary = {
 export type ParticipantView = {
   npub: string;
   pubkeyHex: string;
+  alias: string;
   isAdmin: boolean;
   tunnelIp: string;
   magicDnsAlias: string;

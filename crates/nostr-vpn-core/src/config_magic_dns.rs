@@ -51,6 +51,7 @@ pub(crate) fn uses_default_node_name(value: &str, own_pubkey_hex: Option<&str>) 
     let trimmed = value.trim();
     trimmed.is_empty()
         || trimmed == LEGACY_DEFAULT_NODE_NAME
+        || looks_like_generated_hex_label(trimmed)
         || own_pubkey_hex
             .map(|pubkey_hex| trimmed == default_node_name_for_pubkey(pubkey_hex))
             .unwrap_or(false)
@@ -67,7 +68,7 @@ pub fn default_node_name_from_hostname(hostname: &str) -> Option<String> {
         .split('.')
         .find(|label| !label.trim().is_empty())?;
     let normalized = normalize_magic_dns_label(first_label)?;
-    if normalized == "localhost" {
+    if normalized == "localhost" || looks_like_generated_hex_label(&normalized) {
         return None;
     }
     Some(normalized)
@@ -85,6 +86,11 @@ pub fn default_node_name_for_hostname_or_pubkey(
 pub(crate) fn detected_hostname() -> Option<String> {
     let hostname = hostname::get().ok()?;
     Some(hostname.to_string_lossy().into_owned())
+}
+
+fn looks_like_generated_hex_label(value: &str) -> bool {
+    let trimmed = value.trim();
+    (12..=64).contains(&trimmed.len()) && trimmed.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 pub fn normalize_magic_dns_suffix(value: &str) -> String {

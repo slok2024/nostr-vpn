@@ -118,6 +118,26 @@ fn self_magic_dns_label_keeps_node_name_and_suffixes_colliding_peer_aliases() {
 }
 
 #[test]
+fn self_magic_dns_label_ignores_stale_own_peer_alias() {
+    let own = Keys::generate();
+    let own_hex = own.public_key().to_hex();
+    let own_npub = own.public_key().to_bech32().expect("own npub");
+    let device_name = "helios-admin".to_string();
+
+    let mut config = AppConfig::generated();
+    config.nostr.secret_key = own.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex;
+    config.node_name = device_name.clone();
+    config.peer_aliases.insert(own_npub, device_name.clone());
+    config.ensure_defaults();
+
+    assert_eq!(
+        config.self_magic_dns_label().as_deref(),
+        Some(device_name.as_str())
+    );
+}
+
+#[test]
 fn peer_aliases_use_npub_keys_in_serialized_config() {
     let own = Keys::generate();
     let peer = Keys::generate();

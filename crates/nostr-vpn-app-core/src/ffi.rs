@@ -1717,7 +1717,7 @@ impl NativeAppRuntime {
         });
         let is_local = participant == own_pubkey_hex;
         let reachable = vpn_active && (is_local || daemon_peer.is_some_and(|peer| peer.reachable));
-        let access_pending = self.network_access_pending(network, own_pubkey_hex) && !is_local;
+        let access_pending = Self::network_access_pending(network, own_pubkey_hex) && !is_local;
         let magic_dns_alias = if is_local {
             self.config.self_magic_dns_label().unwrap_or_default()
         } else {
@@ -1804,7 +1804,7 @@ impl NativeAppRuntime {
         }
     }
 
-    fn network_access_pending(&self, network: &NetworkConfig, own_pubkey_hex: &str) -> bool {
+    fn network_access_pending(network: &NetworkConfig, own_pubkey_hex: &str) -> bool {
         if own_pubkey_hex.is_empty() || network.outbound_join_request.is_none() {
             return false;
         }

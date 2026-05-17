@@ -23,6 +23,7 @@
 
   let state: UiState | null = null;
   let tab: Tab = 'devices';
+  let devicePane: 'list' | 'detail' = 'list';
   let loading = true;
   let refreshing = false;
   let busyAction = '';
@@ -68,12 +69,16 @@
     }
     return (
       participantName(participant).toLowerCase().includes(query) ||
+      participant.alias.toLowerCase().includes(query) ||
       participant.npub.toLowerCase().includes(query) ||
       participant.tunnelIp.toLowerCase().includes(query) ||
-      participant.magicDnsName.toLowerCase().includes(query)
+      deviceMagicDnsName(participant).toLowerCase().includes(query)
     );
   });
   $: selectedParticipant = selectedParticipantFrom(visibleParticipants, selectedParticipantKey);
+  $: if (devicePane === 'detail' && !selectedParticipant) {
+    devicePane = 'list';
+  }
   $: exitCandidates = participants.filter((participant) => {
     const query = exitSearch.trim().toLowerCase();
     if (!query) {
@@ -81,6 +86,7 @@
     }
     return (
       participantName(participant).toLowerCase().includes(query) ||
+      participant.alias.toLowerCase().includes(query) ||
       participant.npub.toLowerCase().includes(query) ||
       participant.tunnelIp.toLowerCase().includes(query)
     );
@@ -260,10 +266,71 @@
   }
 
   function participantName(participant: ParticipantView): string {
-    return nonEmpty(
-      participant.magicDnsAlias || participant.magicDnsName,
-      shortMiddle(participant.npub, 22),
-    );
+    if (isSelf(participant)) {
+      const selfName = displayNameValue(state?.nodeName);
+      if (selfName) {
+        return selfName;
+      }
+    }
+    for (const value of [
+      participant.magicDnsName,
+      participant.alias,
+      participant.magicDnsAlias,
+    ]) {
+      const display = displayNameValue(value);
+      if (display) {
+        return display;
+      }
+    }
+    return generatedDeviceName(participant);
+  }
+
+  function displayNameValue(value: string | null | undefined): string {
+    const trimmed = value?.trim() ?? '';
+    if (!trimmed || isGeneratedHexName(trimmed)) {
+      return '';
+    }
+    return trimmed;
+  }
+
+  function isGeneratedHexName(value: string): boolean {
+    const label = value.trim().toLowerCase().split('.')[0] ?? '';
+    return /^[0-9a-f]{12,64}$/.test(label);
+  }
+
+  function generatedDeviceName(participant: ParticipantView): string {
+    const source = participant.pubkeyHex || participant.npub || 'device';
+    let hash = 2166136261;
+    for (let index = 0; index < source.length; index += 1) {
+      hash = Math.imul(hash ^ source.charCodeAt(index), 16777619) >>> 0;
+    }
+    return `Device ${String(hash % 10000).padStart(4, '0')}`;
+  }
+
+  function deviceMagicDnsName(participant: ParticipantView): string {
+    const direct = displayNameValue(participant.magicDnsName);
+    if (direct) {
+      return direct;
+    }
+    if (isSelf(participant)) {
+      const selfName = displayNameValue(state?.selfMagicDnsName);
+      if (selfName) {
+        return selfName;
+      }
+    }
+    const alias = displayNameValue(participant.magicDnsAlias);
+    if (alias && state?.magicDnsSuffix) {
+      return `${alias}.${state.magicDnsSuffix}`;
+    }
+    return '';
+  }
+
+  function selectedExitName(): string {
+    if (!state?.exitNode) {
+      return 'Direct';
+    }
+    const participant = participants.find((candidate) => candidate.npub === state?.exitNode);
+    return participant ? participantName(participant) : 'Exit node';
   }
 
   function participantKey(participant: ParticipantView): string {
@@ -286,6 +353,15 @@
     return selectedParticipant
       ? participantKey(selectedParticipant) === participantKey(participant)
       : false;
+  }
+
+  function openParticipant(participant: ParticipantView) {
+    selectedParticipantKey = participantKey(participant);
+    devicePane = 'detail';
+  }
+
+  function showDeviceList() {
+    devicePane = 'list';
   }
 
   function deviceRoleText(participant: ParticipantView): string {
@@ -893,7 +969,10 @@
       {/if}
 
       {#if tab === 'devices'}
-        <section class="devices-layout">
+        <section
+          class="devices-layout"
+          class:showing-detail={devicePane === 'detail' && Boolean(selectedParticipant)}
+        >
           <div class="device-list-column">
             <div class="list-header">
               <div>
@@ -933,7 +1012,7 @@
                     type="button"
                     class="device-list-row"
                     class:active={participantSelected(participant)}
-                    on:click={() => (selectedParticipantKey = participantKey(participant))}
+                    on:click={() => openParticipant(participant)}
                   >
                     <span class="status-dot {participantTone(participant)}"></span>
                     <span class="device-list-main">
@@ -998,6 +1077,14 @@
             {:else if selectedParticipant}
               <div class="detail-stack">
                 <header class="detail-header">
+                  <button
+                    type="button"
+                    class="small-button device-detail-back"
+                    aria-label="Back to Devices"
+                    on:click={showDeviceList}
+                  >
+                    Back
+                  </button>
                   <div>
                     <h2>{participantName(selectedParticipant)}</h2>
                     <div class="badge-row">
@@ -1065,7 +1152,7 @@
                   <div class="detail-list">
                     <div>
                       <span>MagicDNS</span>
-                      <strong>{nonEmpty(selectedParticipant.magicDnsName)}</strong>
+                      <strong>{nonEmpty(deviceMagicDnsName(selectedParticipant))}</strong>
                     </div>
                     <div>
                       <span>VPN IP</span>
@@ -1073,8 +1160,8 @@
                     </div>
                     <div class="detail-copy-row">
                       <div>
-                        <span>Device ID</span>
-                        <strong>{shortMiddle(selectedParticipant.npub, 36)}</strong>
+                        <span>Device</span>
+                        <strong>{participantName(selectedParticipant)}</strong>
                       </div>
                       <button
                         type="button"
@@ -1235,7 +1322,7 @@
               </div>
               <div>
                 <span>Selected</span>
-                <strong>{state.exitNode ? shortMiddle(state.exitNode, 22) : 'Direct'}</strong>
+                <strong>{selectedExitName()}</strong>
               </div>
             </div>
           </div>
