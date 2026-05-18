@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		3835C93F8EE9E893E9E7D177 /* preview-state.json in Resources */ = {isa = PBXBuildFile; fileRef = E4B7E42E9F2147628CB8D05C /* preview-state.json */; };
 		4D7D864A20FB82CA270FF92B /* NostrVpnAppCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDD28FC1F1336837C61955C1 /* NostrVpnAppCore.swift */; };
 		55C3E09CEE0D29423EA8D4EF /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CC8FC9828A2278F1616EE497 /* Security.framework */; };
 		5A0C2B850E75C11412CE8833 /* AppManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93B8ACCA4B0D1E131227B6DB /* AppManager.swift */; };
@@ -39,7 +38,6 @@
 		CC8FC9828A2278F1616EE497 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		D52F97412C0CE07E04C2D8E1 /* NostrVpnMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NostrVpnMacApp.swift; sourceTree = "<group>"; };
 		DDD28FC1F1336837C61955C1 /* NostrVpnAppCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NostrVpnAppCore.swift; sourceTree = "<group>"; };
-		E4B7E42E9F2147628CB8D05C /* preview-state.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "preview-state.json"; sourceTree = "<group>"; };
 		E52A10F7ADC2CC102F340C60 /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = System/Library/Frameworks/SystemConfiguration.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -72,7 +70,6 @@
 			children = (
 				3F1160699FA7E0B240102124 /* .gitkeep */,
 				BA47FE871505F802D17559E0 /* Assets.xcassets */,
-				E4B7E42E9F2147628CB8D05C /* preview-state.json */,
 				7146197DC6C512E001F65D5C /* binaries */,
 			);
 			path = Resources;
@@ -190,7 +187,6 @@
 				D8298A41C095805F2410F1E2 /* .gitkeep in Resources */,
 				624F086A52A779B1A0A0FEC0 /* Assets.xcassets in Resources */,
 				B38E814AD929D2F36F027727 /* nvpn in Resources */,
-				3835C93F8EE9E893E9E7D177 /* preview-state.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

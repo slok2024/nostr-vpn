@@ -183,7 +183,7 @@ Status legend:
 | Responsive/adaptive layout | Svelte CSS | Ready | Native split-view desktop layout builds and was checked with an app-window screenshot at 1100x760. | Add compact-window and accessibility passes. |
 | Copy feedback | `copiedValue` timeout | Ready | Clipboard writes show transient checkmark feedback for identity, mesh, invite, and peer npub copy buttons. | None. |
 | Collapsible panels | `<details>` state | Ready | Native saved networks, diagnostics, and system sections use disclosure groups; diagnostics opens when health issues increase. | Persist expanded state if users want it. |
-| Mock/demo fixtures | `mock-backend.ts` | Ready | `macos/Resources/preview-state.json` provides a native state snapshot for previews and screenshot tests without the old mock backend. | None. |
+| Mock/demo fixtures | `mock-backend.ts` | Ready | macOS launches with a built-in native state snapshot when `--nvpn-fixture-mode` or `NVPN_MACOS_FIXTURE_MODE=1` is set, for previews and screenshot tests without the old mock backend. | None. |
 | Public relay fallback UI | Removed relay fallback/public services code | Removed | Removed upstream in `origin/master`; native shell also omits those fields and controls. | No parity work unless product reintroduces a public-service feature. |
 
 ## Windows App Parity Status

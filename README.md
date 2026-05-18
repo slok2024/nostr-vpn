@@ -1,10 +1,11 @@
 # nostr-vpn
 
-> Main development is on [decentralized git](https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-vpn): `htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-vpn`
+> Canonical repository: [git.iris.to](https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-vpn) (`htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-vpn`). GitHub is a [mirror](https://github.com/mmalmi/nostr-vpn).
 
 ## Downloads
 
-- [Latest release](https://github.com/mmalmi/nostr-vpn/releases/latest)
+- [Latest releases on git.iris.to](https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-vpn?tab=releases)
+- [GitHub mirror releases](https://github.com/mmalmi/nostr-vpn/releases/latest)
 
 Current release artifacts:
 
@@ -18,16 +19,14 @@ the TestFlight link exists, but public beta access is still pending.
 
 ## Overview
 
-`nostr-vpn` is a Rust workspace for a Tailscale-style private mesh VPN built around a FIPS-backed data plane. It includes the `nvpn` CLI/daemon, a shared native app core, and native platform shells.
+`nostr-vpn` is a Rust workspace for a Tailscale-style private mesh VPN built around a [FIPS]-backed data plane. It includes the `nvpn` CLI/daemon, a shared native app core, and native platform shells.
 
-Current benchmarks put the FIPS data plane in WireGuard-level territory on
-Linux and macOS: Linux Docker runs reach roughly 2.8-3.0 Gbit/s TCP and
-1 Gbit/s UDP, and macOS LAN runs now match or beat Tailscale in tested
-directions while the remaining known gap is a Darwin Wi-Fi sender cap. See
+Current benchmarks put the [FIPS] data plane around userspace WireGuard-level
+throughput, with platform- and topology-specific variance. See
 [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) for the raw bench notes.
 
 <p align="center">
-  <img src="docs/images/desktop-gui-overview.png" alt="Nostr VPN desktop app showing a connected network, device identity, status badges, and join controls." width="900">
+  <img src="docs/images/desktop-gui-overview.png" alt="Nostr VPN desktop app showing a connected Home Mesh network, device status badges, and join request controls." width="900">
 </p>
 
 It currently ships:
@@ -35,7 +34,7 @@ It currently ships:
 | Component | Purpose |
 | --- | --- |
 | `nvpn` | Main CLI for config, daemon lifecycle, networking, diagnostics, and tunnel sessions |
-| `nostr-vpn-core` | Shared library for config, FIPS control state, NAT helpers, diagnostics, and MagicDNS |
+| `nostr-vpn-core` | Shared library for config, [FIPS] control state, NAT helpers, diagnostics, and MagicDNS |
 | `nostr-vpn-app-core` | Native app state/action contract and UniFFI bridge used by the Rust-core/native-front rewrite |
 | `macos` | SwiftUI/AppKit native shell over `nostr-vpn-app-core` |
 | `linux` | GTK/libadwaita native shell over the shared app core |
@@ -84,9 +83,9 @@ On Windows, run `nvpn service install` from an elevated shell instead of using
 
 ## Protocol
 
-For the current protocol-level description of invites, admin roster sync, and the FIPS mesh data plane, see [docs/protocol.md](docs/protocol.md).
+For the current protocol-level description of invites, admin roster sync, and the [FIPS] mesh data plane, see [docs/protocol.md](docs/protocol.md).
 
-Private mesh traffic defaults to [FIPS](https://github.com/mmalmi/fips). `nvpn` uses the configured VPN participants as the overlay route map, but FIPS connectivity is a separate underlay: FIPS peers can be found through Nostr discovery or supplied as configured `fips_peer_endpoints`, and those FIPS peers may relay packets even when they are not members of the same VPN. Direct UDP/NAT failure can fall back through established FIPS neighbors, while `nvpn` still only admits private traffic for the active network roster.
+Private mesh traffic defaults to [FIPS]. `nvpn` uses the configured VPN participants as the overlay route map, but [FIPS] connectivity is a separate underlay: [FIPS] peers can be found through Nostr discovery or supplied as configured `fips_peer_endpoints`, and those [FIPS] peers may relay packets even when they are not members of the same VPN. Direct UDP/NAT failure can fall back through established [FIPS] neighbors, while `nvpn` still only admits private traffic for the active network roster.
 
 ## Platform status
 
@@ -103,15 +102,15 @@ Private mesh traffic defaults to [FIPS](https://github.com/mmalmi/fips). `nvpn` 
 
 - Generates Nostr identity keys automatically
 - Stores a single app config with one or more named networks, each with participant allowlists and its own stable mesh ID
-- Brings up FIPS private mesh tunnels for private network traffic
-- Routes private FIPS traffic directly when possible and through FIPS neighbors when direct discovery fails
-- Tracks FIPS peer/link state and NAT-discovered public endpoints
+- Brings up [FIPS] private mesh tunnels for private network traffic
+- Routes private [FIPS] traffic directly when possible and through [FIPS] neighbors when direct discovery fails
+- Tracks [FIPS] peer/link state and NAT-discovered public endpoints
 - Supports route advertisement and exit-node selection
 - Supports WireGuard upstream configs for local egress and exit-node providers on Linux, macOS, and Windows
 - Exposes JSON status, network diagnostics, and doctor bundles
 - Includes native macOS and Linux GUIs with service-first session control, invite QR/import flows, tray/menu-bar integration, MagicDNS controls, health reporting, and port-mapping status
 - Includes a native Windows WPF shell with tray integration, installer packaging, and the same shared app-core action/state contract
-- Includes LAN invite broadcast/discovery, CLI self-update, desktop updater e2e coverage, and Linux-focused Docker e2e coverage for FIPS mesh formation, NAT traversal, routed UDP, safe MTU, and WireGuard upstream egress
+- Includes LAN invite broadcast/discovery, CLI self-update, desktop updater e2e coverage, and Linux-focused Docker e2e coverage for [FIPS] mesh formation, NAT traversal, routed UDP, safe MTU, and WireGuard upstream egress
 
 ## Config model
 
@@ -126,7 +125,7 @@ By default, `nvpn` uses the OS config directory:
 The config contains:
 
 - global app settings such as autoconnect, tray behavior, and MagicDNS suffix
-- Nostr settings used by FIPS discovery, including relay URLs and identity keys
+- Nostr settings used by [FIPS] discovery, including relay URLs and identity keys
 - NAT settings including STUN servers and discovery timeout
 - node settings including endpoint, tunnel IP, listen port, and advertised routes
 - a `[[networks]]` list of named participant sets with one active network at a time
@@ -156,7 +155,7 @@ Additional automation:
 - `.github/workflows/windows-smoke.yml` can manually build the Windows CLI on `windows-latest`
 - `.github/workflows/release.yml` publishes CLI archives plus native macOS, Linux, Windows, and Android app artifacts when signing/package credentials are configured
 - `scripts/local-release.mjs` builds local release artifacts and stages a hashtree-style release directory that can be published to `releases/nostr-vpn`
-- `just release-gate` also runs version sync, CLI update e2e, routed-FIPS Docker e2e, and safe-MTU Docker e2e
+- `just release-gate` also runs version sync, CLI update e2e, routed-[FIPS] Docker e2e, and safe-MTU Docker e2e
 
 ### Local release
 
@@ -226,7 +225,7 @@ curl -fsSL "https://github.com/mmalmi/nostr-vpn/releases/latest/download/${ASSET
 
 That command supports Apple Silicon macOS and Linux. On Intel macOS it exits with a clear message. The installer creates the target directory when needed and defaults to `/opt/homebrew/bin` on Apple Silicon macOS when that location exists or is already in `PATH`; otherwise it uses `/usr/local/bin`.
 
-The quick-install line still points at GitHub until a verified `releases/nostr-vpn/latest` tree is published on hashtree. `htree release publish` already maintains the `latest` alias automatically; the missing step is publishing the release tree and verifying the public `upload.iris.to/<npub>/releases/nostr-vpn/latest/...` paths.
+The quick-install line currently downloads from the GitHub mirror until a verified `releases/nostr-vpn/latest` tree is published on hashtree. `htree release publish` already maintains the `latest` alias automatically; the missing step is publishing the release tree and verifying the public `upload.iris.to/<npub>/releases/nostr-vpn/latest/...` paths.
 
 On Windows, download the `nvpn-<version>-x86_64-pc-windows-msvc.zip` release asset and run `nvpn.exe`, or build from source.
 
@@ -340,7 +339,7 @@ If this device should also serve as a mesh exit node, enable both:
 nvpn set --advertise-exit-node true --wireguard-exit-enabled true
 ```
 
-Members still see this as the same FIPS exit node; the provider's own default
+Members still see this as the same [FIPS] exit node; the provider's own default
 internet route and forwarded member exit traffic both use the WireGuard
 upstream.
 
@@ -407,17 +406,17 @@ just security-regressions
 Docker e2e scripts under [`scripts/`](scripts):
 
 - `./scripts/e2e-docker.sh`
-  Verifies static FIPS peer configuration, mesh formation, and tunnel ping.
+  Verifies static [FIPS] peer configuration, mesh formation, and tunnel ping.
 - `./scripts/e2e-connect-docker.sh`
-  Verifies config-driven `nvpn connect`, FIPS mesh formation, and tunnel ping.
+  Verifies config-driven `nvpn connect`, [FIPS] mesh formation, and tunnel ping.
 - `./scripts/e2e-active-network-docker.sh`
   Verifies that inactive saved networks do not change the active mesh identity, expected peer count, or auto-derived tunnel IP.
 - `./scripts/e2e-divergent-roster-docker.sh`
   Verifies that peers with a shared mesh ID can still connect when one node has extra configured participants.
 - `./scripts/e2e-fips-routed-udp-docker.sh`
-  Verifies that peers can move tunnel payloads through a FIPS neighbor when their direct UDP path is blocked.
+  Verifies that peers can move tunnel payloads through a [FIPS] neighbor when their direct UDP path is blocked.
 - `./scripts/e2e-fips-nat-safe-mtu-docker.sh`
-  Verifies safe-MTU traffic across a NAT-shaped FIPS mesh path.
+  Verifies safe-MTU traffic across a NAT-shaped [FIPS] mesh path.
 - `./scripts/e2e-exit-node-docker.sh`
   Verifies exit-node advertisement, selection, tunnel traffic to the chosen exit node, and default-route traffic crossing the exit path to an external target. Set `NVPN_EXIT_NODE_E2E_PUBLIC_IP=9.9.9.9` (or another reachable public IP) to also prove a real internet hop routes through the tunnel.
 - `./scripts/e2e-wireguard-exit-docker.sh`
@@ -447,7 +446,7 @@ The update E2E scripts set `NVPN_UPDATE_MANIFEST_URL` to a local fixture and sup
 ## Workspace layout
 
 - [`Cargo.toml`](Cargo.toml): workspace definition
-- [`crates/nostr-vpn-core`](crates/nostr-vpn-core): shared config, FIPS control state, diagnostics, MagicDNS, and NAT helpers
+- [`crates/nostr-vpn-core`](crates/nostr-vpn-core): shared config, [FIPS] control state, diagnostics, MagicDNS, and NAT helpers
 - [`crates/nostr-vpn-cli`](crates/nostr-vpn-cli): `nvpn` CLI and daemon implementation
 - [`crates/nostr-vpn-app-core`](crates/nostr-vpn-app-core): native app state/action contract and UniFFI bridge
 - [`macos`](macos), [`linux`](linux), [`windows`](windows), [`android`](android), [`ios`](ios): native platform shells
@@ -458,9 +457,11 @@ The update E2E scripts set `NVPN_UPDATE_MANIFEST_URL` to a local fixture and sup
 Release workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)):
 
 - runs on pushed `v*` tags or manual dispatch
-- verifies sync-versions, formatting, clippy, Rust tests, CLI update e2e, routed-FIPS Docker e2e, and safe-MTU Docker e2e before publishing artifacts
+- verifies sync-versions, formatting, clippy, Rust tests, CLI update e2e, routed-[FIPS] Docker e2e, and safe-MTU Docker e2e before publishing artifacts
 - publishes CLI archives for Apple Silicon macOS, Windows x64, Linux x86_64, and Linux arm64
 - publishes Apple Silicon macOS as a signed/notarized DMG plus `.app.tar.gz` updater archive when signing is configured
 - publishes Linux x64 `.deb`, Windows x64 setup `.exe`, and signed Android arm64 APK/AAB artifacts
 - requires platform signing/package secrets before release app artifacts can publish
 - generates its GitHub release notes in the workflow; local `scripts/local-release.mjs` release notes include the matching `CHANGELOG.md` section for the tag
+
+[FIPS]: https://github.com/jmcorgan/fips

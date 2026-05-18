@@ -41,7 +41,8 @@ final class AppManager: ObservableObject {
     }
     @Published var inviteInput = ""
 
-    private let app: FfiApp
+    private let app: FfiApp?
+    private let fixtureMode: Bool
     private var refreshTask: Task<Void, Never>?
     private var copyClearTask: Task<Void, Never>?
     private var actionStatusClearTask: Task<Void, Never>?
@@ -70,6 +71,16 @@ final class AppManager: ObservableObject {
     }
 
     init() {
+        let fixtureMode = Self.fixtureModeRequested()
+        self.fixtureMode = fixtureMode
+        self.launchedHidden = CommandLine.arguments.contains("--hidden") && !fixtureMode
+        if fixtureMode {
+            self.app = nil
+            self.state = Self.screenshotFixtureState()
+            self.autoCheckUpdates = false
+            return
+        }
+
         let dataDir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first?
@@ -82,7 +93,6 @@ final class AppManager: ObservableObject {
         app.setPrivilegedCommandRunner(runner: AuthorizationServicesPrivilegedCommandRunner())
         self.app = app
         self.state = app.state()
-        self.launchedHidden = CommandLine.arguments.contains("--hidden")
     }
 
     var activeNetwork: NativeNetworkState? {
@@ -131,6 +141,9 @@ final class AppManager: ObservableObject {
 
     func start() {
         drainStartupUrls()
+        guard !fixtureMode else {
+            return
+        }
         startAutomaticUpdateChecks()
         guard refreshTask == nil else {
             return
@@ -153,7 +166,9 @@ final class AppManager: ObservableObject {
     }
 
     func refresh() {
-        let app = app
+        guard let app else {
+            return
+        }
         Task {
             let nextState = await Task.detached {
                 app.refresh()
@@ -174,10 +189,16 @@ final class AppManager: ObservableObject {
         guard !actionInFlight else {
             return
         }
+        guard let app else {
+            actionStatus = successStatus
+            if !successStatus.isEmpty {
+                clearActionStatus(after: 3)
+            }
+            return
+        }
         actionStatusClearTask?.cancel()
         actionInFlight = true
         actionStatus = status
-        let app = app
         Task {
             let nextState = await Task.detached {
                 app.dispatch(action: action)
@@ -519,6 +540,10 @@ final class AppManager: ObservableObject {
     }
 
     func checkForUpdates(manual: Bool = true) {
+        guard !fixtureMode else {
+            updateStatus = manual ? "Fixture mode" : ""
+            return
+        }
         guard !updateChecking else {
             return
         }
@@ -548,6 +573,9 @@ final class AppManager: ObservableObject {
     }
 
     private func startAutomaticUpdateChecks() {
+        guard !fixtureMode else {
+            return
+        }
         guard autoCheckUpdates else {
             stopAutomaticUpdateChecks()
             return
@@ -748,6 +776,9 @@ final class AppManager: ObservableObject {
                     return
                 }
                 let app = await MainActor.run { self.app }
+                guard let app else {
+                    return
+                }
                 let nextState = await Task.detached {
                     app.refresh()
                 }.value
@@ -790,6 +821,288 @@ final class AppManager: ObservableObject {
             && !state.serviceBinaryVersion.isEmpty
             && !state.expectedServiceBinaryVersion.isEmpty
             && state.serviceBinaryVersion != state.expectedServiceBinaryVersion
+    }
+
+    private static func fixtureModeRequested() -> Bool {
+        let arguments = Set(CommandLine.arguments)
+        if arguments.contains("--nvpn-fixture-mode") || arguments.contains("--nvpn-screenshot-fixture") {
+            return true
+        }
+        let raw = ProcessInfo.processInfo.environment["NVPN_MACOS_FIXTURE_MODE"] ?? ""
+        return ["1", "true", "yes", "on"].contains(raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+
+    private static func screenshotFixtureState() -> NativeAppState {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "4.0.31"
+        let selfNpub = "npub12mh8r6uetvj9fptwua9gtng0ycz8uvzn0vmxsaddk7vfegeu29ts3qngt3"
+        let macbookNpub = "npub1q0n4g9trrsyqezfgrsg6txtedmhgv0h5apur2a4yxgq4z0kgejmsjeclxl"
+        let iphoneNpub = "npub1tmhvkh3ktx7dw06fxntuzmvc9r20wxnrapzd056240s42jtpyzps645uyh"
+        let androidNpub = "npub1h988xqzvhu98t0n22ys7etjcg7ca33s78kda4mu5pfathz9xklmqxx6rg0"
+        let ubuntuNpub = "npub1dxlnwd78xjhec3hlzc8qwjuc98w47hv89khggu8yk0ynpkw4czxsuccs3u"
+        let joinNpub = "npub1xnvumr6snuvl7tcwll3kz9wny4fzjh9uwhmu4d6hc2hwuxrk6vqq8kukg4"
+        let nearbyNpub = "npub1saweqehm9a5gsn7xgcqjpmf2ungfj74wxawwvehn38s0mxtzx80qq8a5xa"
+        let selfHex = "56ee71eb995b2454856ee74a85cd0f26047e30537b366875adb7989ca33c5157"
+        let macbookHex = "03e75415631c080c89281c11a599796eee863ef4e8783576a43201513ec8ccb7"
+        let iphoneHex = "5eeecb5e3659bcd73f4934d7c16d9828d4f71a63e844d7d34aabe15549612083"
+        let androidHex = "b94e73004cbf0a75be6a5121ecae5847b1d8c61e3d9bdaef940a7abb88a6b7f6"
+        let ubuntuHex = "69bf3737c734af9c46ff160e074b9829dd5f5d872dae8470e4b3c930d9d5c08d"
+        let joinHex = "34d9cd8f509f19ff2f0effe36115d32552295cbc75f7cab757c2aeee1876d300"
+        let networkId = "demo-mesh"
+
+        let local = NativeParticipantState(
+            npub: selfNpub,
+            pubkeyHex: selfHex,
+            alias: "mini",
+            magicDnsAlias: "mini",
+            magicDnsName: "mini.nvpn",
+            tunnelIp: "10.44.195.20",
+            isAdmin: true,
+            reachable: true,
+            txBytes: 842_112,
+            rxBytes: 1_302_804,
+            advertisedRoutes: [],
+            offersExitNode: false,
+            fipsEndpointNpub: selfNpub,
+            fipsTransportAddr: "192.0.2.57:51820",
+            fipsTransportType: "udp",
+            fipsSrttMs: 0,
+            fipsPacketsSent: 0,
+            fipsPacketsRecv: 0,
+            fipsBytesSent: 0,
+            fipsBytesRecv: 0,
+            state: "local",
+            meshState: "local",
+            statusText: "local",
+            lastSeenText: "self"
+        )
+        let macbook = NativeParticipantState(
+            npub: macbookNpub,
+            pubkeyHex: macbookHex,
+            alias: "macbook",
+            magicDnsAlias: "macbook",
+            magicDnsName: "macbook.nvpn",
+            tunnelIp: "10.44.178.166",
+            isAdmin: false,
+            reachable: true,
+            txBytes: 290_144,
+            rxBytes: 211_776,
+            advertisedRoutes: [],
+            offersExitNode: false,
+            fipsEndpointNpub: macbookNpub,
+            fipsTransportAddr: "",
+            fipsTransportType: "mesh",
+            fipsSrttMs: 38,
+            fipsPacketsSent: 4_284,
+            fipsPacketsRecv: 4_103,
+            fipsBytesSent: 628_104,
+            fipsBytesRecv: 602_920,
+            state: "online",
+            meshState: "via mesh",
+            statusText: "via mesh, 38 ms",
+            lastSeenText: "now"
+        )
+        let iphone = NativeParticipantState(
+            npub: iphoneNpub,
+            pubkeyHex: iphoneHex,
+            alias: "iphone",
+            magicDnsAlias: "iphone",
+            magicDnsName: "iphone.nvpn",
+            tunnelIp: "10.44.181.12",
+            isAdmin: false,
+            reachable: true,
+            txBytes: 118_272,
+            rxBytes: 91_440,
+            advertisedRoutes: [],
+            offersExitNode: false,
+            fipsEndpointNpub: iphoneNpub,
+            fipsTransportAddr: "192.0.2.74:52283",
+            fipsTransportType: "udp",
+            fipsSrttMs: 9,
+            fipsPacketsSent: 2_016,
+            fipsPacketsRecv: 1_988,
+            fipsBytesSent: 244_992,
+            fipsBytesRecv: 239_872,
+            state: "online",
+            meshState: "direct",
+            statusText: "direct, 9 ms",
+            lastSeenText: "1s ago"
+        )
+        let android = NativeParticipantState(
+            npub: androidNpub,
+            pubkeyHex: androidHex,
+            alias: "android",
+            magicDnsAlias: "android",
+            magicDnsName: "android.nvpn",
+            tunnelIp: "10.44.191.30",
+            isAdmin: false,
+            reachable: true,
+            txBytes: 76_112,
+            rxBytes: 64_928,
+            advertisedRoutes: [],
+            offersExitNode: false,
+            fipsEndpointNpub: androidNpub,
+            fipsTransportAddr: "192.0.2.92:47120",
+            fipsTransportType: "udp",
+            fipsSrttMs: 18,
+            fipsPacketsSent: 1_104,
+            fipsPacketsRecv: 1_079,
+            fipsBytesSent: 130_288,
+            fipsBytesRecv: 127_416,
+            state: "online",
+            meshState: "direct",
+            statusText: "direct, 18 ms",
+            lastSeenText: "2s ago"
+        )
+        let ubuntu = NativeParticipantState(
+            npub: ubuntuNpub,
+            pubkeyHex: ubuntuHex,
+            alias: "ubuntu",
+            magicDnsAlias: "ubuntu",
+            magicDnsName: "ubuntu.nvpn",
+            tunnelIp: "10.44.202.44",
+            isAdmin: false,
+            reachable: true,
+            txBytes: 5_820_192,
+            rxBytes: 4_911_240,
+            advertisedRoutes: ["10.88.0.0/16"],
+            offersExitNode: true,
+            fipsEndpointNpub: ubuntuNpub,
+            fipsTransportAddr: "203.0.113.44:51820",
+            fipsTransportType: "udp",
+            fipsSrttMs: 22,
+            fipsPacketsSent: 18_244,
+            fipsPacketsRecv: 18_031,
+            fipsBytesSent: 8_100_904,
+            fipsBytesRecv: 7_900_512,
+            state: "online",
+            meshState: "direct",
+            statusText: "direct, 22 ms",
+            lastSeenText: "3s ago"
+        )
+        let joinRequest = NativeInboundJoinRequestState(
+            requesterNpub: joinNpub,
+            requesterPubkeyHex: joinHex,
+            requesterNodeName: "ipad",
+            requestedAtText: "2m ago"
+        )
+        let network = NativeNetworkState(
+            id: "demo",
+            name: "Home Mesh",
+            enabled: true,
+            networkId: networkId,
+            localIsAdmin: true,
+            joinRequestsEnabled: true,
+            inviteInviterNpub: "",
+            adminNpubs: [selfNpub],
+            outboundJoinRequest: nil,
+            inboundJoinRequests: [joinRequest],
+            onlineCount: 5,
+            expectedCount: 5,
+            admins: [selfNpub],
+            participants: [local, macbook, iphone, android, ubuntu]
+        )
+
+        return NativeAppState(
+            rev: 1,
+            platform: "macos",
+            mobile: false,
+            vpnControlSupported: true,
+            cliInstallSupported: true,
+            startupSettingsSupported: true,
+            trayBehaviorSupported: true,
+            runtimeStatusDetail: "Screenshot fixture",
+            appVersion: version,
+            configPath: "/Users/demo/Library/Application Support/nvpn/config.toml",
+            error: "",
+            cliInstalled: true,
+            serviceSupported: true,
+            serviceEnablementSupported: true,
+            serviceInstalled: true,
+            serviceDisabled: false,
+            serviceRunning: true,
+            serviceStatusDetail: "Background service running (nvpn), pid 4242",
+            daemonRunning: true,
+            vpnEnabled: true,
+            vpnActive: true,
+            vpnStatus: "Connected",
+            daemonBinaryVersion: version,
+            serviceBinaryVersion: version,
+            expectedServiceBinaryVersion: version,
+            ownNpub: selfNpub,
+            ownPubkeyHex: selfHex,
+            nodeId: "mini",
+            nodeName: "mini",
+            selfMagicDnsName: "mini.nvpn",
+            endpoint: "203.0.113.8:51820",
+            tunnelIp: "10.44.195.20",
+            listenPort: 51820,
+            networkId: networkId,
+            activeNetworkInvite: "nvpn://invite/demo-mesh",
+            exitNode: "",
+            exitNodeLeakProtection: true,
+            exitNodeActive: false,
+            exitNodeBlocked: false,
+            exitNodeStatusText: "",
+            advertiseExitNode: false,
+            advertisedRoutes: [],
+            effectiveAdvertisedRoutes: [],
+            wireguardExitEnabled: false,
+            wireguardExitConfigured: true,
+            wireguardExitInterface: "utun-demo",
+            wireguardExitAddress: "10.8.0.2/32",
+            wireguardExitPrivateKey: "demo-private-key",
+            wireguardExitPeerPublicKey: "demo-peer-key",
+            wireguardExitPeerPresharedKey: "",
+            wireguardExitEndpoint: "demo-wireguard.invalid:51820",
+            wireguardExitAllowedIps: "0.0.0.0/0",
+            wireguardExitDns: "1.1.1.1",
+            wireguardExitMtu: 1280,
+            wireguardExitPersistentKeepaliveSecs: 25,
+            wireguardExitConfig: "",
+            magicDnsSuffix: "nvpn",
+            magicDnsStatus: "Serving .nvpn names",
+            autoconnect: true,
+            inviteBroadcastActive: true,
+            inviteBroadcastRemainingSecs: 417,
+            nearbyDiscoveryActive: true,
+            nearbyDiscoveryRemainingSecs: 417,
+            launchOnStartup: true,
+            closeToTrayOnClose: true,
+            connectedPeerCount: 4,
+            expectedPeerCount: 4,
+            meshReady: true,
+            health: [],
+            network: NativeNetworkSummary(
+                defaultInterface: "en0",
+                primaryIpv4: "192.0.2.57",
+                primaryIpv6: "",
+                gatewayIpv4: "192.0.2.1",
+                gatewayIpv6: "",
+                changedAt: 0,
+                captivePortal: "false"
+            ),
+            portMapping: NativePortMappingStatus(
+                upnp: NativeProbeStatus(state: "ok", detail: "mapped"),
+                natPmp: NativeProbeStatus(state: "unknown", detail: ""),
+                pcp: NativeProbeStatus(state: "unknown", detail: ""),
+                activeProtocol: "upnp",
+                externalEndpoint: "203.0.113.8:51820",
+                gateway: "192.0.2.1",
+                goodUntil: 0
+            ),
+            networks: [network],
+            lanPeers: [
+                NativeLanPeerState(
+                    npub: nearbyNpub,
+                    nodeName: "nearby-macbook",
+                    endpoint: "192.0.2.44:51820",
+                    networkName: "Nearby Mesh",
+                    networkId: "nearby-mesh",
+                    invite: "nvpn://invite/nearby-mesh",
+                    lastSeenText: "3s ago"
+                )
+            ]
+        )
     }
 }
 
