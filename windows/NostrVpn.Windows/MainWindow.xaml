@@ -586,10 +586,14 @@
             <Border Style="{StaticResource Card}">
               <StackPanel>
                 <TextBlock Text="Relays" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
+                <DockPanel LastChildFill="True" Margin="0,0,0,10">
+                  <Button DockPanel.Dock="Right" Content="Add" Command="{Binding AddRelayCommand}" Margin="8,0,0,0" />
+                  <TextBox Text="{Binding RelayInput, UpdateSourceTrigger=PropertyChanged}" />
+                </DockPanel>
                 <ItemsControl ItemsSource="{Binding State.Relays}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                      <DockPanel Margin="0,0,0,6">
+                      <DockPanel Margin="0,0,0,6" LastChildFill="True">
                         <Ellipse DockPanel.Dock="Left" Width="9" Height="9" Margin="0,5,8,0">
                           <Ellipse.Style>
                             <Style TargetType="Ellipse">
@@ -602,16 +606,13 @@
                             </Style>
                           </Ellipse.Style>
                         </Ellipse>
+                        <Button DockPanel.Dock="Right" Content="Delete" Tag="{Binding}" Click="RemoveRelay_Click" Margin="8,0,0,0" />
+                        <CheckBox DockPanel.Dock="Right" IsChecked="{Binding Enabled, Mode=OneWay}" Tag="{Binding}" Click="RelayEnabled_Click" VerticalAlignment="Center" />
                         <TextBlock Text="{Binding Url}" TextTrimming="CharacterEllipsis" />
                       </DockPanel>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <TextBox Text="{Binding RelaysDraft, UpdateSourceTrigger=PropertyChanged}"
-                         AcceptsReturn="True"
-                         MinHeight="70"
-                         VerticalScrollBarVisibility="Auto" />
-                <Button Content="Save" Command="{Binding SaveRelaysCommand}" HorizontalAlignment="Left" Margin="0,8,0,0" />
               </StackPanel>
             </Border>
 

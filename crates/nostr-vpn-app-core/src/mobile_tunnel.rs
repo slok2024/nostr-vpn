@@ -1359,6 +1359,7 @@ fn mobile_runtime_state(
             .map(|relay| crate::state::RelayView {
                 url: relay.url,
                 status: relay.status,
+                enabled: true,
             })
             .collect(),
         peers,

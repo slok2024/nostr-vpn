@@ -9,7 +9,7 @@ struct RootView: View {
     @State private var endpoint = ""
     @State private var tunnelIp = ""
     @State private var listenPort = ""
-    @State private var relaysDraft = ""
+    @State private var relayInput = ""
     @State private var magicDnsSuffix = ""
     @State private var wireguardExitConfig = ""
     @State private var networkNameInput = ""
@@ -36,7 +36,6 @@ struct RootView: View {
     @State private var lastSyncedEndpoint = ""
     @State private var lastSyncedTunnelIp = ""
     @State private var lastSyncedListenPort: UInt32 = 0
-    @State private var lastSyncedRelays = ""
     @State private var lastSyncedMagicDnsSuffix = ""
     @State private var lastSyncedWireguardExitConfig: String? = nil
     @State private var lastSyncedParticipantAliases: [String: String] = [:]
@@ -1201,34 +1200,56 @@ struct RootView: View {
     private var relaySettings: some View {
         surface {
             sectionHeader("Relays", systemImage: "dot.radiowaves.left.and.right")
-            VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                TextField("wss://relay.example.com", text: $relayInput)
+                    .textFieldStyle(.roundedBorder)
+                    .disableAutocorrection(true)
+                    .onSubmit { addRelayFromInput() }
+                Button {
+                    addRelayFromInput()
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
+                .disabled(relayInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || manager.actionInFlight)
+            }
+            VStack(alignment: .leading, spacing: 6) {
                 ForEach(state.relays, id: \.url) { relay in
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(relay.status == "connected" ? Color.green : Color.secondary.opacity(0.65))
-                            .frame(width: 9, height: 9)
-                        Text(relay.url)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
+                    relayRow(relay)
                 }
             }
-            TextEditor(text: $relaysDraft)
-                .font(.system(.body, design: .monospaced))
-                .frame(minHeight: 78)
-                .padding(6)
-                .background(Color(nsColor: .textBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(nsColor: .separatorColor))
-                )
-            Button {
-                manager.saveRelays(relaysDraft)
-            } label: {
-                Label("Save", systemImage: "checkmark")
-            }
+        }
+    }
+
+    private func relayRow(_ relay: NativeRelayState) -> some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(relay.status == "connected" ? Color.green : Color.secondary.opacity(0.65))
+                .frame(width: 9, height: 9)
+            Text(relay.url)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .foregroundStyle(relay.enabled ? .primary : .secondary)
+            Spacer(minLength: 8)
+            Toggle("", isOn: Binding(
+                get: { relay.enabled },
+                set: { manager.setRelay(relay.url, enabled: $0) }
+            ))
+            .labelsHidden()
             .disabled(manager.actionInFlight)
+            Button(role: .destructive) {
+                manager.deleteRelay(relay.url)
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .disabled(manager.actionInFlight)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private func addRelayFromInput() {
+        if manager.addRelay(relayInput) {
+            relayInput = ""
         }
     }
 
@@ -1697,11 +1718,6 @@ struct RootView: View {
         if state.listenPort != lastSyncedListenPort {
             listenPort = String(state.listenPort)
             lastSyncedListenPort = state.listenPort
-        }
-        let relays = state.relays.map(\.url).joined(separator: "\n")
-        if relays != lastSyncedRelays {
-            relaysDraft = relays
-            lastSyncedRelays = relays
         }
         if state.magicDnsSuffix != lastSyncedMagicDnsSuffix {
             magicDnsSuffix = state.magicDnsSuffix

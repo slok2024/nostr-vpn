@@ -1282,12 +1282,27 @@ private struct DeviceSettingsCard: View {
 
 private struct RelaySettingsCard: View {
     @ObservedObject var model: AppModel
-    @State private var relays = ""
+    @State private var relayInput = ""
 
     var body: some View {
         AppCard {
             Text("Relays")
                 .font(.headline)
+            HStack(spacing: 8) {
+                TextField("wss://relay.example.com", text: $relayInput)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder)
+                    .submitLabel(.done)
+                    .onSubmit { addRelayFromInput() }
+                Button {
+                    addRelayFromInput()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(relayInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(model.state.relays) { relay in
                     HStack(spacing: 8) {
@@ -1297,31 +1312,93 @@ private struct RelaySettingsCard: View {
                         Text(relay.url)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .foregroundStyle(relay.enabled ? .primary : .secondary)
+                        Spacer(minLength: 8)
+                        Toggle("", isOn: Binding(
+                            get: { relay.enabled },
+                            set: { setRelay(relay.url, enabled: $0) }
+                        ))
+                        .labelsHidden()
+                        Button(role: .destructive) {
+                            deleteRelay(relay.url)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
                     }
                 }
             }
-            TextEditor(text: $relays)
-                .frame(minHeight: 90)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .padding(6)
-                .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
-            Button("Save") {
-                let values = relays
-                    .split(whereSeparator: { $0.isWhitespace || $0 == "," })
-                    .map(String.init)
-                model.dispatch(NativeActions.updateSettings(["relays": values]), status: "Saving")
-            }
-            .buttonStyle(.borderedProminent)
-        }
-        .onAppear { syncRelays() }
-        .onChange(of: model.state.relays.map(\.url).joined(separator: "\n")) { _, _ in
-            syncRelays()
         }
     }
 
-    private func syncRelays() {
-        relays = model.state.relays.map(\.url).joined(separator: "\n")
+    private func addRelayFromInput() {
+        guard let url = normalizedRelayUrl(relayInput) else {
+            return
+        }
+        var lists = relayLists()
+        lists.disabled.removeAll { $0 == url }
+        if !lists.enabled.contains(url) {
+            lists.enabled.append(url)
+        }
+        saveRelayLists(lists)
+        relayInput = ""
+    }
+
+    private func setRelay(_ url: String, enabled: Bool) {
+        guard let url = normalizedRelayUrl(url) else {
+            return
+        }
+        var lists = relayLists()
+        lists.enabled.removeAll { $0 == url }
+        lists.disabled.removeAll { $0 == url }
+        if enabled {
+            lists.enabled.append(url)
+        } else {
+            lists.disabled.append(url)
+        }
+        saveRelayLists(lists)
+    }
+
+    private func deleteRelay(_ url: String) {
+        guard let url = normalizedRelayUrl(url) else {
+            return
+        }
+        var lists = relayLists()
+        lists.enabled.removeAll { $0 == url }
+        lists.disabled.removeAll { $0 == url }
+        saveRelayLists(lists)
+    }
+
+    private func relayLists() -> (enabled: [String], disabled: [String]) {
+        let enabled = uniqueRelayList(model.state.relays.filter(\.enabled).compactMap { normalizedRelayUrl($0.url) })
+        let disabled = uniqueRelayList(model.state.relays.filter { !$0.enabled }.compactMap { normalizedRelayUrl($0.url) })
+            .filter { !enabled.contains($0) }
+        return (enabled, disabled)
+    }
+
+    private func saveRelayLists(_ lists: (enabled: [String], disabled: [String])) {
+        let enabled = uniqueRelayList(lists.enabled)
+        let disabled = uniqueRelayList(lists.disabled).filter { !enabled.contains($0) }
+        model.dispatch(
+            NativeActions.updateSettings(["relays": enabled, "disabledRelays": disabled]),
+            status: "Saving"
+        )
+    }
+
+    private func normalizedRelayUrl(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        if trimmed.hasPrefix("ws://") || trimmed.hasPrefix("wss://") {
+            return trimmed
+        }
+        return "wss://\(trimmed)"
+    }
+
+    private func uniqueRelayList(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.filter { seen.insert($0).inserted }
     }
 }
 

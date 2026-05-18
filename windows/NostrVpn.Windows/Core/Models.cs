@@ -81,7 +81,8 @@ public sealed class NativeRelayState
 {
     public string Url { get; set; } = "";
     public string Status { get; set; } = "";
-    public bool Connected => string.Equals(Status, "connected", StringComparison.OrdinalIgnoreCase);
+    public bool Enabled { get; set; } = true;
+    public bool Connected => Enabled && string.Equals(Status, "connected", StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class NativeNetworkState

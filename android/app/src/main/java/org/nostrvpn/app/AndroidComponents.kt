@@ -33,7 +33,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -342,41 +341,108 @@ internal fun DeviceSettingsCard(state: AppState, dispatch: (JSONObject) -> Unit)
 
 @Composable
 internal fun RelaySettingsCard(state: AppState, dispatch: (JSONObject) -> Unit) {
-    val stateRelayText = state.relays.joinToString("\n") { it.url }
-    var relayDraft by remember { mutableStateOf(stateRelayText) }
-    var lastSyncedRelayText by remember { mutableStateOf(stateRelayText) }
-    LaunchedEffect(stateRelayText) {
-        if (stateRelayText != lastSyncedRelayText) {
-            relayDraft = stateRelayText
-            lastSyncedRelayText = stateRelayText
-        }
+    var relayInput by remember { mutableStateOf("") }
+
+    fun normalizeRelayUrl(value: String): String? {
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) return null
+        return if (trimmed.startsWith("ws://") || trimmed.startsWith("wss://")) trimmed else "wss://$trimmed"
     }
+
+    fun uniqueRelays(values: List<String>): List<String> {
+        val seen = linkedSetOf<String>()
+        values.forEach { relay ->
+            if (relay.isNotBlank()) seen.add(relay)
+        }
+        return seen.toList()
+    }
+
+    fun relayLists(): Pair<List<String>, List<String>> {
+        val enabled = uniqueRelays(state.relays.filter { it.enabled }.mapNotNull { normalizeRelayUrl(it.url) })
+        val disabled = uniqueRelays(state.relays.filter { !it.enabled }.mapNotNull { normalizeRelayUrl(it.url) })
+            .filter { it !in enabled }
+        return enabled to disabled
+    }
+
+    fun saveRelays(enabledInput: List<String>, disabledInput: List<String>) {
+        val enabled = uniqueRelays(enabledInput)
+        val disabled = uniqueRelays(disabledInput).filter { it !in enabled }
+        dispatch(
+            NativeActions.updateSettings(
+                "relays" to enabled,
+                "disabledRelays" to disabled,
+            ),
+        )
+    }
+
+    fun addRelay() {
+        val url = normalizeRelayUrl(relayInput) ?: return
+        val (enabled, disabled) = relayLists()
+        saveRelays(
+            if (url in enabled) enabled else enabled + url,
+            disabled.filter { it != url },
+        )
+        relayInput = ""
+    }
+
+    fun setRelay(url: String, enabledValue: Boolean) {
+        val relayUrl = normalizeRelayUrl(url) ?: return
+        val (enabled, disabled) = relayLists()
+        saveRelays(
+            if (enabledValue) enabled.filter { it != relayUrl } + relayUrl else enabled.filter { it != relayUrl },
+            if (enabledValue) disabled.filter { it != relayUrl } else disabled.filter { it != relayUrl } + relayUrl,
+        )
+    }
+
+    fun deleteRelay(url: String) {
+        val relayUrl = normalizeRelayUrl(url) ?: return
+        val (enabled, disabled) = relayLists()
+        saveRelays(
+            enabled.filter { it != relayUrl },
+            disabled.filter { it != relayUrl },
+        )
+    }
+
     AppCard {
         Text("Relays", style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                relayInput,
+                { relayInput = it },
+                Modifier.weight(1f),
+                singleLine = true,
+                placeholder = { Text("wss://relay.example.com") },
+            )
+            Spacer(Modifier.width(8.dp))
+            Button(
+                onClick = { addRelay() },
+                enabled = relayInput.trim().isNotEmpty(),
+            ) {
+                Text("Add")
+            }
+        }
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             state.relays.forEach { relay ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Dot(selected = relay.status == "connected")
+                    Dot(selected = relay.enabled && relay.status == "connected")
                     Spacer(Modifier.width(8.dp))
-                    Text(relay.url, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        relay.url,
+                        modifier = Modifier
+                            .weight(1f)
+                            .alpha(if (relay.enabled) 1f else 0.62f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Switch(
+                        checked = relay.enabled,
+                        onCheckedChange = { setRelay(relay.url, it) },
+                    )
+                    TextButton(onClick = { deleteRelay(relay.url) }) {
+                        Text("Delete")
+                    }
                 }
             }
-        }
-        OutlinedTextField(
-            relayDraft,
-            { relayDraft = it },
-            Modifier.fillMaxWidth(),
-            minLines = 3,
-            label = { Text("Relay URLs") },
-        )
-        Button(onClick = {
-            dispatch(
-                NativeActions.updateSettings(
-                    "relays" to relayDraft.lines().map { it.trim() }.filter { it.isNotEmpty() },
-                ),
-            )
-        }) {
-            Text("Save")
         }
     }
 }

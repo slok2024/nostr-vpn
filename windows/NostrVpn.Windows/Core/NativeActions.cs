@@ -40,6 +40,7 @@ public sealed class SettingsPatch
     public string? TunnelIp { get; set; }
     public ushort? ListenPort { get; set; }
     public List<string>? Relays { get; set; }
+    public List<string>? DisabledRelays { get; set; }
     public string? ExitNode { get; set; }
     public bool? ExitNodeLeakProtection { get; set; }
     public bool? AdvertiseExitNode { get; set; }

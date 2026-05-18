@@ -139,8 +139,9 @@ struct AppState: Decodable {
 struct RelayState: Decodable, Identifiable {
     var url = ""
     var status = "unknown"
+    var enabled = true
     var id: String { url }
-    var connected: Bool { status == "connected" }
+    var connected: Bool { enabled && status == "connected" }
 }
 
 struct NetworkState: Decodable, Identifiable {

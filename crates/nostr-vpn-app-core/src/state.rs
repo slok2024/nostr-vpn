@@ -243,6 +243,7 @@ pub struct UiState {
 pub struct RelayView {
     pub url: String,
     pub status: String,
+    pub enabled: bool,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -253,6 +254,7 @@ pub struct SettingsPatch {
     pub tunnel_ip: Option<String>,
     pub listen_port: Option<u16>,
     pub relays: Option<Vec<String>>,
+    pub disabled_relays: Option<Vec<String>>,
     pub exit_node: Option<String>,
     pub exit_node_leak_protection: Option<bool>,
     pub advertise_exit_node: Option<bool>,

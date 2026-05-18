@@ -11,8 +11,8 @@ use anyhow::{Context, Result, anyhow};
 use nostr_vpn_core::config::{
     AppConfig, NetworkConfig, PendingInboundJoinRequest, PendingOutboundJoinRequest,
     derive_mesh_tunnel_ip, maybe_autoconfigure_node, normalize_advertised_route,
-    normalize_nostr_pubkey, normalize_runtime_network_id, parse_wireguard_exit_config,
-    wireguard_exit_config_text,
+    normalize_nostr_pubkey, normalize_relay_urls, normalize_runtime_network_id,
+    parse_wireguard_exit_config, wireguard_exit_config_text,
 };
 use nostr_vpn_core::diagnostics::ProbeStatus;
 use nostr_vpn_core::process_ext::CommandWindowExt;
@@ -1252,6 +1252,31 @@ impl NativeAppRuntime {
         }
         if let Some(value) = patch.relays {
             self.config.nostr.relays = normalize_relay_urls(value);
+            let enabled_relays = self
+                .config
+                .nostr
+                .relays
+                .iter()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>();
+            self.config
+                .nostr
+                .disabled_relays
+                .retain(|relay| !enabled_relays.contains(relay));
+        }
+        if let Some(value) = patch.disabled_relays {
+            self.config.nostr.disabled_relays = normalize_relay_urls(value);
+            let disabled_relays = self
+                .config
+                .nostr
+                .disabled_relays
+                .iter()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>();
+            self.config
+                .nostr
+                .relays
+                .retain(|relay| !disabled_relays.contains(relay));
         }
         // Exit-node selection is mutually exclusive: at most one of
         // (peer exit_node, WireGuard upstream) can be active at a
@@ -1550,25 +1575,46 @@ impl NativeAppRuntime {
     }
 
     fn relay_views(&self) -> Vec<NativeRelayState> {
+        let active_relays = effective_config_relays(&self.config);
+        let active_lookup = active_relays
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        let mut live_status = HashMap::new();
         if let Some(daemon_state) = self.daemon_state.as_ref()
             && !daemon_state.relays.is_empty()
         {
-            return daemon_state
-                .relays
-                .iter()
-                .map(|relay| NativeRelayState {
-                    url: relay.url.clone(),
-                    status: relay.status.clone(),
-                })
-                .collect();
+            live_status.extend(
+                daemon_state
+                    .relays
+                    .iter()
+                    .map(|relay| (relay.url.clone(), relay.status.clone())),
+            );
         }
-        effective_config_relays(&self.config)
-            .into_iter()
+
+        let mut rows = active_relays
+            .iter()
             .map(|url| NativeRelayState {
-                url,
-                status: "unknown".to_string(),
+                url: url.clone(),
+                status: live_status
+                    .get(url)
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string()),
+                enabled: true,
             })
-            .collect()
+            .collect::<Vec<_>>();
+
+        rows.extend(
+            normalize_relay_urls(self.config.nostr.disabled_relays.clone())
+                .into_iter()
+                .filter(|url| !active_lookup.contains(url))
+                .map(|url| NativeRelayState {
+                    url,
+                    status: "disabled".to_string(),
+                    enabled: false,
+                }),
+        );
+        rows
     }
 
     fn save_reload_refresh_and_maybe_connect_for_join_requests(
@@ -2536,34 +2582,23 @@ fn parse_csv_values(input: &str) -> Vec<String> {
     values
 }
 
-fn normalize_relay_urls(values: Vec<String>) -> Vec<String> {
-    let mut relays = values
-        .into_iter()
-        .flat_map(|value| {
-            value
-                .split([',', '\n', ' ', '\t'])
-                .map(str::trim)
-                .filter(|relay| !relay.is_empty())
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    relays.sort();
-    relays.dedup();
-    relays
-}
-
 fn effective_config_relays(config: &AppConfig) -> Vec<String> {
-    if !config.nostr.relays.is_empty() {
-        return normalize_relay_urls(config.nostr.relays.clone());
-    }
+    let disabled_relays = normalize_relay_urls(config.nostr.disabled_relays.clone())
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
     let fips = fips_endpoint::NostrDiscoveryConfig::default();
-    normalize_relay_urls(
-        fips.advert_relays
-            .into_iter()
-            .chain(fips.dm_relays)
-            .collect(),
-    )
+    let mut relays = if config.nostr.relays.is_empty() {
+        normalize_relay_urls(
+            fips.advert_relays
+                .into_iter()
+                .chain(fips.dm_relays)
+                .collect(),
+        )
+    } else {
+        normalize_relay_urls(config.nostr.relays.clone())
+    };
+    relays.retain(|relay| !disabled_relays.contains(relay));
+    relays
 }
 
 fn short_pubkey(pubkey_hex: &str) -> String {
@@ -2680,6 +2715,18 @@ mod tests {
 
         assert!(!relays.is_empty());
         assert!(relays.iter().all(|relay| relay.starts_with("wss://")));
+    }
+
+    #[test]
+    fn disabled_app_relays_filter_effective_relays() {
+        let mut config = AppConfig::generated();
+        let defaults = effective_config_relays(&config);
+        let disabled = defaults.first().expect("fips default relay").clone();
+        config.nostr.disabled_relays = vec![disabled.clone()];
+
+        let relays = effective_config_relays(&config);
+
+        assert!(!relays.contains(&disabled));
     }
 
     #[test]

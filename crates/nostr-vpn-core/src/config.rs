@@ -53,10 +53,29 @@ pub fn normalize_fips_peer_endpoint_hint(endpoint: &str) -> Option<String> {
     peer_endpoint_hint_addr(&PeerEndpointHint::udp(endpoint.trim()))
 }
 
+pub fn normalize_relay_urls(values: Vec<String>) -> Vec<String> {
+    let mut relays = values
+        .into_iter()
+        .flat_map(|value| {
+            value
+                .split([',', '\n', '\r', ' ', '\t'])
+                .map(str::trim)
+                .filter(|relay| !relay.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    relays.sort();
+    relays.dedup();
+    relays
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NostrConfig {
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relays: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_relays: Vec<String>,
     /// Nostr private identity key in `nsec` or hex format.
     #[serde(default)]
     pub secret_key: String,
@@ -70,6 +89,7 @@ impl Default for NostrConfig {
         let (secret_key, public_key) = generate_nostr_identity();
         Self {
             relays: default_relays(),
+            disabled_relays: Vec::new(),
             secret_key,
             public_key,
         }
@@ -757,6 +777,13 @@ impl AppConfig {
         self.mesh_mtu_profile = self.mesh_mtu_profile.trim().to_ascii_lowercase();
         self.magic_dns_suffix = normalize_magic_dns_suffix(&self.magic_dns_suffix);
         normalize_wireguard_exit_config(&mut self.wireguard_exit);
+        self.nostr.relays = normalize_relay_urls(std::mem::take(&mut self.nostr.relays));
+        self.nostr.disabled_relays =
+            normalize_relay_urls(std::mem::take(&mut self.nostr.disabled_relays));
+        let enabled_relays = self.nostr.relays.iter().cloned().collect::<HashSet<_>>();
+        self.nostr
+            .disabled_relays
+            .retain(|relay| !enabled_relays.contains(relay));
 
         if self.node.id.trim().is_empty() {
             self.node.id = default_node_id();

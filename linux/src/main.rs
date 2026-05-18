@@ -49,7 +49,7 @@ struct Drafts {
     endpoint: String,
     tunnel_ip: String,
     listen_port: String,
-    relays: String,
+    relay_input: String,
     magic_dns_suffix: String,
     advertised_routes: String,
     exit_search: String,
@@ -62,12 +62,6 @@ impl Drafts {
         self.endpoint = state.endpoint.clone();
         self.tunnel_ip = state.tunnel_ip.clone();
         self.listen_port = state.listen_port.to_string();
-        self.relays = state
-            .relays
-            .iter()
-            .map(|relay| relay.url.clone())
-            .collect::<Vec<_>>()
-            .join("\n");
         self.magic_dns_suffix = state.magic_dns_suffix.clone();
         self.advertised_routes = state.advertised_routes.join(", ");
         self.wireguard_exit_config = state.wireguard_exit_config.clone();
@@ -2233,11 +2227,29 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
 
     let relays = card();
     section_header(&relays, "Relays", "");
+    let add_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    add_row.set_valign(gtk::Align::Center);
+    let relay_input = entry("wss://relay.example.com", &app.borrow().drafts.relay_input);
+    {
+        let app = app.clone();
+        relay_input.connect_changed(move |entry| {
+            app.borrow_mut().drafts.relay_input = entry.text().to_string();
+        });
+    }
+    add_row.append(&relay_input);
+    let add_relay = gtk::Button::from_icon_name("list-add-symbolic");
+    add_relay.set_tooltip_text(Some("Add relay"));
+    {
+        let app = app.clone();
+        add_relay.connect_clicked(move |_| add_relay_setting(&app));
+    }
+    add_row.append(&add_relay);
+    relays.append(&add_row);
     for relay in &state.relays {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         row.set_valign(gtk::Align::Center);
         let dot = gtk::Label::new(Some("●"));
-        dot.add_css_class(if relay.status == "connected" {
+        dot.add_css_class(if relay.enabled && relay.status == "connected" {
             "success"
         } else {
             "dim-label"
@@ -2246,28 +2258,30 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         let url = gtk::Label::new(Some(&relay.url));
         url.set_xalign(0.0);
         url.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        url.set_hexpand(true);
+        if !relay.enabled {
+            url.add_css_class("dim-label");
+        }
         row.append(&url);
+        let relay_switch = gtk::Switch::builder().active(relay.enabled).build();
+        {
+            let app = app.clone();
+            let url = relay.url.clone();
+            relay_switch.connect_active_notify(move |relay_switch| {
+                set_relay_enabled(&app, &url, relay_switch.is_active());
+            });
+        }
+        row.append(&relay_switch);
+        let delete = gtk::Button::from_icon_name("edit-delete-symbolic");
+        delete.set_tooltip_text(Some("Delete relay"));
+        {
+            let app = app.clone();
+            let url = relay.url.clone();
+            delete.connect_clicked(move |_| delete_relay_setting(&app, &url));
+        }
+        row.append(&delete);
         relays.append(&row);
     }
-    let relay_text = gtk::TextView::new();
-    relay_text.set_monospace(true);
-    relay_text.buffer().set_text(&app.borrow().drafts.relays);
-    {
-        let app = app.clone();
-        relay_text.buffer().connect_changed(move |buffer| {
-            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
-            app.borrow_mut().drafts.relays = text.to_string();
-        });
-    }
-    relays.append(&relay_text);
-    let save_relays = icon_text_button("Save", "");
-    save_relays.add_css_class("suggested-action");
-    save_relays.set_halign(gtk::Align::Start);
-    {
-        let app = app.clone();
-        save_relays.connect_clicked(move |_| save_relay_settings(&app));
-    }
-    relays.append(&save_relays);
     page.append(&relays);
 
     let network = card();
@@ -2793,25 +2807,105 @@ fn save_device_settings(app: &AppRef) {
     );
 }
 
-fn save_relay_settings(app: &AppRef) {
-    let relays = app
-        .borrow()
-        .drafts
-        .relays
-        .split([',', '\n', ' ', '\t'])
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
+fn add_relay_setting(app: &AppRef) {
+    let (state, input) = {
+        let model = app.borrow();
+        (model.state.clone(), model.drafts.relay_input.clone())
+    };
+    let Some(url) = normalize_relay_url(&input) else {
+        return;
+    };
+    let (mut enabled, mut disabled) = relay_lists(&state);
+    disabled.retain(|relay| relay != &url);
+    if !enabled.contains(&url) {
+        enabled.push(url);
+    }
+    app.borrow_mut().drafts.relay_input.clear();
+    save_relay_lists(app, enabled, disabled);
+}
+
+fn set_relay_enabled(app: &AppRef, url: &str, enabled_value: bool) {
+    let state = app.borrow().state.clone();
+    let Some(url) = normalize_relay_url(url) else {
+        return;
+    };
+    let (mut enabled, mut disabled) = relay_lists(&state);
+    enabled.retain(|relay| relay != &url);
+    disabled.retain(|relay| relay != &url);
+    if enabled_value {
+        enabled.push(url);
+    } else {
+        disabled.push(url);
+    }
+    save_relay_lists(app, enabled, disabled);
+}
+
+fn delete_relay_setting(app: &AppRef, url: &str) {
+    let state = app.borrow().state.clone();
+    let Some(url) = normalize_relay_url(url) else {
+        return;
+    };
+    let (mut enabled, mut disabled) = relay_lists(&state);
+    enabled.retain(|relay| relay != &url);
+    disabled.retain(|relay| relay != &url);
+    save_relay_lists(app, enabled, disabled);
+}
+
+fn relay_lists(state: &NativeAppState) -> (Vec<String>, Vec<String>) {
+    let enabled = unique_relays(
+        state
+            .relays
+            .iter()
+            .filter(|relay| relay.enabled)
+            .filter_map(|relay| normalize_relay_url(&relay.url))
+            .collect(),
+    );
+    let mut disabled = unique_relays(
+        state
+            .relays
+            .iter()
+            .filter(|relay| !relay.enabled)
+            .filter_map(|relay| normalize_relay_url(&relay.url))
+            .collect(),
+    );
+    disabled.retain(|relay| !enabled.contains(relay));
+    (enabled, disabled)
+}
+
+fn save_relay_lists(app: &AppRef, enabled: Vec<String>, disabled: Vec<String>) {
+    let enabled = unique_relays(enabled);
+    let mut disabled = unique_relays(disabled);
+    disabled.retain(|relay| !enabled.contains(relay));
     dispatch(
         app,
         NativeAppAction::UpdateSettings {
             patch: SettingsPatch {
-                relays: Some(relays),
+                relays: Some(enabled),
+                disabled_relays: Some(disabled),
                 ..SettingsPatch::default()
             },
         },
     );
+}
+
+fn normalize_relay_url(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with("ws://") || trimmed.starts_with("wss://") {
+        Some(trimmed.to_string())
+    } else {
+        Some(format!("wss://{trimmed}"))
+    }
+}
+
+fn unique_relays(values: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    values
+        .into_iter()
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
 }
 
 fn save_wireguard_exit_settings(app: &AppRef) {

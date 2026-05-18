@@ -339,11 +339,81 @@ final class AppManager: ObservableObject {
         )), status: "Saving device settings")
     }
 
-    func saveRelays(_ relaysText: String) {
-        let relays = relaysText
-            .split { $0.isWhitespace || $0 == "," }
-            .map(String.init)
-        dispatch(.updateSettings(patch: settingsPatch(relays: relays)), status: "Saving relays")
+    @discardableResult
+    func addRelay(_ value: String) -> Bool {
+        guard let url = Self.normalizedRelayUrl(value) else {
+            return false
+        }
+        var lists = relayLists()
+        lists.disabled.removeAll { $0 == url }
+        if !lists.enabled.contains(url) {
+            lists.enabled.append(url)
+        }
+        saveRelayLists(lists)
+        return true
+    }
+
+    func setRelay(_ url: String, enabled: Bool) {
+        guard let url = Self.normalizedRelayUrl(url) else {
+            return
+        }
+        var lists = relayLists()
+        lists.enabled.removeAll { $0 == url }
+        lists.disabled.removeAll { $0 == url }
+        if enabled {
+            lists.enabled.append(url)
+        } else {
+            lists.disabled.append(url)
+        }
+        saveRelayLists(lists)
+    }
+
+    func deleteRelay(_ url: String) {
+        guard let url = Self.normalizedRelayUrl(url) else {
+            return
+        }
+        var lists = relayLists()
+        lists.enabled.removeAll { $0 == url }
+        lists.disabled.removeAll { $0 == url }
+        saveRelayLists(lists)
+    }
+
+    private func relayLists() -> (enabled: [String], disabled: [String]) {
+        let enabled = state.relays
+            .filter(\.enabled)
+            .compactMap { Self.normalizedRelayUrl($0.url) }
+        let disabled = state.relays
+            .filter { !$0.enabled }
+            .compactMap { Self.normalizedRelayUrl($0.url) }
+        return (
+            enabled: Self.uniqueRelayList(enabled),
+            disabled: Self.uniqueRelayList(disabled).filter { !enabled.contains($0) }
+        )
+    }
+
+    private func saveRelayLists(_ lists: (enabled: [String], disabled: [String])) {
+        let enabled = Self.uniqueRelayList(lists.enabled)
+        let disabled = Self.uniqueRelayList(lists.disabled).filter { !enabled.contains($0) }
+        dispatch(
+            .updateSettings(patch: settingsPatch(relays: enabled, disabledRelays: disabled)),
+            status: "Saving relays"
+        )
+    }
+
+    private static func normalizedRelayUrl(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        if trimmed.hasPrefix("ws://") || trimmed.hasPrefix("wss://") {
+            return trimmed
+        }
+        return "wss://\(trimmed)"
+    }
+
+    private static func uniqueRelayList(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.filter { seen.insert($0).inserted }
     }
 
     func setAdvertiseExitNode(_ enabled: Bool) {
@@ -1044,8 +1114,8 @@ final class AppManager: ObservableObject {
             tunnelIp: "10.44.195.20",
             listenPort: 51820,
             relays: [
-                NativeRelayState(url: "wss://relay.damus.io", status: "connected"),
-                NativeRelayState(url: "wss://relay.nostr.band", status: "unknown")
+                NativeRelayState(url: "wss://relay.damus.io", status: "connected", enabled: true),
+                NativeRelayState(url: "wss://relay.nostr.band", status: "unknown", enabled: true)
             ],
             networkId: networkId,
             activeNetworkInvite: "nvpn://invite/demo-mesh",
@@ -1554,6 +1624,7 @@ func settingsPatch(
     tunnelIp: String? = nil,
     listenPort: UInt16? = nil,
     relays: [String]? = nil,
+    disabledRelays: [String]? = nil,
     exitNode: String? = nil,
     exitNodeLeakProtection: Bool? = nil,
     advertiseExitNode: Bool? = nil,
@@ -1581,6 +1652,7 @@ func settingsPatch(
         tunnelIp: tunnelIp,
         listenPort: listenPort,
         relays: relays,
+        disabledRelays: disabledRelays,
         exitNode: exitNode,
         exitNodeLeakProtection: exitNodeLeakProtection,
         advertiseExitNode: advertiseExitNode,

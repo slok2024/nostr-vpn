@@ -61,6 +61,7 @@ data class AppState(
 data class RelayState(
     val url: String = "",
     val status: String = "unknown",
+    val enabled: Boolean = true,
 )
 
 data class NetworkState(
@@ -186,6 +187,7 @@ private fun JSONArray?.toRelayList(): List<RelayState> = mapObjects { item ->
     RelayState(
         url = item.optString("url"),
         status = item.optString("status", "unknown"),
+        enabled = item.optBoolean("enabled", true),
     )
 }
 

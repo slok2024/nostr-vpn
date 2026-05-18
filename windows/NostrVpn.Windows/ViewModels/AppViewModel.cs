@@ -45,6 +45,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     private string _endpoint = "";
     private string _tunnelIp = "";
     private string _listenPort = "";
+    private string _relayInput = "";
     private string _relaysDraft = "";
     private string _magicDnsSuffix = "";
     private string _advertisedRoutes = "";
@@ -95,6 +96,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         ToggleNearbyDiscoveryCommand = new AsyncRelayCommand(_ => DispatchAsync(State.NearbyDiscoveryActive ? NativeActions.StopNearbyDiscovery() : NativeActions.StartNearbyDiscovery(), "Looking for nearby"));
         AddParticipantCommand = new AsyncRelayCommand(_ => AddParticipantAsync(), _ => !ActionInFlight && ActiveNetwork?.LocalIsAdmin == true && !string.IsNullOrWhiteSpace(ParticipantInput) && !ParticipantInputInvalid);
         SaveNodeCommand = new AsyncRelayCommand(_ => SaveNodeAsync(), _ => !ActionInFlight);
+        AddRelayCommand = new AsyncRelayCommand(_ => AddRelayAsync(), _ => !ActionInFlight && !string.IsNullOrWhiteSpace(RelayInput));
         SaveRelaysCommand = new AsyncRelayCommand(_ => SaveRelaysAsync(), _ => !ActionInFlight);
         SaveWireGuardExitCommand = new AsyncRelayCommand(_ => SaveWireGuardExitAsync(), _ => !ActionInFlight);
         CreateNetworkCommand = new AsyncRelayCommand(_ => CreateNetworkAsync(), _ => !ActionInFlight);
@@ -312,6 +314,17 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public string Endpoint { get => _endpoint; set => SetField(ref _endpoint, value); }
     public string TunnelIp { get => _tunnelIp; set => SetField(ref _tunnelIp, value); }
     public string ListenPort { get => _listenPort; set => SetField(ref _listenPort, value); }
+    public string RelayInput
+    {
+        get => _relayInput;
+        set
+        {
+            if (SetField(ref _relayInput, value))
+            {
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
     public string RelaysDraft { get => _relaysDraft; set => SetField(ref _relaysDraft, value); }
     public string MagicDnsSuffix { get => _magicDnsSuffix; set => SetField(ref _magicDnsSuffix, value); }
     public string AdvertisedRoutes { get => _advertisedRoutes; set => SetField(ref _advertisedRoutes, value); }
@@ -581,6 +594,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public ICommand ToggleNearbyDiscoveryCommand { get; }
     public ICommand AddParticipantCommand { get; }
     public ICommand SaveNodeCommand { get; }
+    public ICommand AddRelayCommand { get; }
     public ICommand SaveRelaysCommand { get; }
     public ICommand SaveWireGuardExitCommand { get; }
     public ICommand CreateNetworkCommand { get; }
@@ -1097,6 +1111,88 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         {
             Relays = relays,
         }), "Saving relays");
+    }
+
+    private Task AddRelayAsync()
+    {
+        var url = NormalizeRelayUrl(RelayInput);
+        if (url is null) return Task.CompletedTask;
+
+        var (enabled, disabled) = RelayLists();
+        disabled.RemoveAll(relay => relay == url);
+        if (!enabled.Contains(url)) enabled.Add(url);
+        RelayInput = "";
+        return SaveRelayListsAsync(enabled, disabled);
+    }
+
+    public Task SetRelayEnabledAsync(NativeRelayState relay, bool enabledValue)
+    {
+        var url = NormalizeRelayUrl(relay.Url);
+        if (url is null) return Task.CompletedTask;
+
+        var (enabled, disabled) = RelayLists();
+        enabled.RemoveAll(relayUrl => relayUrl == url);
+        disabled.RemoveAll(relayUrl => relayUrl == url);
+        if (enabledValue)
+        {
+            enabled.Add(url);
+        }
+        else
+        {
+            disabled.Add(url);
+        }
+        return SaveRelayListsAsync(enabled, disabled);
+    }
+
+    public Task RemoveRelayAsync(NativeRelayState relay)
+    {
+        var url = NormalizeRelayUrl(relay.Url);
+        if (url is null) return Task.CompletedTask;
+
+        var (enabled, disabled) = RelayLists();
+        enabled.RemoveAll(relayUrl => relayUrl == url);
+        disabled.RemoveAll(relayUrl => relayUrl == url);
+        return SaveRelayListsAsync(enabled, disabled);
+    }
+
+    private (List<string> Enabled, List<string> Disabled) RelayLists()
+    {
+        var enabled = UniqueRelays(State.Relays.Where(relay => relay.Enabled).Select(relay => relay.Url));
+        var disabled = UniqueRelays(State.Relays.Where(relay => !relay.Enabled).Select(relay => relay.Url));
+        disabled.RemoveAll(relay => enabled.Contains(relay));
+        return (enabled, disabled);
+    }
+
+    private Task SaveRelayListsAsync(List<string> enabledInput, List<string> disabledInput)
+    {
+        var enabled = UniqueRelays(enabledInput);
+        var disabled = UniqueRelays(disabledInput);
+        disabled.RemoveAll(relay => enabled.Contains(relay));
+        return DispatchAsync(NativeActions.UpdateSettings(new SettingsPatch
+        {
+            Relays = enabled,
+            DisabledRelays = disabled,
+        }), "Saving relays");
+    }
+
+    private static string? NormalizeRelayUrl(string value)
+    {
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed)) return null;
+        return trimmed.StartsWith("ws://", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("wss://", StringComparison.OrdinalIgnoreCase)
+            ? trimmed
+            : $"wss://{trimmed}";
+    }
+
+    private static List<string> UniqueRelays(IEnumerable<string> values)
+    {
+        var seen = new HashSet<string>();
+        return values
+            .Select(NormalizeRelayUrl)
+            .Where(relay => relay is not null && seen.Add(relay))
+            .Select(relay => relay!)
+            .ToList();
     }
 
     private Task SaveWireGuardExitAsync()

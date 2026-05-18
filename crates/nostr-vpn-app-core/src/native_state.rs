@@ -122,6 +122,7 @@ pub struct NativePortMappingStatus {
 pub struct NativeRelayState {
     pub url: String,
     pub status: String,
+    pub enabled: bool,
 }
 
 #[allow(clippy::struct_excessive_bools)]

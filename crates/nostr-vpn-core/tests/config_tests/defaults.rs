@@ -15,6 +15,7 @@ fn generated_config_auto_populates_keys() {
     assert!(!config.node_name.trim().is_empty());
     assert_ne!(config.node_name, "nostr-vpn-node");
     assert!(config.nostr.relays.is_empty());
+    assert!(config.nostr.disabled_relays.is_empty());
     assert!(config.autoconnect);
     assert!(config.lan_discovery_enabled);
     assert!(config.launch_on_startup);

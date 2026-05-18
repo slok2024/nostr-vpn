@@ -180,6 +180,22 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void RelayEnabled_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is CheckBox { Tag: NativeRelayState relay } checkBox)
+        {
+            await ViewModel.SetRelayEnabledAsync(relay, checkBox.IsChecked == true);
+        }
+    }
+
+    private async void RemoveRelay_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: NativeRelayState relay })
+        {
+            await ViewModel.RemoveRelayAsync(relay);
+        }
+    }
+
     private async void WireguardExit_Click(object sender, RoutedEventArgs e)
     {
         await ViewModel.SelectWireGuardUpstreamExitAsync();

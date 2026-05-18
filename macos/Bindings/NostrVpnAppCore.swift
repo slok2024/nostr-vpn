@@ -2598,12 +2598,14 @@ public func FfiConverterTypeNativeProbeStatus_lower(_ value: NativeProbeStatus) 
 public struct NativeRelayState {
     public var url: String
     public var status: String
+    public var enabled: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(url: String, status: String) {
+    public init(url: String, status: String, enabled: Bool) {
         self.url = url
         self.status = status
+        self.enabled = enabled
     }
 }
 
@@ -2620,12 +2622,16 @@ extension NativeRelayState: Equatable, Hashable {
         if lhs.status != rhs.status {
             return false
         }
+        if lhs.enabled != rhs.enabled {
+            return false
+        }
         return true
     }
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(url)
         hasher.combine(status)
+        hasher.combine(enabled)
     }
 }
 
@@ -2639,13 +2645,15 @@ public struct FfiConverterTypeNativeRelayState: FfiConverterRustBuffer {
         return
             try NativeRelayState(
                 url: FfiConverterString.read(from: &buf),
-                status: FfiConverterString.read(from: &buf)
+                status: FfiConverterString.read(from: &buf),
+                enabled: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: NativeRelayState, into buf: inout [UInt8]) {
         FfiConverterString.write(value.url, into: &buf)
         FfiConverterString.write(value.status, into: &buf)
+        FfiConverterBool.write(value.enabled, into: &buf)
     }
 }
 
@@ -2874,6 +2882,7 @@ public struct SettingsPatch {
     public var tunnelIp: String?
     public var listenPort: UInt16?
     public var relays: [String]?
+    public var disabledRelays: [String]?
     public var exitNode: String?
     public var exitNodeLeakProtection: Bool?
     public var advertiseExitNode: Bool?
@@ -2897,12 +2906,13 @@ public struct SettingsPatch {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(nodeName: String?, endpoint: String?, tunnelIp: String?, listenPort: UInt16?, relays: [String]?, exitNode: String?, exitNodeLeakProtection: Bool?, advertiseExitNode: Bool?, advertisedRoutes: String?, wireguardExitEnabled: Bool?, wireguardExitInterface: String?, wireguardExitAddress: String?, wireguardExitPrivateKey: String?, wireguardExitPeerPublicKey: String?, wireguardExitPeerPresharedKey: String?, wireguardExitEndpoint: String?, wireguardExitAllowedIps: String?, wireguardExitDns: String?, wireguardExitMtu: UInt16?, wireguardExitPersistentKeepaliveSecs: UInt16?, wireguardExitConfig: String?, magicDnsSuffix: String?, autoconnect: Bool?, launchOnStartup: Bool?, closeToTrayOnClose: Bool?) {
+    public init(nodeName: String?, endpoint: String?, tunnelIp: String?, listenPort: UInt16?, relays: [String]?, disabledRelays: [String]?, exitNode: String?, exitNodeLeakProtection: Bool?, advertiseExitNode: Bool?, advertisedRoutes: String?, wireguardExitEnabled: Bool?, wireguardExitInterface: String?, wireguardExitAddress: String?, wireguardExitPrivateKey: String?, wireguardExitPeerPublicKey: String?, wireguardExitPeerPresharedKey: String?, wireguardExitEndpoint: String?, wireguardExitAllowedIps: String?, wireguardExitDns: String?, wireguardExitMtu: UInt16?, wireguardExitPersistentKeepaliveSecs: UInt16?, wireguardExitConfig: String?, magicDnsSuffix: String?, autoconnect: Bool?, launchOnStartup: Bool?, closeToTrayOnClose: Bool?) {
         self.nodeName = nodeName
         self.endpoint = endpoint
         self.tunnelIp = tunnelIp
         self.listenPort = listenPort
         self.relays = relays
+        self.disabledRelays = disabledRelays
         self.exitNode = exitNode
         self.exitNodeLeakProtection = exitNodeLeakProtection
         self.advertiseExitNode = advertiseExitNode
@@ -2946,6 +2956,9 @@ extension SettingsPatch: Equatable, Hashable {
             return false
         }
         if lhs.relays != rhs.relays {
+            return false
+        }
+        if lhs.disabledRelays != rhs.disabledRelays {
             return false
         }
         if lhs.exitNode != rhs.exitNode {
@@ -3017,6 +3030,7 @@ extension SettingsPatch: Equatable, Hashable {
         hasher.combine(tunnelIp)
         hasher.combine(listenPort)
         hasher.combine(relays)
+        hasher.combine(disabledRelays)
         hasher.combine(exitNode)
         hasher.combine(exitNodeLeakProtection)
         hasher.combine(advertiseExitNode)
@@ -3054,6 +3068,7 @@ public struct FfiConverterTypeSettingsPatch: FfiConverterRustBuffer {
                 tunnelIp: FfiConverterOptionString.read(from: &buf),
                 listenPort: FfiConverterOptionUInt16.read(from: &buf),
                 relays: FfiConverterOptionSequenceString.read(from: &buf),
+                disabledRelays: FfiConverterOptionSequenceString.read(from: &buf),
                 exitNode: FfiConverterOptionString.read(from: &buf),
                 exitNodeLeakProtection: FfiConverterOptionBool.read(from: &buf),
                 advertiseExitNode: FfiConverterOptionBool.read(from: &buf),
@@ -3083,6 +3098,7 @@ public struct FfiConverterTypeSettingsPatch: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.tunnelIp, into: &buf)
         FfiConverterOptionUInt16.write(value.listenPort, into: &buf)
         FfiConverterOptionSequenceString.write(value.relays, into: &buf)
+        FfiConverterOptionSequenceString.write(value.disabledRelays, into: &buf)
         FfiConverterOptionString.write(value.exitNode, into: &buf)
         FfiConverterOptionBool.write(value.exitNodeLeakProtection, into: &buf)
         FfiConverterOptionBool.write(value.advertiseExitNode, into: &buf)
