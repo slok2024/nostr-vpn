@@ -1,3 +1,5 @@
+version: "3.7"
+
 services:
   web:
     image: ${NOSTR_VPN_IMAGE:-nostr-vpn-umbrel:local}

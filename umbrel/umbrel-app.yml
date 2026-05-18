@@ -2,7 +2,7 @@ manifestVersion: 1
 id: nostr-vpn
 category: networking
 name: Nostr VPN
-version: "v0.3.4"
+version: "v4.0.26"
 tagline: Private mesh VPN over Nostr
 description: >-
   Nostr VPN turns your Umbrel into a Nostr-addressable mesh node with a web UI

@@ -38,6 +38,10 @@ function androidVersionCode(version) {
   return major * 10_000 + minor * 100 + patch
 }
 
+function versionTag(version) {
+  return version.startsWith('v') ? version : `v${version}`
+}
+
 function makeTarget(relPath, transform) {
   return {
     relPath,
@@ -76,6 +80,12 @@ const targets = [
     text.replace(
       /(<Version>)[^<]+(<\/Version>)/,
       (_, prefix, suffix) => `${prefix}${version}${suffix}`,
+    ),
+  ),
+  makeTarget('umbrel/umbrel-app.yml', (text, version) =>
+    text.replace(
+      /^(version:\s*")[^"\n]+(")/m,
+      (_, prefix, suffix) => `${prefix}${versionTag(version)}${suffix}`,
     ),
   ),
 ]
