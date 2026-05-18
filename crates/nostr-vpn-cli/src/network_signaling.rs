@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Result, anyhow};
 use nostr_vpn_core::config::{
     AppConfig, NetworkConfig, PendingOutboundJoinRequest, maybe_autoconfigure_node,
-    normalize_nostr_pubkey, normalize_runtime_network_id,
+    normalize_fips_peer_endpoint_hint, normalize_nostr_pubkey, normalize_runtime_network_id,
 };
 #[cfg(test)]
 pub(crate) use nostr_vpn_core::invite::NETWORK_INVITE_PREFIX;
@@ -134,6 +134,7 @@ pub(crate) fn apply_network_invite_to_active_network(
             network.outbound_join_request = None;
         }
     }
+    config.add_fips_peer_endpoint_hints(&normalized_inviter_pubkey, &invite.inviter_endpoints)?;
 
     if !inviter_already_configured && !invite.inviter_node_name.trim().is_empty() {
         let _ = config.set_peer_alias(&normalized_inviter_pubkey, &invite.inviter_node_name);
@@ -254,6 +255,7 @@ pub(crate) fn active_network_invite_code(config: &AppConfig) -> Result<String> {
         network_id: roster.network_id,
         inviter_npub: String::new(),
         inviter_node_name: String::new(),
+        inviter_endpoints: active_inviter_endpoints(config),
         admins: roster
             .admins
             .iter()
@@ -263,6 +265,15 @@ pub(crate) fn active_network_invite_code(config: &AppConfig) -> Result<String> {
         relays: Vec::new(),
     };
     encode_network_invite(&invite)
+}
+
+fn active_inviter_endpoints(config: &AppConfig) -> Vec<String> {
+    let mut configured = config.clone();
+    maybe_autoconfigure_node(&mut configured);
+    let endpoint = configured.node.endpoint.trim();
+    normalize_fips_peer_endpoint_hint(endpoint)
+        .into_iter()
+        .collect()
 }
 
 pub(crate) async fn update_active_network_roster(

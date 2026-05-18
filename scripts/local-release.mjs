@@ -318,7 +318,7 @@ function windowsArtifactArch(targetTriple) {
 
 /// Run a tar pipe through ssh in either direction. We rely on macOS `tar`
 /// and Windows 10+ `tar.exe` (bsdtar) sharing a wire format. The remote ssh
-/// shell on win11-dev defaults to cmd.exe, which gladly forwards `tar` to
+/// shell on windows-dev defaults to cmd.exe, which gladly forwards `tar` to
 /// the Windows-side `tar.exe`. No extra tools are installed on the remote.
 function runShellPipe(cmd, { dryRun = false, errMsg = 'pipe' } = {}) {
   if (dryRun) {
@@ -355,10 +355,14 @@ function syncRepoToWindowsHost({ host, guestRepo, dryRun }) {
     '--exclude=./umbrel',
   ].join(' ')
 
-  // Ensure the destination exists first.
+  // Start from a clean destination. The Windows project uses broad wildcard
+  // globs, so stale files from earlier sync attempts can break later builds.
   runWindowsPowerShell(
     host,
-    `New-Item -ItemType Directory -Force -Path ${psQuote(guestRepo)} | Out-Null`,
+    `
+Remove-Item -Recurse -Force -Path ${psQuote(guestRepo)} -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path ${psQuote(guestRepo)} | Out-Null
+`,
     { dryRun },
   )
   // COPYFILE_DISABLE=1 stops macOS bsdtar from emitting AppleDouble `._*`
@@ -382,9 +386,9 @@ function pullFileFromWindowsHost({ host, remotePath, localParent, name, dryRun }
 }
 
 function buildWindowsArtifacts({ env, tag, dryRun, builtLines }) {
-  // Windows builds run on win11-dev — an x86_64 Windows VM reachable over the
-  // Nostr VPN mesh (see CLAUDE.md). Set NVPN_WINDOWS_SSH_HOST to override.
-  const host = env.NVPN_WINDOWS_SSH_HOST || 'win11-dev'
+  // Windows builds run on an x86_64 Windows VM reachable over SSH.
+  // Set NVPN_WINDOWS_SSH_HOST for local machine-specific hostnames.
+  const host = env.NVPN_WINDOWS_SSH_HOST || 'windows-dev'
 
   // Probe SSH connectivity. Skip cleanly if the VM is unreachable rather
   // than aborting the whole release.
@@ -397,7 +401,7 @@ function buildWindowsArtifacts({ env, tag, dryRun, builtLines }) {
     if (probe.status !== 0) {
       throw new SkipStepError(
         `Skipping Windows artifacts because ssh ${host} is unreachable. ` +
-          'Bring up the VM (e.g. on vader) and ensure VPN is connected, or set NVPN_WINDOWS_SSH_HOST.',
+          'Bring up the VM (e.g. on local VM host) and ensure VPN is connected, or set NVPN_WINDOWS_SSH_HOST.',
       )
     }
   }
@@ -762,7 +766,7 @@ function syncPlatformVersions({ tag, dryRun, builtLines }) {
 
 function runVerify({ dryRun, builtLines }) {
   run('./scripts/release-gate.sh', [], { dryRun })
-  builtLines.push('Ran release gate: sync-versions, fmt, clippy, tests, and routed-FIPS Docker e2e.')
+  builtLines.push('Ran release gate: sync-versions, fmt, clippy, tests, FIPS join-request Docker e2e, routed-FIPS Docker e2e, and NAT safe-MTU Docker e2e.')
 }
 
 function shouldRunStep(step, options) {

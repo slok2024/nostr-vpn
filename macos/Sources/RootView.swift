@@ -55,6 +55,12 @@ struct RootView: View {
         return activeNetwork
     }
 
+    private var incomingJoinRequestCount: Int {
+        state.networks.reduce(0) { count, network in
+            count + network.inboundJoinRequests.count
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             headerBar
@@ -119,6 +125,7 @@ struct RootView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     inviteSection(network)
+                    joinRequestsSection(network)
                     manualPairingInfoSection(network)
                     addByDeviceIdSection(network)
                 }
@@ -363,10 +370,19 @@ struct RootView: View {
         return Button {
             selectedSidebarItem = item
         } label: {
-            Label(title, systemImage: systemImage)
-                .font(.subheadline.weight(.semibold))
-                .labelStyle(.titleAndIcon)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 8) {
+                Label(title, systemImage: systemImage)
+                    .labelStyle(.titleAndIcon)
+                Spacer(minLength: 0)
+                if item == .devices && incomingJoinRequestCount > 0 {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 7, height: 7)
+                        .accessibilityLabel("\(incomingJoinRequestCount) join requests")
+                }
+            }
+            .font(.subheadline.weight(.semibold))
+            .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 12)
                 .frame(height: 32)
                 .background(selected ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 7))
@@ -1851,6 +1867,9 @@ struct RootView: View {
             return "Direct connection\(transport)"
         }
         if participant.reachable {
+            if participant.fipsSrttMs > 0 {
+                return "Via mesh, \(participant.fipsSrttMs) ms"
+            }
             return "Via mesh"
         }
         if participant.state == "pending" {

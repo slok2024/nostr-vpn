@@ -283,6 +283,9 @@ pub fn peer_endpoint_hint_addr(hint: &PeerEndpointHint) -> Option<String> {
     if host.is_empty() || port == 0 || host.eq_ignore_ascii_case("localhost") {
         return None;
     }
+    if host_looks_like_nostr_pubkey(host) {
+        return None;
+    }
     if host.contains(':') {
         return None;
     }
@@ -302,6 +305,7 @@ fn endpoint_hint_ip_is_unusable(ip: IpAddr) -> bool {
                 || ip.is_link_local()
                 || ip.is_multicast()
                 || ipv4_is_cgnat(ip)
+                || ipv4_is_documentation(ip)
         }
         IpAddr::V6(ip) => {
             ip.is_unspecified()
@@ -315,6 +319,18 @@ fn endpoint_hint_ip_is_unusable(ip: IpAddr) -> bool {
 fn ipv4_is_cgnat(ip: Ipv4Addr) -> bool {
     let octets = ip.octets();
     octets[0] == 100 && (64..=127).contains(&octets[1])
+}
+
+fn ipv4_is_documentation(ip: Ipv4Addr) -> bool {
+    matches!(
+        ip.octets(),
+        [192, 0, 2, _] | [198, 51, 100, _] | [203, 0, 113, _]
+    )
+}
+
+fn host_looks_like_nostr_pubkey(host: &str) -> bool {
+    let host = host.trim().to_ascii_lowercase();
+    host.len() >= 60 && host.starts_with("npub1")
 }
 
 fn fips_control_fragment_id(data: &[u8]) -> String {
@@ -460,11 +476,22 @@ mod tests {
             None
         );
         assert_eq!(
+            peer_endpoint_hint_addr(&PeerEndpointHint::udp("198.51.100.10:51820")),
+            None
+        );
+        assert_eq!(
             peer_endpoint_hint_addr(&PeerEndpointHint::udp("0.0.0.0:51820")),
             None
         );
         assert_eq!(
             peer_endpoint_hint_addr(&PeerEndpointHint::udp("localhost:51820")),
+            None
+        );
+        assert_eq!(
+            peer_endpoint_hint_addr(&PeerEndpointHint::udp(format!(
+                "{}:51820",
+                "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+            ))),
             None
         );
     }

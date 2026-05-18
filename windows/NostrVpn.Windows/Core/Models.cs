@@ -189,7 +189,7 @@ public sealed class NativeParticipantState
             }
             if (IsFipsRouted)
             {
-                return "Via mesh";
+                return FipsSrttMs > 0 ? $"Via mesh, {FipsSrttMs} ms" : "Via mesh";
             }
             if (string.Equals(State, "pending", StringComparison.OrdinalIgnoreCase))
             {

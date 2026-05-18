@@ -42,6 +42,7 @@ info:
     @echo "  just ios-build"
     @echo "  just ios-run"
     @echo "  just ios-smoke"
+    @echo "  just ios-screenshots"
     @echo "  just ios-smoke-device"
     @echo
     @echo "Checks"
@@ -58,6 +59,7 @@ info:
     @echo "  just e2e-umbrel-web"
     @echo "  just e2e-exit-node"
     @echo "  just e2e-fips-routed-udp"
+    @echo "  just e2e-join-request"
     @echo "  just e2e-lan-pairing"
     @echo "  just e2e-roster-admin"
     @echo "  just e2e-wireguard-exit"
@@ -124,6 +126,9 @@ ios-run:
 
 ios-smoke:
     ./scripts/mobile-ios-smoke.sh simulator
+
+ios-screenshots:
+    ./scripts/ios-screenshots
 
 ios-smoke-device:
     ./scripts/mobile-ios-smoke.sh device --vpn-cycle
@@ -192,6 +197,9 @@ e2e-exit-node:
 
 e2e-fips-routed-udp:
     ./scripts/e2e-fips-routed-udp-docker.sh
+
+e2e-join-request:
+    ./scripts/e2e-join-request-docker.sh
 
 e2e-lan-pairing:
     ./scripts/e2e-lan-pairing-docker.sh

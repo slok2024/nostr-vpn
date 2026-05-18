@@ -11,10 +11,10 @@ exclude = ["linux"]
 resolver = "2"
 
 [workspace.package]
-version = "4.0.26"
+version = "4.0.31"
 edition = "2024"
 license = "MIT"
-authors = ["sirius"]
+authors = ["Nostr VPN contributors"]
 repository = "https://github.com/mmalmi/nostr-vpn"
 
 [workspace.dependencies]

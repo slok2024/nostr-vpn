@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use nostr_vpn_core::config::{
-    AppConfig, NetworkConfig, normalize_nostr_pubkey, normalize_runtime_network_id,
+    AppConfig, NetworkConfig, maybe_autoconfigure_node, normalize_fips_peer_endpoint_hint,
+    normalize_nostr_pubkey, normalize_runtime_network_id,
 };
 pub(crate) use nostr_vpn_core::invite::{
     NETWORK_INVITE_VERSION, NetworkInvite, encode_network_invite, parse_network_invite, to_npub,
@@ -20,6 +21,7 @@ pub(crate) fn active_network_invite_code(config: &AppConfig) -> Result<String> {
         network_id: roster.network_id,
         inviter_npub: String::new(),
         inviter_node_name: String::new(),
+        inviter_endpoints: active_inviter_endpoints(config),
         admins: roster.admins.iter().map(|admin| to_npub(admin)).collect(),
         participants: Vec::new(),
         relays: Vec::new(),
@@ -46,9 +48,16 @@ pub(crate) fn apply_network_invite_to_active_network(
     if let Some(network) = config.network_by_id_mut(&target_network_id) {
         merge_invite_membership(network, &prepared, own_pubkey.as_deref(), reset_membership);
     }
+    config.add_fips_peer_endpoint_hints(&prepared.inviter_pubkey, &invite.inviter_endpoints)?;
 
-    if !inviter_already_configured && !invite.inviter_node_name.trim().is_empty() {
-        let _ = config.set_peer_alias(&prepared.inviter_pubkey, &invite.inviter_node_name);
+    if !inviter_already_configured {
+        let inviter_alias = invite.inviter_node_name.trim();
+        let inviter_alias = if inviter_alias.is_empty() {
+            "admin"
+        } else {
+            inviter_alias
+        };
+        let _ = config.set_peer_alias(&prepared.inviter_pubkey, inviter_alias);
     }
 
     if should_adopt_name
@@ -59,6 +68,15 @@ pub(crate) fn apply_network_invite_to_active_network(
     }
 
     Ok(())
+}
+
+fn active_inviter_endpoints(config: &AppConfig) -> Vec<String> {
+    let mut configured = config.clone();
+    maybe_autoconfigure_node(&mut configured);
+    let endpoint = configured.node.endpoint.trim();
+    normalize_fips_peer_endpoint_hint(endpoint)
+        .into_iter()
+        .collect()
 }
 
 struct PreparedNetworkInvite {

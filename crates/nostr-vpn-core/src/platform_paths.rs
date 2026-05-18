@@ -128,9 +128,9 @@ mod tests {
     fn windows_default_config_path_prefers_installed_service_config() {
         let path = windows_default_config_path_for_state(
             Some(Path::new(r"C:\ProgramData")),
-            Some(Path::new(r"C:\Users\sirius\AppData\Roaming")),
+            Some(Path::new(r"C:\Users\Example\AppData\Roaming")),
             Some(Path::new(
-                r"C:\Users\sirius\AppData\Roaming\nvpn\config.toml",
+                r"C:\Users\Example\AppData\Roaming\nvpn\config.toml",
             )),
             false,
             true,
@@ -138,7 +138,7 @@ mod tests {
 
         assert_eq!(
             path,
-            PathBuf::from(r"C:\Users\sirius\AppData\Roaming\nvpn\config.toml")
+            PathBuf::from(r"C:\Users\Example\AppData\Roaming\nvpn\config.toml")
         );
     }
 
@@ -146,7 +146,7 @@ mod tests {
     fn windows_default_config_path_prefers_machine_path_for_new_installs() {
         let path = windows_default_config_path_for_state(
             Some(Path::new(r"C:\ProgramData")),
-            Some(Path::new(r"C:\Users\sirius\AppData\Roaming")),
+            Some(Path::new(r"C:\Users\Example\AppData\Roaming")),
             None,
             false,
             false,
@@ -159,7 +159,7 @@ mod tests {
     fn windows_default_config_path_falls_back_to_legacy_when_machine_missing() {
         let path = windows_default_config_path_for_state(
             Some(Path::new(r"C:\ProgramData")),
-            Some(Path::new(r"C:\Users\sirius\AppData\Roaming")),
+            Some(Path::new(r"C:\Users\Example\AppData\Roaming")),
             None,
             false,
             true,
@@ -168,7 +168,7 @@ mod tests {
         assert_eq!(
             path,
             legacy_config_path_from_dirs_config_dir(Some(Path::new(
-                r"C:\Users\sirius\AppData\Roaming"
+                r"C:\Users\Example\AppData\Roaming"
             )))
         );
     }

@@ -56,6 +56,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 import org.json.JSONObject
 import org.nostrvpn.app.core.AppState
+import org.nostrvpn.app.core.InboundJoinRequest
 import org.nostrvpn.app.core.NativeActions
 import org.nostrvpn.app.core.NetworkState
 import org.nostrvpn.app.core.ParticipantState
@@ -98,6 +99,7 @@ internal fun NostrVpnApp(
     var shownNetworkId by remember { mutableStateOf<String?>(null) }
     val activeNetwork = state.activeNetwork
     val network = state.networks.firstOrNull { it.id == shownNetworkId } ?: activeNetwork
+    val hasIncomingJoinRequests = state.networks.any { it.inboundJoinRequests.isNotEmpty() }
     Scaffold(
         containerColor = Color(0xFFF6F7F8),
         topBar = {
@@ -119,7 +121,13 @@ internal fun NostrVpnApp(
                         NavigationBarItem(
                             selected = page == item,
                             onClick = { page = item },
-                            icon = { NavIcon(item, selected = page == item) },
+                            icon = {
+                                NavIcon(
+                                    item,
+                                    selected = page == item,
+                                    attention = item == Page.Devices && hasIncomingJoinRequests,
+                                )
+                            },
                             label = { Text(item.title) },
                         )
                     }
@@ -313,7 +321,7 @@ private fun PlusIcon() {
 }
 
 @Composable
-private fun NavIcon(page: Page, selected: Boolean) {
+private fun NavIcon(page: Page, selected: Boolean, attention: Boolean = false) {
     val color = if (selected) Accent else Color(0xFF17202A)
     Canvas(modifier = Modifier.size(28.dp)) {
         val strokeWidth = 2.6.dp.toPx()
@@ -355,6 +363,11 @@ private fun NavIcon(page: Page, selected: Boolean) {
                 drawCircle(color, 2.4.dp.toPx(), center)
             }
         }
+        if (attention) {
+            val center = Offset(size.width - 4.dp.toPx(), 4.dp.toPx())
+            drawCircle(Color.White, 5.dp.toPx(), center)
+            drawCircle(Color(0xFFDC2626), 4.dp.toPx(), center)
+        }
     }
 }
 
@@ -380,26 +393,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.devicesPage(
         ParticipantRow(state, participant, network = network, dispatch = dispatch)
     }
     items(network.inboundJoinRequests, key = { it.requesterNpub }) { request ->
-        AppCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(request.requesterNodeName.ifBlank { "Join request" }, fontWeight = FontWeight.SemiBold)
-                    Text(request.requestedAtText, color = Muted, style = MaterialTheme.typography.bodySmall)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = {
-                        dispatch(NativeActions.rejectJoinRequest(network.id, request.requesterNpub))
-                    }) {
-                        Text("Reject", color = Color(0xFFB00020))
-                    }
-                    Button(onClick = {
-                        dispatch(NativeActions.acceptJoinRequest(network.id, request.requesterNpub))
-                    }) {
-                        Text("Accept")
-                    }
-                }
-            }
-        }
+        JoinRequestCard(network, request, dispatch)
     }
     item {
         OutlinedButton(
@@ -695,6 +689,14 @@ private fun AddDevicesDialog(
                     }
                 }
 
+                if (network.inboundJoinRequests.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Requests", style = MaterialTheme.typography.titleMedium)
+                    network.inboundJoinRequests.forEach { request ->
+                        JoinRequestCard(network, request, dispatch)
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("For manual join", style = MaterialTheme.typography.titleMedium)
                 Text(
@@ -723,6 +725,34 @@ private fun AddDevicesDialog(
             }
         },
     )
+}
+
+@Composable
+private fun JoinRequestCard(
+    network: NetworkState,
+    request: InboundJoinRequest,
+    dispatch: (JSONObject) -> Unit,
+) {
+    AppCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(request.requesterNodeName.ifBlank { "Join request" }, fontWeight = FontWeight.SemiBold)
+                Text(request.requestedAtText, color = Muted, style = MaterialTheme.typography.bodySmall)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    dispatch(NativeActions.rejectJoinRequest(network.id, request.requesterNpub))
+                }) {
+                    Text("Reject", color = Color(0xFFB00020))
+                }
+                Button(onClick = {
+                    dispatch(NativeActions.acceptJoinRequest(network.id, request.requesterNpub))
+                }) {
+                    Text("Accept")
+                }
+            }
+        }
+    }
 }
 
 private fun formatDialogRemaining(seconds: Long): String {

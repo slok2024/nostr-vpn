@@ -228,7 +228,8 @@ final class AppManager: ObservableObject {
             copy(value, as: .invite)
             return
         }
-        let picker = NSSharingServicePicker(items: [value])
+        let item: Any = URL(string: value) ?? value
+        let picker = NSSharingServicePicker(items: [item])
         picker.show(relativeTo: contentView.bounds, of: contentView, preferredEdge: .minY)
     }
 

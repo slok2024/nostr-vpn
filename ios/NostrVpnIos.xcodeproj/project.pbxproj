@@ -23,6 +23,7 @@
 		A2D4FF7B1D02640E8D08D6C7 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B11B87B71A3CB9B7FFB57358 /* PrivacyInfo.xcprivacy */; };
 		B9BD3A30C0A8D50809A96E69 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F7274F66C76E9FC38CB0DEDB /* Assets.xcassets */; };
 		C702E63D6DC6BEAE80CBEBD7 /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BD1EA5A948BC1EEB916CEC3D /* SystemConfiguration.framework */; };
+		D3C042D2A625A40B9B1DD2C6 /* ScreenshotFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47D10A3E63B2672F87095031 /* ScreenshotFixtures.swift */; };
 		DC1FC354C9FEA443CBCE3ABF /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10601F7E977CA9A2CA70782B /* PacketTunnelProvider.swift */; };
 		E3E54273AC9D7243E17F7CFD /* QRCodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC242766CE8040856CB2DC9 /* QRCodeScannerView.swift */; };
 		F5B16700D01D8F8004402AF9 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C8BAA0EBA6F30832FC35B6E6 /* NetworkExtension.framework */; };
@@ -58,6 +59,7 @@
 		21F75A016D5B4CB3DFBE0621 /* PacketTunnel.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PacketTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		29E68FA9898E0C487261BE03 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		3DDFB58648107DDDBCC8DBE5 /* PacketTunnel.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PacketTunnel.entitlements; sourceTree = "<group>"; };
+		47D10A3E63B2672F87095031 /* ScreenshotFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotFixtures.swift; sourceTree = "<group>"; };
 		4E8D34EBC51BAFC05BF873C3 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		5EE69AF3C3AAAA49D523C344 /* NostrVpnIos.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = NostrVpnIos.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		620E8362A0A3215BB8EFF1F5 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
@@ -119,6 +121,7 @@
 				E8ECBFB09C508ED9BE10C907 /* PacketTunnelController.swift */,
 				FEC242766CE8040856CB2DC9 /* QRCodeScannerView.swift */,
 				620E8362A0A3215BB8EFF1F5 /* RootView.swift */,
+				47D10A3E63B2672F87095031 /* ScreenshotFixtures.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -274,6 +277,7 @@
 				050CC6FAA230A6EDA894CCF8 /* PacketTunnelController.swift in Sources */,
 				E3E54273AC9D7243E17F7CFD /* QRCodeScannerView.swift in Sources */,
 				134D0AE1F2653934E68D66F4 /* RootView.swift in Sources */,
+				D3C042D2A625A40B9B1DD2C6 /* ScreenshotFixtures.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -381,7 +385,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 4000026;
+				CURRENT_PROJECT_VERSION = 4000031;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -401,7 +405,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 4.0.26;
+				MARKETING_VERSION = 4.0.31;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -497,7 +501,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 4000026;
+				CURRENT_PROJECT_VERSION = 4000031;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -511,7 +515,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 4.0.26;
+				MARKETING_VERSION = 4.0.31;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

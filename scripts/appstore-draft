@@ -1,0 +1,689 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/release_common.sh"
+
+load_release_env "$ROOT"
+load_appstoreconnect_defaults
+resolve_shared_build_metadata "$ROOT"
+
+IOS_BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-to.iris.nvpn}"
+APP_PRIMARY_LOCALE="${NVPN_ASC_APP_PRIMARY_LOCALE:-en-US}"
+SCREENSHOT_ROOT="${NVPN_IOS_SCREENSHOT_DIR:-$ROOT/artifacts/appstore-screenshots}"
+ACTION="${1:-put}"
+
+usage() {
+  cat <<'EOF'
+usage: ./scripts/appstore-draft <put|status>
+
+Creates or updates the editable iOS App Store version draft for the workspace
+version, links the matching App Store Connect build, updates en-US metadata,
+and uploads screenshots from artifacts/appstore-screenshots.
+
+Environment:
+  NVPN_ASC_AUTH_KEY_PATH, NVPN_ASC_AUTH_KEY_ID, NVPN_ASC_AUTH_KEY_ISSUER_ID
+                              App Store Connect API key settings
+  NVPN_IOS_BUNDLE_ID          app bundle id (default to.iris.nvpn)
+  NVPN_ASC_APP_PRIMARY_LOCALE locale (default en-US)
+  NVPN_IOS_SCREENSHOT_DIR     screenshot root (default artifacts/appstore-screenshots)
+  NVPN_APPSTORE_DESCRIPTION   optional App Store description override
+  NVPN_APPSTORE_KEYWORDS      optional keywords override
+  NVPN_APPSTORE_SUPPORT_URL   optional support URL override
+  NVPN_APPSTORE_PRIVACY_URL   optional privacy policy URL override
+EOF
+}
+
+case "$ACTION" in
+  put|status)
+    ;;
+  -h|--help|help)
+    usage
+    exit 0
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
+
+require_var NVPN_ASC_AUTH_KEY_PATH
+require_var NVPN_ASC_AUTH_KEY_ID
+require_var NVPN_ASC_AUTH_KEY_ISSUER_ID
+
+if [[ ! -f "$NVPN_ASC_AUTH_KEY_PATH" ]]; then
+  echo "ASC API key file not found: $NVPN_ASC_AUTH_KEY_PATH" >&2
+  exit 1
+fi
+
+export NVPN_APPSTORE_ACTION="$ACTION"
+export NVPN_IOS_BUNDLE_ID="$IOS_BUNDLE_ID"
+export NVPN_ASC_APP_PRIMARY_LOCALE="$APP_PRIMARY_LOCALE"
+export NVPN_IOS_SCREENSHOT_DIR="$SCREENSHOT_ROOT"
+
+python3 <<'PY'
+import base64
+import hashlib
+import json
+import mimetypes
+import os
+from pathlib import Path
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+try:
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, utils
+except ImportError as exc:
+    raise SystemExit(
+        "Python package 'cryptography' is required for App Store Connect JWT signing."
+    ) from exc
+
+
+BASE_URL = "https://api.appstoreconnect.apple.com/v1/"
+ACTION = os.environ["NVPN_APPSTORE_ACTION"]
+BUNDLE_ID = os.environ["NVPN_IOS_BUNDLE_ID"]
+LOCALE = os.environ["NVPN_ASC_APP_PRIMARY_LOCALE"]
+VERSION_NAME = os.environ["NVPN_APP_VERSION_NAME"]
+BUILD_NUMBER = os.environ["NVPN_APP_VERSION_CODE"]
+SCREENSHOT_ROOT = Path(os.environ["NVPN_IOS_SCREENSHOT_DIR"]) / LOCALE
+
+EDITABLE_STATES = {
+    "PREPARE_FOR_SUBMISSION",
+    "DEVELOPER_REJECTED",
+    "REJECTED",
+    "METADATA_REJECTED",
+}
+
+DEFAULT_DESCRIPTION = """Nostr VPN creates private mesh VPN networks between your own devices and trusted peers.
+
+Create a network, invite devices, start the VPN, and reach your private services through encrypted tunnels. Devices can use readable MagicDNS names, direct LAN paths when available, relay-assisted paths when needed, and optional exit-node routing through a peer or WireGuard upstream you control.
+
+You choose the networks, peers, relays, routes, and exit nodes. Nostr VPN does not sell or operate public VPN exits and is not a public internet proxy, anonymity, or stealth browsing service."""
+
+DEFAULT_PROMOTIONAL_TEXT = "Private mesh VPN for your own devices and trusted peers."
+DEFAULT_WHATS_NEW = """Initial public launch draft for the current Nostr VPN release.
+
+This build includes native mobile network management, device presence, MagicDNS names, private mesh routing, WireGuard upstream settings, and TestFlight hardening."""
+DEFAULT_KEYWORDS = "VPN,mesh,WireGuard,Nostr,private network,LAN,peer-to-peer,DNS"
+DEFAULT_SUPPORT_URL = "https://github.com/mmalmi/nostr-vpn/issues"
+DEFAULT_PRIVACY_URL = (
+    "https://sites.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/"
+    "nostr-vpn-privacy/index.html?reload=1"
+)
+
+
+def fail(message, code=1):
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def env_value(name, default=""):
+    return os.environ.get(name, "").strip() or default
+
+
+def b64url(data):
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def create_token():
+    with open(os.environ["NVPN_ASC_AUTH_KEY_PATH"], "rb") as key_file:
+        private_key = serialization.load_pem_private_key(key_file.read(), password=None)
+
+    now = int(time.time())
+    header = {
+        "alg": "ES256",
+        "kid": os.environ["NVPN_ASC_AUTH_KEY_ID"],
+        "typ": "JWT",
+    }
+    payload = {
+        "iss": os.environ["NVPN_ASC_AUTH_KEY_ISSUER_ID"],
+        "iat": now,
+        "exp": now + 20 * 60,
+        "aud": "appstoreconnect-v1",
+    }
+    signing_input = (
+        f"{b64url(json.dumps(header, separators=(',', ':')).encode())}."
+        f"{b64url(json.dumps(payload, separators=(',', ':')).encode())}"
+    ).encode("ascii")
+    der_signature = private_key.sign(signing_input, ec.ECDSA(hashes.SHA256()))
+    r_value, s_value = utils.decode_dss_signature(der_signature)
+    signature = r_value.to_bytes(32, "big") + s_value.to_bytes(32, "big")
+    return signing_input.decode("ascii") + "." + b64url(signature)
+
+
+TOKEN = create_token()
+
+
+def request(method, path_or_url, params=None, body=None, headers=None, auth=True):
+    if path_or_url.startswith("https://"):
+        url = path_or_url
+    else:
+        url = BASE_URL + path_or_url
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
+
+    data = None
+    request_headers = dict(headers or {})
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        request_headers["Content-Type"] = "application/json"
+    if auth:
+        request_headers["Authorization"] = f"Bearer {TOKEN}"
+
+    req = urllib.request.Request(url, data=data, headers=request_headers, method=method)
+    try:
+        with urllib.request.urlopen(req) as response:
+            raw = response.read()
+            if not raw:
+                return response.status, {}
+            return response.status, json.loads(raw.decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            body = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            body = {"raw": raw}
+        return exc.code, body
+
+
+def upload_request(operation, chunk):
+    headers = {
+        header["name"]: header["value"]
+        for header in operation.get("requestHeaders", [])
+    }
+    req = urllib.request.Request(
+        operation["url"],
+        data=chunk,
+        headers=headers,
+        method=operation.get("method", "PUT"),
+    )
+    try:
+        with urllib.request.urlopen(req) as response:
+            response.read()
+            return response.status
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        fail(f"Screenshot upload failed: HTTP {exc.code}\n{raw}")
+
+
+def require_ok(status, body, label):
+    if 200 <= status < 300:
+        return body
+    fail(f"{label} failed: HTTP {status}\n{json.dumps(body, indent=2)}")
+
+
+def get_all(path, params=None):
+    items = []
+    next_url = None
+    while True:
+        if next_url:
+            status, body = request("GET", next_url)
+        else:
+            query = {"limit": "200"}
+            if params:
+                query.update(params)
+            status, body = request("GET", path, query)
+        require_ok(status, body, f"GET {path}")
+        items.extend(body.get("data", []))
+        next_url = body.get("links", {}).get("next")
+        if not next_url:
+            return items
+
+
+def find_app():
+    apps = get_all("apps", {"filter[bundleId]": BUNDLE_ID, "limit": "10"})
+    for app in apps:
+        if app.get("attributes", {}).get("bundleId") == BUNDLE_ID:
+            return app
+    return apps[0] if apps else None
+
+
+def app_store_versions(app_id):
+    return get_all(
+        f"apps/{app_id}/appStoreVersions",
+        {
+            "fields[appStoreVersions]": (
+                "versionString,appStoreState,platform,createdDate,copyright,"
+                "releaseType,usesIdfa,downloadable"
+            ),
+            "limit": "200",
+        },
+    )
+
+
+def patch_version(version, attrs):
+    status, body = request(
+        "PATCH",
+        f"appStoreVersions/{version['id']}",
+        body={
+            "data": {
+                "type": "appStoreVersions",
+                "id": version["id"],
+                "attributes": attrs,
+            }
+        },
+    )
+    return require_ok(status, body, "Update App Store version").get("data")
+
+
+def create_version(app_id):
+    status, body = request(
+        "POST",
+        "appStoreVersions",
+        body={
+            "data": {
+                "type": "appStoreVersions",
+                "attributes": {
+                    "platform": "IOS",
+                    "versionString": VERSION_NAME,
+                    "releaseType": "AFTER_APPROVAL",
+                    "usesIdfa": False,
+                },
+                "relationships": {
+                    "app": {"data": {"type": "apps", "id": app_id}}
+                },
+            }
+        },
+    )
+    return require_ok(status, body, "Create App Store version").get("data")
+
+
+def ensure_version(app_id):
+    versions = app_store_versions(app_id)
+    for version in versions:
+        attrs = version.get("attributes", {})
+        if attrs.get("platform") == "IOS" and attrs.get("versionString") == VERSION_NAME:
+            return patch_version(
+                version,
+                {
+                    "releaseType": "AFTER_APPROVAL",
+                    "usesIdfa": False,
+                    "copyright": env_value(
+                        "NVPN_APPSTORE_COPYRIGHT",
+                        "2026 Martti Malmi",
+                    ),
+                },
+            )
+
+    editable = [
+        version
+        for version in versions
+        if version.get("attributes", {}).get("platform") == "IOS"
+        and version.get("attributes", {}).get("appStoreState") in EDITABLE_STATES
+    ]
+    if editable:
+        return patch_version(
+            editable[0],
+            {
+                "versionString": VERSION_NAME,
+                "releaseType": "AFTER_APPROVAL",
+                "usesIdfa": False,
+                "copyright": env_value(
+                    "NVPN_APPSTORE_COPYRIGHT",
+                    "2026 Martti Malmi",
+                ),
+            },
+        )
+
+    return create_version(app_id)
+
+
+def version_localizations(version_id):
+    return get_all(
+        f"appStoreVersions/{version_id}/appStoreVersionLocalizations",
+        {
+            "fields[appStoreVersionLocalizations]": (
+                "description,locale,keywords,marketingUrl,promotionalText,"
+                "supportUrl,whatsNew"
+            ),
+            "limit": "200",
+        },
+    )
+
+
+def metadata_attrs(existing=None):
+    current = existing.get("attributes", {}) if existing else {}
+    description = env_value(
+        "NVPN_APPSTORE_DESCRIPTION",
+        current.get("description") or DEFAULT_DESCRIPTION,
+    )
+    keywords = env_value(
+        "NVPN_APPSTORE_KEYWORDS",
+        current.get("keywords") or DEFAULT_KEYWORDS,
+    )
+    if len(keywords) > 100:
+        fail(f"NVPN_APPSTORE_KEYWORDS is {len(keywords)} characters; App Store limit is 100")
+    attrs = {
+        "description": description,
+        "keywords": keywords,
+        "promotionalText": env_value(
+            "NVPN_APPSTORE_PROMOTIONAL_TEXT",
+            current.get("promotionalText") or DEFAULT_PROMOTIONAL_TEXT,
+        ),
+        "supportUrl": env_value(
+            "NVPN_APPSTORE_SUPPORT_URL",
+            current.get("supportUrl") or DEFAULT_SUPPORT_URL,
+        ),
+        "whatsNew": env_value(
+            "NVPN_APPSTORE_WHATS_NEW",
+            current.get("whatsNew") or DEFAULT_WHATS_NEW,
+        ),
+    }
+    marketing_url = env_value(
+        "NVPN_APPSTORE_MARKETING_URL",
+        current.get("marketingUrl") or "https://github.com/mmalmi/nostr-vpn",
+    )
+    if marketing_url:
+        attrs["marketingUrl"] = marketing_url
+    return attrs
+
+
+def whats_new_locked(body):
+    for error in body.get("errors", []):
+        detail = str(error.get("detail", ""))
+        if "whatsNew" in detail and error.get("code") in {"STATE_ERROR", "ENTITY_ERROR.ATTRIBUTE.INVALID"}:
+            return True
+    return False
+
+
+def ensure_localization(version_id):
+    existing = None
+    for localization in version_localizations(version_id):
+        if localization.get("attributes", {}).get("locale") == LOCALE:
+            existing = localization
+            break
+
+    attrs = metadata_attrs(existing)
+    if existing:
+        status, body = request(
+            "PATCH",
+            f"appStoreVersionLocalizations/{existing['id']}",
+            body={
+                "data": {
+                    "type": "appStoreVersionLocalizations",
+                    "id": existing["id"],
+                    "attributes": attrs,
+                }
+            },
+        )
+        if not (200 <= status < 300) and whats_new_locked(body) and "whatsNew" in attrs:
+            attrs.pop("whatsNew", None)
+            print("App Store localization state does not allow whatsNew; retrying without it")
+            status, body = request(
+                "PATCH",
+                f"appStoreVersionLocalizations/{existing['id']}",
+                body={
+                    "data": {
+                        "type": "appStoreVersionLocalizations",
+                        "id": existing["id"],
+                        "attributes": attrs,
+                    }
+                },
+            )
+        return require_ok(status, body, "Update App Store localization").get("data")
+
+    attrs["locale"] = LOCALE
+    status, body = request(
+        "POST",
+        "appStoreVersionLocalizations",
+        body={
+            "data": {
+                "type": "appStoreVersionLocalizations",
+                "attributes": attrs,
+                "relationships": {
+                    "appStoreVersion": {
+                        "data": {"type": "appStoreVersions", "id": version_id}
+                    }
+                },
+            }
+        },
+    )
+    if not (200 <= status < 300) and whats_new_locked(body) and "whatsNew" in attrs:
+        attrs.pop("whatsNew", None)
+        print("App Store localization state does not allow whatsNew; retrying without it")
+        status, body = request(
+            "POST",
+            "appStoreVersionLocalizations",
+            body={
+                "data": {
+                    "type": "appStoreVersionLocalizations",
+                    "attributes": attrs,
+                    "relationships": {
+                        "appStoreVersion": {
+                            "data": {"type": "appStoreVersions", "id": version_id}
+                        }
+                    },
+                }
+            },
+        )
+    return require_ok(status, body, "Create App Store localization").get("data")
+
+
+def find_build(app_id):
+    builds = get_all(
+        "builds",
+        {
+            "filter[app]": app_id,
+            "filter[version]": BUILD_NUMBER,
+            "fields[builds]": (
+                "version,uploadedDate,processingState,buildAudienceType,"
+                "usesNonExemptEncryption,expired"
+            ),
+            "limit": "20",
+        },
+    )
+    for build in builds:
+        attrs = build.get("attributes", {})
+        if str(attrs.get("version")) == str(BUILD_NUMBER):
+            return build
+    return builds[0] if builds else None
+
+
+def link_build(version_id, build):
+    attrs = build.get("attributes", {})
+    if attrs.get("processingState") != "VALID":
+        fail(f"Build {BUILD_NUMBER} is {attrs.get('processingState')}, not VALID")
+    if attrs.get("expired") is True:
+        fail(f"Build {BUILD_NUMBER} is expired")
+    status, body = request(
+        "PATCH",
+        f"appStoreVersions/{version_id}/relationships/build",
+        body={"data": {"type": "builds", "id": build["id"]}},
+    )
+    require_ok(status, body, "Link App Store build")
+
+
+def screenshot_sets(localization_id):
+    return get_all(
+        f"appStoreVersionLocalizations/{localization_id}/appScreenshotSets",
+        {
+            "fields[appScreenshotSets]": "screenshotDisplayType",
+            "limit": "200",
+        },
+    )
+
+
+def ensure_screenshot_set(localization_id, display_type):
+    for screenshot_set in screenshot_sets(localization_id):
+        if screenshot_set.get("attributes", {}).get("screenshotDisplayType") == display_type:
+            return screenshot_set
+
+    status, body = request(
+        "POST",
+        "appScreenshotSets",
+        body={
+            "data": {
+                "type": "appScreenshotSets",
+                "attributes": {"screenshotDisplayType": display_type},
+                "relationships": {
+                    "appStoreVersionLocalization": {
+                        "data": {
+                            "type": "appStoreVersionLocalizations",
+                            "id": localization_id,
+                        }
+                    }
+                },
+            }
+        },
+    )
+    return require_ok(status, body, f"Create screenshot set {display_type}").get("data")
+
+
+def screenshots_for_set(set_id):
+    return get_all(
+        f"appScreenshotSets/{set_id}/appScreenshots",
+        {
+            "fields[appScreenshots]": "fileName,assetDeliveryState",
+            "limit": "50",
+        },
+    )
+
+
+def clear_screenshots(set_id):
+    for screenshot in screenshots_for_set(set_id):
+        status, body = request("DELETE", f"appScreenshots/{screenshot['id']}")
+        require_ok(status, body, f"Delete screenshot {screenshot['id']}")
+
+
+def reserve_screenshot(set_id, path):
+    data = path.read_bytes()
+    checksum = hashlib.md5(data).hexdigest()
+    mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
+    status, body = request(
+        "POST",
+        "appScreenshots",
+        body={
+            "data": {
+                "type": "appScreenshots",
+                "attributes": {
+                    "fileName": path.name,
+                    "fileSize": len(data),
+                },
+                "relationships": {
+                    "appScreenshotSet": {
+                        "data": {"type": "appScreenshotSets", "id": set_id}
+                    }
+                },
+            }
+        },
+    )
+    screenshot = require_ok(status, body, f"Reserve screenshot {path.name}").get("data")
+    operations = screenshot.get("attributes", {}).get("uploadOperations", [])
+    if not operations:
+        fail(f"No upload operations returned for {path}")
+    for operation in operations:
+        offset = int(operation.get("offset", 0))
+        length = int(operation.get("length", len(data) - offset))
+        operation.setdefault("requestHeaders", [])
+        if not any(h.get("name", "").lower() == "content-type" for h in operation["requestHeaders"]):
+            operation["requestHeaders"].append({"name": "Content-Type", "value": mime_type})
+        upload_request(operation, data[offset : offset + length])
+
+    status, body = request(
+        "PATCH",
+        f"appScreenshots/{screenshot['id']}",
+        body={
+            "data": {
+                "type": "appScreenshots",
+                "id": screenshot["id"],
+                "attributes": {
+                    "uploaded": True,
+                    "sourceFileChecksum": checksum,
+                },
+            }
+        },
+    )
+    return require_ok(status, body, f"Commit screenshot {path.name}").get("data")
+
+
+def screenshot_state(screenshot_id):
+    status, body = request(
+        "GET",
+        f"appScreenshots/{screenshot_id}",
+        {"fields[appScreenshots]": "fileName,assetDeliveryState"},
+    )
+    screenshot = require_ok(status, body, "Read screenshot state").get("data")
+    delivery = screenshot.get("attributes", {}).get("assetDeliveryState") or {}
+    return delivery.get("state") or delivery.get("errors") or "UNKNOWN"
+
+
+def wait_for_screenshots(screenshots):
+    pending = {screenshot["id"]: screenshot for screenshot in screenshots}
+    for _ in range(30):
+        completed = []
+        for screenshot_id in pending:
+            state = screenshot_state(screenshot_id)
+            if state == "COMPLETE":
+                completed.append(screenshot_id)
+            elif state == "FAILED":
+                fail(f"Screenshot {screenshot_id} failed processing")
+        for screenshot_id in completed:
+            pending.pop(screenshot_id, None)
+        if not pending:
+            return
+        time.sleep(4)
+    print(
+        "Warning: screenshot processing is still pending for "
+        + ", ".join(pending.keys()),
+        file=sys.stderr,
+    )
+
+
+def upload_screenshots(localization_id):
+    if not SCREENSHOT_ROOT.is_dir():
+        fail(f"Screenshot directory not found: {SCREENSHOT_ROOT}")
+
+    uploaded = []
+    for display_dir in sorted(path for path in SCREENSHOT_ROOT.iterdir() if path.is_dir()):
+        display_type = display_dir.name
+        paths = sorted(
+            path for path in display_dir.iterdir()
+            if path.suffix.lower() in {".png", ".jpg", ".jpeg"}
+        )
+        if not paths:
+            continue
+        if len(paths) > 10:
+            fail(f"{display_type} has {len(paths)} screenshots; App Store limit is 10")
+        screenshot_set = ensure_screenshot_set(localization_id, display_type)
+        clear_screenshots(screenshot_set["id"])
+        print(f"Uploading {len(paths)} screenshot(s) for {display_type}")
+        for path in paths:
+            uploaded.append(reserve_screenshot(screenshot_set["id"], path))
+    wait_for_screenshots(uploaded)
+    return uploaded
+
+
+app = find_app()
+if app is None:
+    fail(f"No App Store Connect app found for bundle {BUNDLE_ID}")
+
+if ACTION == "status":
+    print(f"App: {app.get('attributes', {}).get('name')} [{app['id']}]")
+    for version in app_store_versions(app["id"]):
+        attrs = version.get("attributes", {})
+        print(
+            f"  - {attrs.get('versionString')} {attrs.get('platform')} "
+            f"{attrs.get('appStoreState')} [{version['id']}]"
+        )
+    raise SystemExit(0)
+
+version = ensure_version(app["id"])
+localization = ensure_localization(version["id"])
+build = find_build(app["id"])
+if build is None:
+    fail(f"Build {BUILD_NUMBER} is not visible in App Store Connect")
+link_build(version["id"], build)
+screenshots = upload_screenshots(localization["id"])
+
+print(f"Updated App Store draft {VERSION_NAME} for {BUNDLE_ID}")
+print(f"Version: {version['id']}")
+print(f"Localization: {localization['id']} ({LOCALE})")
+print(f"Build: {BUILD_NUMBER} [{build['id']}]")
+print(f"Screenshots uploaded: {len(screenshots)}")
+PY

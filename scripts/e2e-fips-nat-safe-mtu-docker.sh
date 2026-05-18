@@ -12,6 +12,17 @@ SAFE_TUNNEL_MTU=1150
 PING_PAYLOAD_SIZE=1000
 CONTINUITY_DURATION_SECS="${NVPN_E2E_CONTINUITY_SECS:-90}"
 CONTINUITY_INTERVAL_SECS="${NVPN_E2E_CONTINUITY_INTERVAL_SECS:-0.2}"
+FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}"
+NODE_A_PUBLIC_IP="${NVPN_E2E_NODE_A_PUBLIC_IP:-11.203.0.10}"
+NAT_B_PUBLIC_IP="${NVPN_E2E_NAT_B_PUBLIC_IP:-11.203.0.11}"
+INTERNET_TARGET_IP="${NVPN_E2E_INTERNET_TARGET_IP:-11.203.0.100}"
+WG_UPSTREAM_IP="${NVPN_E2E_WG_UPSTREAM_IP:-11.203.0.20}"
+INTERNET_SUBNET="${NVPN_E2E_INTERNET_SUBNET:-11.203.0.0/24}"
+export NVPN_E2E_NODE_A_PUBLIC_IP="$NODE_A_PUBLIC_IP"
+export NVPN_E2E_NAT_B_PUBLIC_IP="$NAT_B_PUBLIC_IP"
+export NVPN_E2E_INTERNET_TARGET_IP="$INTERNET_TARGET_IP"
+export NVPN_E2E_WG_UPSTREAM_IP="$WG_UPSTREAM_IP"
+export NVPN_E2E_INTERNET_SUBNET="$INTERNET_SUBNET"
 
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -151,8 +162,12 @@ block_docker_gateway_fips_shortcut() {
 
 start_nvpn_daemon() {
   local node="$1"
-  "${COMPOSE[@]}" exec -T "$node" sh -lc \
-    "NVPN_MESH_MTU_PROFILE=safe NVPN_MESH_UNDERLAY_UDP_MTU=1280 NVPN_MESH_TUNNEL_MTU=$SAFE_TUNNEL_MTU nvpn start --daemon --connect" >/dev/null
+  "${COMPOSE[@]}" exec -T "$node" env \
+    NVPN_FIPS_NOSTR_DISCOVERY_POLICY="$FIPS_NOSTR_DISCOVERY_POLICY" \
+    NVPN_MESH_MTU_PROFILE=safe \
+    NVPN_MESH_UNDERLAY_UDP_MTU=1280 \
+    NVPN_MESH_TUNNEL_MTU="$SAFE_TUNNEL_MTU" \
+    nvpn start --daemon --connect >/dev/null
 }
 
 wait_for_mesh() {
@@ -338,7 +353,7 @@ NODE_B_PRIVATE_IFACE="$(private_iface_for_ip node-b 172.30.242.3/24)"
   "ip route del default >/dev/null 2>&1 || true; ip route add default via 172.30.242.2 dev $NODE_B_PRIVATE_IFACE"
 block_docker_gateway_fips_shortcut
 
-BOB_UNDERLAY_ROUTE="$("${COMPOSE[@]}" exec -T node-b sh -lc "ip route get 198.51.100.10 | tr -d '\r'")"
+BOB_UNDERLAY_ROUTE="$("${COMPOSE[@]}" exec -T node-b sh -lc "ip route get '$NODE_A_PUBLIC_IP' | tr -d '\r'")"
 if ! grep -q 'via 172.30.242.2' <<<"$BOB_UNDERLAY_ROUTE"; then
   echo "fips nat safe-mtu e2e failed: bob underlay route to alice did not pass through nat-b" >&2
   echo "$BOB_UNDERLAY_ROUTE" >&2
@@ -362,20 +377,20 @@ fi
   --node-name alice \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
-  --endpoint "198.51.100.10:51820" \
+  --endpoint "$NODE_A_PUBLIC_IP:51820" \
   --listen-port 51820 \
   --fips-advertise-endpoint false \
-  --fips-peer-endpoint "$BOB_NPUB=198.51.100.11:51820" >/dev/null
+  --fips-peer-endpoint "$BOB_NPUB=$NAT_B_PUBLIC_IP:51820" >/dev/null
 
 "${COMPOSE[@]}" exec -T node-b nvpn set \
   --network-id "$NETWORK_ID" \
   --node-name bob \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
-  --endpoint "198.51.100.11:51820" \
+  --endpoint "$NAT_B_PUBLIC_IP:51820" \
   --listen-port 51820 \
   --fips-advertise-endpoint false \
-  --fips-peer-endpoint "$ALICE_NPUB=198.51.100.10:51820" >/dev/null
+  --fips-peer-endpoint "$ALICE_NPUB=$NODE_A_PUBLIC_IP:51820" >/dev/null
 
 for node in node-a node-b; do
   replace_peer_aliases "$node"

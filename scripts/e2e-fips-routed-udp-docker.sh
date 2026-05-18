@@ -12,6 +12,7 @@ SAFE_TUNNEL_MTU=1150
 PING_PAYLOAD_SIZE=1000
 CONTINUITY_DURATION_SECS="${NVPN_E2E_CONTINUITY_SECS:-90}"
 CONTINUITY_INTERVAL_SECS="${NVPN_E2E_CONTINUITY_INTERVAL_SECS:-0.2}"
+FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}"
 
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -244,8 +245,12 @@ wait_for_payload() {
 
 start_nvpn_daemon() {
   local node="$1"
-  "${COMPOSE[@]}" exec -T "$node" sh -lc \
-    "NVPN_MESH_MTU_PROFILE=safe NVPN_MESH_UNDERLAY_UDP_MTU=1280 NVPN_MESH_TUNNEL_MTU=$SAFE_TUNNEL_MTU nvpn start --daemon --connect" >/dev/null
+  "${COMPOSE[@]}" exec -T "$node" env \
+    NVPN_FIPS_NOSTR_DISCOVERY_POLICY="$FIPS_NOSTR_DISCOVERY_POLICY" \
+    NVPN_MESH_MTU_PROFILE=safe \
+    NVPN_MESH_UNDERLAY_UDP_MTU=1280 \
+    NVPN_MESH_TUNNEL_MTU="$SAFE_TUNNEL_MTU" \
+    nvpn start --daemon --connect >/dev/null
 }
 
 assert_tunnel_mtu() {

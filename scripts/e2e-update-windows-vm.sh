@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Run the Windows update-check E2E inside the win11-dev VM (reachable over
-# the Nostr VPN mesh — see CLAUDE.md). Replaces the previous Parallels
+# Run the Windows update-check E2E inside a Windows VM reachable over SSH.
+# Set NVPN_WINDOWS_SSH_HOST for local machine-specific hostnames.
+# Replaces the previous Parallels
 # `prlctl exec` flow.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SSH_HOST="${NVPN_WINDOWS_SSH_HOST:-${1:-win11-dev}}"
+SSH_HOST="${NVPN_WINDOWS_SSH_HOST:-${1:-windows-dev}}"
 GUEST_REPO="${NVPN_WINDOWS_GUEST_REPO_PATH:-C:\\src\\nostr-vpn}"
 GUEST_ARTIFACT_ROOT="${GUEST_ARTIFACT_ROOT:-C:\\src\\nostr-vpn\\artifacts}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-$ROOT/artifacts}"

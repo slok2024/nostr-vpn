@@ -1,7 +1,7 @@
 # AGENTS.md
 
-Notes for AI coding agents working in this repo. Pair with the user's
-global `~/.claude/CLAUDE.md` instructions.
+Notes for AI coding agents working in this repo. Pair with any local
+operator instructions outside the repository.
 
 ## Development notes
 
@@ -35,11 +35,11 @@ and tagging:
 just release-gate
 ```
 
-This runs sync-versions, fmt, clippy, Rust tests, and the routed-FIPS
-Docker e2e that verifies two peers can communicate through an
-intermediary when their direct UDP path is blocked. These mirror the
-regular CI gate. If any step fails or warns, fix it before you cut the
-release commit.
+This runs sync-versions, fmt, clippy, Rust tests, the FIPS join-request
+Docker e2e, the routed-FIPS Docker e2e that verifies two peers can
+communicate through an intermediary when their direct UDP path is blocked,
+and the NAT safe-MTU Docker e2e. These mirror the regular CI gate. If any
+step fails or warns, fix it before you cut the release commit.
 
 For the Linux GTK app (`linux/`, excluded from the workspace) also run:
 

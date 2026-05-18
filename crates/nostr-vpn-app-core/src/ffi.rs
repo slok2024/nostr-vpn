@@ -816,7 +816,7 @@ impl NativeAppRuntime {
             } => {
                 self.config
                     .set_network_join_requests_enabled(&network_id, enabled)?;
-                self.save_reload_and_refresh()
+                self.save_reload_refresh_and_maybe_connect_for_join_requests(enabled)
             }
             NativeAppAction::RequestNetworkJoin { network_id } => {
                 self.request_network_join(&network_id)
@@ -927,6 +927,7 @@ impl NativeAppRuntime {
             network_id: mesh_id.to_string(),
             inviter_npub: admin.to_string(),
             inviter_node_name: String::new(),
+            inviter_endpoints: Vec::new(),
             admins: vec![admin.to_string()],
             participants: Vec::new(),
             relays: Vec::new(),
@@ -966,6 +967,7 @@ impl NativeAppRuntime {
             return Ok(false);
         }
 
+        let _ = self.config.ensure_temporary_self_magic_dns_alias();
         let network = self
             .config
             .network_by_id_mut(network_id)
@@ -1040,13 +1042,13 @@ impl NativeAppRuntime {
         let Some(network) = self.config.active_network_opt() else {
             return Ok(());
         };
-        if network.listen_for_join_requests {
-            return Ok(());
-        }
+        let enabled = network.listen_for_join_requests;
         let network_id = network.id.clone();
-        self.config
-            .set_network_join_requests_enabled(&network_id, true)?;
-        self.save_reload_and_refresh()
+        if !enabled {
+            self.config
+                .set_network_join_requests_enabled(&network_id, true)?;
+        }
+        self.save_reload_refresh_and_maybe_connect_for_join_requests(true)
     }
 
     fn stop_invite_broadcast(&mut self) {
@@ -1529,6 +1531,17 @@ impl NativeAppRuntime {
             ensure_success("nvpn reload", &output)?;
         }
         self.refresh_status()
+    }
+
+    fn save_reload_refresh_and_maybe_connect_for_join_requests(
+        &mut self,
+        enabled: bool,
+    ) -> Result<()> {
+        self.save_reload_and_refresh()?;
+        if enabled && !self.vpn_enabled {
+            self.connect_vpn()?;
+        }
+        Ok(())
     }
 
     fn save_config(&mut self) -> Result<()> {
@@ -2311,13 +2324,32 @@ fn shorten_middle(value: &str, prefix: usize, suffix: usize) -> String {
 }
 
 fn peer_link_text(peer: &DaemonPeerState) -> Option<String> {
-    let addr = non_empty(&peer.fips_transport_addr)?;
-    let transport = non_empty(&peer.fips_transport_type).unwrap_or_else(|| "fips".to_string());
-    let mut text = format!("{transport} {}", shorten_middle(&addr, 22, 10));
-    if let Some(srtt_ms) = peer.fips_srtt_ms {
-        let _ = write!(text, " ({srtt_ms} ms)");
+    if let Some(addr) = non_empty(&peer.fips_transport_addr) {
+        let transport = non_empty(&peer.fips_transport_type).unwrap_or_else(|| "fips".to_string());
+        let mut text = format!("{transport} {}", shorten_middle(&addr, 22, 10));
+        if let Some(srtt_ms) = peer.fips_srtt_ms.filter(|value| *value > 0) {
+            let _ = write!(text, " ({srtt_ms} ms)");
+        }
+        return Some(text);
     }
-    Some(text)
+
+    let is_fips_peer = !peer.fips_endpoint_npub.trim().is_empty()
+        || peer.endpoint.trim().eq_ignore_ascii_case("fips")
+        || peer
+            .runtime_endpoint
+            .as_deref()
+            .is_some_and(|endpoint| endpoint.trim().eq_ignore_ascii_case("fips"));
+    let recently_seen =
+        peer.reachable || peer_last_fips_seen_secs(peer).is_some_and(within_presence_grace);
+    if is_fips_peer && recently_seen {
+        let mut text = "mesh".to_string();
+        if let Some(srtt_ms) = peer.fips_srtt_ms.filter(|value| *value > 0) {
+            let _ = write!(text, " ({srtt_ms} ms)");
+        }
+        return Some(text);
+    }
+
+    None
 }
 
 fn native_config_path(data_dir: &str) -> PathBuf {
@@ -2774,6 +2806,120 @@ mod tests {
     }
 
     #[test]
+    fn self_admin_alias_action_updates_network_state_for_ui_shells() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-self-alias-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.last_error.clear();
+        runtime.mobile_runtime = true;
+        runtime.config_path = dir.join("config.toml");
+        create_test_network(&mut runtime, "Home");
+        let own_pubkey = runtime
+            .config
+            .own_nostr_pubkey_hex()
+            .expect("generated config should have own pubkey");
+        runtime.config.networks[0].admins = vec![own_pubkey.clone()];
+        runtime.config.networks[0].participants = Vec::new();
+
+        runtime.dispatch(NativeAppAction::SetParticipantAlias {
+            npub: to_npub(&own_pubkey),
+            alias: "My iPhone".to_string(),
+        });
+
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        let state = runtime.state();
+        let network = &state.networks[0];
+        assert!(network.local_is_admin);
+        let self_participant = network
+            .participants
+            .iter()
+            .find(|participant| participant.pubkey_hex == own_pubkey)
+            .expect("self participant");
+        assert_eq!(self_participant.magic_dns_alias, "my-iphone");
+        assert_eq!(self_participant.magic_dns_name, "my-iphone.nvpn");
+        assert_eq!(state.self_magic_dns_name, "my-iphone.nvpn");
+
+        let roster = runtime
+            .config
+            .shared_network_roster(&network.id)
+            .expect("shared roster");
+        assert_eq!(
+            roster.aliases.get(&own_pubkey).map(String::as_str),
+            Some("my-iphone")
+        );
+
+        let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
+        assert_eq!(saved.peer_alias(&own_pubkey).as_deref(), Some("my-iphone"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn join_request_seeds_working_temporary_magic_dns_names() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-join-dns-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+
+        let admin = Keys::generate();
+        let admin_hex = admin.public_key().to_hex();
+        let admin_npub = admin.public_key().to_bech32().expect("admin npub");
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.last_error.clear();
+        runtime.mobile_runtime = true;
+        runtime.config_path = dir.join("config.toml");
+
+        runtime.dispatch(NativeAppAction::ManualAddNetwork {
+            admin_npub,
+            mesh_network_id: "mesh-home".to_string(),
+        });
+        let network_id = runtime.config.networks[0].id.clone();
+        runtime.dispatch(NativeAppAction::RequestNetworkJoin { network_id });
+
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        assert_eq!(
+            runtime.config.peer_alias(&admin_hex).as_deref(),
+            Some("admin")
+        );
+        let own_pubkey = runtime
+            .config
+            .own_nostr_pubkey_hex()
+            .expect("generated config should have own pubkey");
+        let self_alias = runtime
+            .config
+            .peer_alias(&own_pubkey)
+            .expect("join request seeds local alias");
+        assert_eq!(self_alias, "self");
+
+        let records = nostr_vpn_core::magic_dns::build_magic_dns_records(&runtime.config);
+        let admin_ip = derive_mesh_tunnel_ip("mesh-home", &admin_hex)
+            .expect("admin tunnel ip")
+            .trim_end_matches("/32")
+            .parse()
+            .expect("admin ipv4");
+        let own_ip = derive_mesh_tunnel_ip("mesh-home", &own_pubkey)
+            .expect("own tunnel ip")
+            .trim_end_matches("/32")
+            .parse()
+            .expect("own ipv4");
+        assert_eq!(records.get("admin.nvpn").copied(), Some(admin_ip));
+        assert_eq!(records.get("self.nvpn").copied(), Some(own_ip));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn native_state_flags_blocked_exit_node_when_protection_is_enabled() {
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
@@ -2864,6 +3010,54 @@ mod tests {
     }
 
     #[test]
+    fn native_state_reports_routed_fips_peer_latency() {
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        let own_pubkey = runtime
+            .config
+            .own_nostr_pubkey_hex()
+            .expect("generated config should have own pubkey");
+        let peer_pubkey = "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc";
+        runtime.startup_error = None;
+        runtime.daemon_running = true;
+        runtime.vpn_enabled = true;
+        runtime.vpn_active = true;
+        create_test_network(&mut runtime, "Home");
+        runtime.config.networks[0].admins = vec![own_pubkey];
+        runtime.config.networks[0].participants = vec![peer_pubkey.to_string()];
+        let now = unix_timestamp();
+        runtime.daemon_state = Some(DaemonRuntimeState {
+            vpn_enabled: true,
+            vpn_active: true,
+            expected_peer_count: 1,
+            connected_peer_count: 1,
+            mesh_ready: true,
+            peers: vec![DaemonPeerState {
+                participant_pubkey: peer_pubkey.to_string(),
+                endpoint: "fips".to_string(),
+                runtime_endpoint: Some("fips".to_string()),
+                fips_endpoint_npub: "npub1peer".to_string(),
+                fips_srtt_ms: Some(112),
+                last_fips_seen_at: Some(now),
+                last_handshake_at: Some(now),
+                reachable: true,
+                ..DaemonPeerState::default()
+            }],
+            ..DaemonRuntimeState::default()
+        });
+
+        let state = runtime.state();
+        let peer = state.networks[0]
+            .participants
+            .iter()
+            .find(|participant| participant.pubkey_hex == peer_pubkey)
+            .expect("peer participant");
+
+        assert_eq!(peer.status_text, "online via mesh (112 ms)");
+        assert_eq!(peer.fips_srtt_ms, 112);
+    }
+
+    #[test]
     fn invite_import_queues_join_request_to_invite_admin() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2880,6 +3074,7 @@ mod tests {
         let invite = serde_json::json!({
             "v": 3,
             "networkId": "8d4f34f5425bc50e",
+            "inviterEndpoints": ["192.168.50.20:51820"],
             "admins": [admin_npub],
             "relays": ["wss://temp.iris.to"]
         })
@@ -2902,9 +3097,57 @@ mod tests {
             .expect("join request should be queued");
         assert_eq!(pending.recipient, admin_hex);
         assert!(network.participants.is_empty());
+        assert_eq!(
+            runtime.config.fips_peer_endpoints.get(&admin_npub),
+            Some(&vec!["192.168.50.20:51820".to_string()])
+        );
         let state = runtime.state();
         assert_eq!(state.networks.len(), 1);
         assert_eq!(state.networks[0].network_id, "8d4f34f5425bc50e");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invite_import_creates_new_network_when_active_network_is_named() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-named-active-invite-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+
+        let admin_npub = "npub1akgu9lxldpt32lnjf97k005a4kgasewmvsrmkpzqeff398ssev0ssd6t3u";
+        let admin_hex = normalize_nostr_pubkey(admin_npub).expect("normalize admin");
+        let invite = "nvpn://invite/eyJ2IjozLCJuZXR3b3JrSWQiOiI3YTYwMTQ4MzVkNDA0Y2IwIiwiYWRtaW5zIjpbIm5wdWIxYWtndTlseGxkcHQzMmxuamY5N2swMDVhNGtnYXNld212c3Jta3B6cWVmZjM5OHNzZXYwc3NkNnQzdSJdfQ";
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.mobile_runtime = true;
+        runtime.config_path = dir.join("config.toml");
+
+        let old_network_id = create_test_network(&mut runtime, "Home");
+        runtime.config.networks[0].network_id = "5a249444c4254f98".to_string();
+        runtime.config.networks[0].admins = vec![admin_hex.clone()];
+
+        runtime
+            .import_network_invite(invite)
+            .expect("import invite");
+
+        assert_eq!(runtime.config.networks.len(), 2);
+        let old_network = runtime
+            .config
+            .network_by_id(&old_network_id)
+            .expect("old network should remain");
+        assert_eq!(old_network.network_id, "5a249444c4254f98");
+        assert!(!old_network.enabled);
+
+        let network = runtime.config.active_network();
+        assert_eq!(network.network_id, "7a6014835d404cb0");
+        assert_eq!(network.admins, vec![admin_hex.clone()]);
+        assert_eq!(network.invite_inviter, admin_hex);
+        assert!(network.outbound_join_request.is_some());
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -2993,9 +3236,18 @@ mod tests {
 
     #[test]
     fn lan_pairing_runs_for_fifteen_minutes_until_cancelled() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-lan-pairing-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
         runtime.startup_error = None;
+        runtime.mobile_runtime = true;
+        runtime.config_path = dir.join("config.toml");
         create_test_network(&mut runtime, "Home");
 
         runtime.dispatch(NativeAppAction::StartInviteBroadcast);
@@ -3025,6 +3277,8 @@ mod tests {
         assert!(!state.nearby_discovery_active);
         assert_eq!(state.nearby_discovery_remaining_secs, 0);
         assert!(state.lan_peers.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -3056,6 +3310,143 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn enabling_join_requests_starts_background_fips_listener() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-join-listener-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let calls_path = dir.join("calls.txt");
+        let started_path = dir.join("started");
+        let script_path = dir.join("nvpn");
+        let calls_literal = calls_path
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let started_literal = started_path
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let script = format!(
+            r#"#!/bin/sh
+CALLS="{calls_literal}"
+STARTED="{started_literal}"
+printf '%s\n' "$*" >> "$CALLS"
+if [ "$1" = "service" ] && [ "$2" = "status" ]; then
+  cat <<'JSON'
+{{"supported":true,"installed":true,"disabled":false,"loaded":true,"running":true,"pid":123,"label":"to.iris.nvpn.test","binary_version":"test"}}
+JSON
+  exit 0
+fi
+if [ "$1" = "status" ]; then
+  if [ -f "$STARTED" ]; then
+    cat <<'JSON'
+{{"daemon":{{"running":true,"state":{{"updated_at":1,"binary_version":"test","local_endpoint":"","advertised_endpoint":"","listen_port":0,"vpn_enabled":true,"vpn_active":false,"vpn_status":"Listening for join requests","expected_peer_count":0,"connected_peer_count":0,"mesh_ready":false,"peers":[]}}}}}}
+JSON
+  else
+    cat <<'JSON'
+{{"daemon":{{"running":false,"state":null}}}}
+JSON
+  fi
+  exit 0
+fi
+if [ "$1" = "start" ]; then
+  touch "$STARTED"
+  exit 0
+fi
+if [ "$1" = "resume" ] || [ "$1" = "reload" ]; then
+  exit 0
+fi
+exit 0
+"#
+        );
+        fs::write(&script_path, script).expect("write fake nvpn");
+        let mut permissions = fs::metadata(&script_path)
+            .expect("fake nvpn metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("make fake nvpn executable");
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.last_error.clear();
+        runtime.mobile_runtime = false;
+        runtime.config_path = dir.join("config.toml");
+        let network_id = create_test_network(&mut runtime, "Home");
+        runtime.config.networks[0].listen_for_join_requests = false;
+        runtime
+            .config
+            .save(&runtime.config_path)
+            .expect("save test config");
+        runtime.nvpn_bin = Some(script_path);
+
+        runtime.dispatch(NativeAppAction::SetNetworkJoinRequestsEnabled {
+            network_id,
+            enabled: true,
+        });
+
+        let calls = fs::read_to_string(&calls_path).expect("read fake nvpn calls");
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        assert!(
+            started_path.exists(),
+            "join listener daemon was not started"
+        );
+        assert!(calls.contains("start --daemon --connect --config"));
+        assert!(runtime.config.networks[0].listen_for_join_requests);
+        assert!(runtime.vpn_enabled);
+        assert_eq!(runtime.vpn_status, "Listening for join requests");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn native_state_exposes_inbound_join_requests_for_ui_shells() {
+        let requester_npub = Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("requester npub");
+        let requester_hex = normalize_nostr_pubkey(&requester_npub).expect("normalize requester");
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        create_test_network(&mut runtime, "Home");
+        runtime.config.networks[0]
+            .inbound_join_requests
+            .push(PendingInboundJoinRequest {
+                requester: requester_hex.clone(),
+                requester_node_name: "iPhone".to_string(),
+                requested_at: 1_778_998_000,
+            });
+
+        let state = runtime.state();
+        let request = state.networks[0]
+            .inbound_join_requests
+            .first()
+            .expect("join request should be visible in native state");
+
+        assert_eq!(request.requester_npub, requester_npub);
+        assert_eq!(request.requester_pubkey_hex, requester_hex);
+        assert_eq!(request.requester_node_name, "iPhone");
+        assert!(!request.requested_at_text.trim().is_empty());
+
+        let json = serde_json::to_value(&state).expect("serialize native state");
+        assert_eq!(
+            json["networks"][0]["inboundJoinRequests"][0]["requesterNpub"],
+            requester_npub
+        );
+        assert_eq!(
+            json["networks"][0]["inboundJoinRequests"][0]["requesterNodeName"],
+            "iPhone"
+        );
+    }
+
     #[test]
     fn accepting_join_request_uses_requester_node_name_as_alias() {
         let nonce = SystemTime::now()
@@ -3082,7 +3473,7 @@ mod tests {
             .inbound_join_requests
             .push(PendingInboundJoinRequest {
                 requester: requester_hex.clone(),
-                requester_node_name: "Ubuntu Dev".to_string(),
+                requester_node_name: "Linux Dev".to_string(),
                 requested_at: 1_726_000_000,
             });
 
@@ -3100,13 +3491,13 @@ mod tests {
         assert!(runtime.config.networks[0].inbound_join_requests.is_empty());
         assert_eq!(
             runtime.config.peer_alias(&requester_hex).as_deref(),
-            Some("ubuntu-dev")
+            Some("linux-dev")
         );
 
         let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
         assert_eq!(
             saved.peer_alias(&requester_hex).as_deref(),
-            Some("ubuntu-dev")
+            Some("linux-dev")
         );
 
         let _ = fs::remove_dir_all(&dir);

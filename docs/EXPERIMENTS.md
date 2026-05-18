@@ -6,7 +6,7 @@ short enough to compare later: date, build/commit, setup, result, and decision.
 ## 2026-05-14 - FSP rekey continuity fix
 
 Setup:
-- Pi, Windows VM, Linux VM, MacBook, and mini daemons were already on the
+- Pi, Windows VM, Linux VM, macOS laptop, and macOS desktop daemons were already on the
   stale-FMP-session drain fixes. Pi/Windows 90 second continuity runs still
   showed occasional loss near the default FSP rekey interval.
 
@@ -18,14 +18,13 @@ Result:
 
 Decision:
 - Bump nvpn to `fips-endpoint` 0.3.6 and redeploy the daemons before treating
-  any remaining Pi/Windows or Mac/mini continuity loss as a different bug.
+  any remaining Pi/Windows or macOS continuity loss as a different bug.
 
 ## 2026-05-14 - Windows/Linux direct-LAN parity check
 
 Setup:
-- Ubuntu-dev and win11-dev on Vader's direct LAN, not routed through the nvpn
-  mesh: Ubuntu `192.168.122.103:55140`, Windows `192.168.122.147:55141`.
-  `tcpdump` confirmed FIPS UDP directly between those endpoints.
+- Linux and Windows VMs on the same direct LAN, not routed through the nvpn
+  mesh. `tcpdump` confirmed FIPS UDP directly between those endpoints.
 - Both nvpn peers used the LAN MTU profile with tunnel MTU 1290. The test
   tunnel routes were Ubuntu `10.44.99.179/32` and Windows
   `10.44.132.184/32`.
@@ -53,10 +52,9 @@ Results:
   batched/GSO sender path.
 - Follow-up apples-to-apples userspace baseline, after adding Windows
   `wg-upstream-test --scoped-host` at `77c133d`: `tcpdump` during nvpn ping
-  confirmed direct FIPS UDP on `enp1s0` between
-  `192.168.122.103:36344` and `192.168.122.147:58013`. The baseline used
-  Ubuntu `boringtun-cli 0.7.1` on `btbench` and Windows nvpn's BoringTun/Wintun
-  WG upstream runtime, with tunnel IPs `10.88.0.1/32` and `10.88.0.2/32`.
+  confirmed direct FIPS UDP on the LAN interface. The baseline used
+  Linux `boringtun-cli 0.7.1` and Windows nvpn's BoringTun/Wintun WG upstream
+  runtime, with test-only tunnel IPs.
 - Current nvpn FIPS direct-LAN samples were about 260/259/261/259 Mbit/s
   Windows to Linux for 1/2/4/8 streams, and about 351/349/356/356 Mbit/s
   Linux to Windows.
@@ -100,12 +98,12 @@ Setup:
 - Regression modeled a destination that still has a sendable direct peer route
   while its end-to-end FSP session is stuck in `Initiating`.
 - App endpoint bytes and TUN packets were both queued behind that stale session.
-- Live MacBook could see VM peers directly, while mini could not complete
+- Live macOS laptop could see VM peers directly, while macOS desktop could not complete
   direct NAT traversal to those same VM peers.
-- Later live debugging showed mini was receiving signed lookup responses for
+- Later live debugging showed macOS desktop was receiving signed lookup responses for
   the missing VM peers, so discovery/routing was no longer the blocker. The
   remaining symptom was repeated encrypted traffic from those peers while the
-  mini-side FSP session was still waiting for handshake completion.
+  macOS desktop-side FSP session was still waiting for handshake completion.
 
 Result:
 - Before FIPS `c1c71eb`, queued traffic returned without starting discovery,
@@ -116,8 +114,8 @@ Result:
 - Before FIPS `e6662e7`, a transit node that had the target as a direct peer
   still did not hand the lookup to that target if it was not a tree neighbor.
 - FIPS `e6662e7` forwards lookup requests to direct non-tree targets, allowing
-  asymmetric paths such as mini -> MacBook -> VM.
-- After that fix, mini could route at least one VM peer through FIPS, but two
+  asymmetric paths such as macOS desktop -> macOS laptop -> VM.
+- After that fix, macOS desktop could route at least one VM peer through FIPS, but two
   VM peers still remained `fips link pending`. The remaining gap was the
   origin/transit fallback still being limited to tree peers.
 - FIPS `83fbf03` keeps tree/bloom routing as the primary lookup path, then
@@ -163,17 +161,17 @@ Decision:
 ## 2026-05-12 - macOS Wi-Fi to Ethernet, safe MTU
 
 Setup:
-- Local MacBook on Wi-Fi to Mac mini on Ethernet.
+- Local macOS laptop on Wi-Fi to macOS desktop on Ethernet.
 - FIPS core at `c7fb565` (`Revert "perf: parallelize fmp encryption with ordered send"`).
 - Private mesh safe defaults: underlay UDP MTU 1280, tunnel MTU 1150.
 - Both daemons built with local FIPS patches and ad-hoc signed.
 
 Results:
-- nvpn MacBook to mini UDP at 400 Mbit/s target: about 240 Mbit/s with near-zero loss.
-- nvpn MacBook to mini TCP: about 200-223 Mbit/s depending on run.
-- nvpn mini to MacBook TCP: about 345-356 Mbit/s.
-- Tailscale MacBook to mini TCP at same time: about 292 Mbit/s.
-- Tailscale MacBook to mini UDP at 400 Mbit/s target: reached about 400 Mbit/s but with about 3.6% loss.
+- nvpn macOS laptop to macOS desktop UDP at 400 Mbit/s target: about 240 Mbit/s with near-zero loss.
+- nvpn macOS laptop to macOS desktop TCP: about 200-223 Mbit/s depending on run.
+- nvpn macOS desktop to macOS laptop TCP: about 345-356 Mbit/s.
+- Tailscale macOS laptop to macOS desktop TCP at same time: about 292 Mbit/s.
+- Tailscale macOS laptop to macOS desktop UDP at 400 Mbit/s target: reached about 400 Mbit/s but with about 3.6% loss.
 
 Decision:
 - Safe MTU is reliable but leaves LAN throughput on the table.
@@ -184,31 +182,31 @@ Decision:
 ## 2026-05-12 - fresh macOS Wi-Fi to Ethernet comparison
 
 Setup:
-- Local MacBook on Wi-Fi to Mac mini on Ethernet.
+- Local macOS laptop on Wi-Fi to macOS desktop on Ethernet.
 - Running daemons still at the stable safe-MTU build because launchd restart
   requires elevated `launchctl kickstart`.
 - Direct LAN, Tailscale, and nvpn tested back-to-back with the same iperf3
   server.
 
 Results:
-- Direct LAN TCP: MacBook to mini about 495 Mbit/s; mini to MacBook about
+- Direct LAN TCP: macOS laptop to macOS desktop about 495 Mbit/s; macOS desktop to macOS laptop about
   318 Mbit/s.
 - Direct LAN UDP at 400 Mbit/s target: about 400 Mbit/s both directions with
   about 0.13% loss.
-- Tailscale TCP: MacBook to mini about 299 Mbit/s; mini to MacBook about
+- Tailscale TCP: macOS laptop to macOS desktop about 299 Mbit/s; macOS desktop to macOS laptop about
   332 Mbit/s.
 - Tailscale UDP at 400 Mbit/s target: about 400 Mbit/s both directions; loss
   about 0.05% forward and 3.5% reverse.
-- nvpn safe-MTU TCP: MacBook to mini about 188 Mbit/s; mini to MacBook about
+- nvpn safe-MTU TCP: macOS laptop to macOS desktop about 188 Mbit/s; macOS desktop to macOS laptop about
   323 Mbit/s.
-- nvpn safe-MTU UDP at 400 Mbit/s target: MacBook to mini about 203 Mbit/s
-  with about 5.1% loss; mini to MacBook about 393 Mbit/s with about 23.7% loss.
+- nvpn safe-MTU UDP at 400 Mbit/s target: macOS laptop to macOS desktop about 203 Mbit/s
+  with about 5.1% loss; macOS desktop to macOS laptop about 393 Mbit/s with about 23.7% loss.
 
 Observations:
 - Direct LAN proves the path can carry 400 Mbit/s UDP and much higher forward
   TCP than nvpn currently achieves.
 - Daemon logs show macOS `ENOBUFS` send backpressure during the UDP runs.
-- The mini also had unrelated session AEAD recovery churn with another peer
+- The macOS desktop also had unrelated session AEAD recovery churn with another peer
   during the same window, so reliability work in that path may contaminate
   throughput samples until it is fixed.
 
@@ -221,7 +219,7 @@ Decision:
 ## 2026-05-12 - explicit LAN MTU profile deployed
 
 Setup:
-- Local MacBook on Wi-Fi to Mac mini on Ethernet.
+- Local macOS laptop on Wi-Fi to macOS desktop on Ethernet.
 - nostr-vpn at `2509c9b` (`perf: add private mesh mtu test profile`).
 - FIPS core at `c7fb565`.
 - Both daemons built with local FIPS patches, ad-hoc signed, restarted through
@@ -229,48 +227,48 @@ Setup:
 - Live private mesh interface MTU was 1290 on both Macs.
 
 15 second results:
-- Direct LAN TCP: MacBook to mini about 499 Mbit/s; mini to MacBook about
+- Direct LAN TCP: macOS laptop to macOS desktop about 499 Mbit/s; macOS desktop to macOS laptop about
   437 Mbit/s.
-- Direct LAN UDP at 400 Mbit/s target: MacBook to mini about 397 Mbit/s with
-  0% loss; mini to MacBook about 400 Mbit/s with about 1.3% loss.
-- Tailscale TCP: MacBook to mini about 228 Mbit/s; mini to MacBook about
+- Direct LAN UDP at 400 Mbit/s target: macOS laptop to macOS desktop about 397 Mbit/s with
+  0% loss; macOS desktop to macOS laptop about 400 Mbit/s with about 1.3% loss.
+- Tailscale TCP: macOS laptop to macOS desktop about 228 Mbit/s; macOS desktop to macOS laptop about
   314 Mbit/s, both with thousands of retransmits.
-- Tailscale UDP at 400 Mbit/s target: MacBook to mini about 400 Mbit/s with
-  about 2.3% loss; mini to MacBook about 400 Mbit/s with about 0.04% loss.
-- nvpn LAN-MTU TCP: MacBook to mini about 228 Mbit/s; mini to MacBook about
+- Tailscale UDP at 400 Mbit/s target: macOS laptop to macOS desktop about 400 Mbit/s with
+  about 2.3% loss; macOS desktop to macOS laptop about 400 Mbit/s with about 0.04% loss.
+- nvpn LAN-MTU TCP: macOS laptop to macOS desktop about 228 Mbit/s; macOS desktop to macOS laptop about
   416 Mbit/s.
-- nvpn LAN-MTU UDP at 400 Mbit/s target: MacBook to mini about 265 Mbit/s with
-  near-zero loss; mini to MacBook about 400 Mbit/s with 0% loss.
+- nvpn LAN-MTU UDP at 400 Mbit/s target: macOS laptop to macOS desktop about 265 Mbit/s with
+  near-zero loss; macOS desktop to macOS laptop about 400 Mbit/s with 0% loss.
 
 90 second nvpn stability results:
-- TCP MacBook to mini: about 234 Mbit/s, 2697 retransmits.
-- TCP mini to MacBook: about 357 Mbit/s, 2626 retransmits.
-- UDP MacBook to mini at 275 Mbit/s target: about 263 Mbit/s with about
+- TCP macOS laptop to macOS desktop: about 234 Mbit/s, 2697 retransmits.
+- TCP macOS desktop to macOS laptop: about 357 Mbit/s, 2626 retransmits.
+- UDP macOS laptop to macOS desktop at 275 Mbit/s target: about 263 Mbit/s with about
   0.055% loss.
-- UDP mini to MacBook at 400 Mbit/s target: about 400 Mbit/s with about 1.0%
+- UDP macOS desktop to macOS laptop at 400 Mbit/s target: about 400 Mbit/s with about 1.0%
   loss.
 
 Observations:
 - The LAN MTU profile makes nvpn competitive with or faster than Tailscale for
   TCP on this sample and improves reverse UDP to line rate.
-- Forward UDP from the Wi-Fi MacBook remains capped around 260-265 Mbit/s
+- Forward UDP from the Wi-Fi macOS laptop remains capped around 260-265 Mbit/s
   before the daemon hits macOS UDP send pressure. Earlier logs showed
   `No buffer space available` and `EncryptWorker channel full` on this path.
-- The remaining gap is directional and sender-side: mini to MacBook is much
+- The remaining gap is directional and sender-side: macOS desktop to macOS laptop is much
   faster over the same private mesh protocol and same tunnel MTU.
 
 Decision:
 - Keep 1280/1150 as the safe default and use the explicit LAN profile for
   controlled LAN tests.
 - Continue investigating macOS sender pacing/queueing and packet-rate reduction
-  for the MacBook-to-mini direction. Avoid retry/drop variants because previous
+  for the macOS-laptop-to-desktop direction. Avoid retry/drop variants because previous
   tests increased loss and hurt TCP.
 
 Follow-up 1452/1322 explicit override:
 - Setting `mesh_underlay_udp_mtu = 1452` and `mesh_tunnel_mtu = 1322`
-  kept both utuns up and improved MacBook-to-mini UDP at 400 Mbit/s target
+  kept both utuns up and improved macOS-laptop-to-desktop UDP at 400 Mbit/s target
   slightly, to about 273 Mbit/s with near-zero loss.
-- MacBook-to-mini TCP regressed to about 194 Mbit/s in the same sample.
+- macOS-laptop-to-desktop TCP regressed to about 194 Mbit/s in the same sample.
 - Decision: do not promote 1452/1322 to the `lan` profile yet. It may be a
   useful one-off UDP test override, but the 1420/1290 profile is the better
   balanced default for now.
@@ -285,11 +283,11 @@ Setup:
 Results:
 - The focused loopback unit test passed, proving the syscall is available on
   this macOS build.
-- Short samples were mixed: one MacBook-to-mini TCP run reached about
+- Short samples were mixed: one macOS-laptop-to-desktop TCP run reached about
   247 Mbit/s, but UDP at 400 Mbit/s target fell to about 250 Mbit/s.
-- A 90 second sample regressed every leg: MacBook-to-mini TCP about
-  176 Mbit/s, mini-to-MacBook TCP about 122 Mbit/s, MacBook-to-mini UDP at
-  275 Mbit/s target about 228 Mbit/s, and mini-to-MacBook UDP at 400 Mbit/s
+- A 90 second sample regressed every leg: macOS-laptop-to-desktop TCP about
+  176 Mbit/s, macOS-desktop-to-laptop TCP about 122 Mbit/s, macOS-laptop-to-desktop UDP at
+  275 Mbit/s target about 228 Mbit/s, and macOS-desktop-to-laptop UDP at 400 Mbit/s
   target about 289 Mbit/s.
 - An adaptive fallback on partial/`ENOBUFS` batch sends did not recover the
   loss: forward TCP stayed near baseline and UDP at 275 Mbit/s lost packets.
@@ -300,30 +298,30 @@ Decision:
 - Keep the conservative per-datagram macOS send loop until there is a pacing
   model that improves long runs, not just short TCP bursts.
 
-## 2026-05-12 - mini disk-full interference
+## 2026-05-12 - macOS desktop disk-full interference
 
 Setup:
-- After repeated build/restart/iperf cycles, mini returned `iperf3` errors like
+- After repeated build/restart/iperf cycles, macOS desktop returned `iperf3` errors like
   `unable to create a new stream: No space left on device`.
 
 Findings:
-- The mini data volume had only about 116 MiB free.
+- The macOS desktop data volume had only about 116 MiB free.
 - Generated Rust build artifacts were the main safe cleanup target, including
-  about 20 GiB in `/Users/sirius/src/fips/target` and 6.4 GiB in
-  `/Users/sirius/src/nostr-vpn/target`.
+  about 20 GiB in `/Users/example/src/fips/target` and 6.4 GiB in
+  `/Users/example/src/nostr-vpn/target`.
 - Removing generated `target` directories restored about 32 GiB free.
 
 Post-clean sanity:
 - Direct LAN and Tailscale were healthy before cleanup, but iperf server
   creation and nvpn samples were unreliable while disk was full.
 - After cleanup and reverting `sendmsg_x`, nvpn 10 second samples returned to
-  expected ranges: MacBook-to-mini TCP about 203 Mbit/s, mini-to-MacBook TCP
-  about 322 Mbit/s, MacBook-to-mini UDP at 275 Mbit/s target reached 275 Mbit/s
-  with 0% loss, and mini-to-MacBook UDP at 400 Mbit/s target reached
+  expected ranges: macOS-laptop-to-desktop TCP about 203 Mbit/s, macOS-desktop-to-laptop TCP
+  about 322 Mbit/s, macOS-laptop-to-desktop UDP at 275 Mbit/s target reached 275 Mbit/s
+  with 0% loss, and macOS-desktop-to-laptop UDP at 400 Mbit/s target reached
   400 Mbit/s with about 1.1% loss.
 
 Decision:
-- Treat very low nvpn samples while the mini is disk-full as contaminated.
+- Treat very low nvpn samples while the macOS desktop is disk-full as contaminated.
 - Keep at least tens of GiB free on remote bench hosts before interpreting
   daemon or iperf behavior.
 
@@ -335,10 +333,10 @@ Setup:
   MTU 1290.
 
 Results:
-- MacBook to mini UDP at 400 Mbit/s target improved to roughly 272-292 Mbit/s.
-- Mini to MacBook UDP at 400 Mbit/s target could reach roughly 400 Mbit/s with low loss.
-- MacBook to mini TCP improved to roughly 232 Mbit/s.
-- Mini to MacBook TCP was roughly 315-392 Mbit/s.
+- macOS laptop to macOS desktop UDP at 400 Mbit/s target improved to roughly 272-292 Mbit/s.
+- macOS desktop to macOS laptop UDP at 400 Mbit/s target could reach roughly 400 Mbit/s with low loss.
+- macOS laptop to macOS desktop TCP improved to roughly 232 Mbit/s.
+- macOS desktop to macOS laptop TCP was roughly 315-392 Mbit/s.
 
 Decision:
 - Useful on clean LAN paths, but too optimistic for NAT traversal and nested
@@ -352,8 +350,8 @@ Setup:
 - Unit tests and `cargo test -p fips-core --lib` passed.
 
 Results:
-- Live MacBook to mini UDP at 400 Mbit/s target regressed to about 238.5 Mbit/s.
-- Live MacBook to mini TCP regressed to about 182 Mbit/s.
+- Live macOS laptop to macOS desktop UDP at 400 Mbit/s target regressed to about 238.5 Mbit/s.
+- Live macOS laptop to macOS desktop TCP regressed to about 182 Mbit/s.
 
 Decision:
 - Reverted in FIPS `c7fb565`. The extra per-packet ordering/channel overhead
@@ -378,7 +376,7 @@ Decision:
 ## 2026-05-12 - nvpn mesh packet copies and utun write pressure
 
 Setup:
-- Local MacBook on Wi-Fi to Mac mini on Ethernet.
+- Local macOS laptop on Wi-Fi to macOS desktop on Ethernet.
 - LAN MTU profile on both Macs: underlay UDP MTU 1420, tunnel MTU 1290.
 - FIPS core at `e4edff2` (Darwin `sendmsg_x` reverted).
 - Both daemons built with local FIPS patches, ad-hoc signed, and restarted
@@ -386,38 +384,38 @@ Setup:
 
 Results:
 - `266595b` moved outbound FIPS mesh packets instead of cloning them. Best 15s
-  samples after deploying to both Macs: MacBook-to-mini TCP about 255 Mbit/s,
-  mini-to-MacBook TCP about 465 Mbit/s, MacBook-to-mini UDP at 275 Mbit/s target
-  0% loss, MacBook-to-mini UDP at 400 Mbit/s target about 283 Mbit/s with near
-  zero loss, and mini-to-MacBook UDP at 400 Mbit/s target about 400 Mbit/s with
+  samples after deploying to both macOS hosts: macOS-laptop-to-desktop TCP about 255 Mbit/s,
+  macOS-desktop-to-laptop TCP about 465 Mbit/s, macOS-laptop-to-desktop UDP at 275 Mbit/s target
+  0% loss, macOS-laptop-to-desktop UDP at 400 Mbit/s target about 283 Mbit/s with near
+  zero loss, and macOS-desktop-to-laptop UDP at 400 Mbit/s target about 400 Mbit/s with
   near-zero loss.
 - A direct TUN-read-to-FIPS-send experiment removed the channel between TUN read
-  and mesh send, but regressed MacBook-to-mini TCP to about 110 Mbit/s and added
+  and mesh send, but regressed macOS-laptop-to-desktop TCP to about 110 Mbit/s and added
   UDP loss. Decision: keep the channel decoupling.
 - Long reverse UDP exposed silent utun write drops. Before the write fix, a 90s
-  mini-to-MacBook UDP400 run lost about 19%; a 30s reproduction lost about 50%.
+  macOS-desktop-to-laptop UDP400 run lost about 19%; a 30s reproduction lost about 50%.
   Direct LAN and Tailscale over the same path sustained UDP400 with low loss
   (direct 90s reverse about 0.056% loss; Tailscale 90s reverse about 0.14%).
 - `c00edda` adds raw TUN writes that wait for fd writability and retry
   `WouldBlock`, instead of using boringtun's `write4/write6` helpers that return
-  `0` for every write error. Final targeted samples: 30s mini-to-MacBook UDP400
-  about 400 Mbit/s with about 1.1% loss; 30s MacBook-to-mini UDP275 about
+  `0` for every write error. Final targeted samples: 30s macOS-desktop-to-laptop UDP400
+  about 400 Mbit/s with about 1.1% loss; 30s macOS-laptop-to-desktop UDP275 about
   275 Mbit/s with 0% loss.
-- Full 90s no-drain/write-backpressure sample: MacBook-to-mini TCP about
-  250 Mbit/s, mini-to-MacBook TCP about 401 Mbit/s, MacBook-to-mini UDP400 about
-  259 Mbit/s with about 0.086% loss, and mini-to-MacBook UDP400 about
+- Full 90s no-drain/write-backpressure sample: macOS-laptop-to-desktop TCP about
+  250 Mbit/s, macOS-desktop-to-laptop TCP about 401 Mbit/s, macOS-laptop-to-desktop UDP400 about
+  259 Mbit/s with about 0.086% loss, and macOS-desktop-to-laptop UDP400 about
   400 Mbit/s with variable loss (observed 0.004% to 7.6% across repeated runs).
 - A receive `try_recv` burst-drain experiment made reverse UDP400 recover from
   catastrophic loss but hurt forward TCP/UDP and made the receive side too
   bursty. A separate bounded TUN-write queue also worsened 350-400 Mbit/s reverse
   UDP loss. Decision: do not keep either sub-experiment.
-- Mini daemon rejoin smoke after `launchctl kickstart -k`: local status already
+- macOS desktop daemon rejoin smoke after `launchctl kickstart -k`: local status already
   showed the direct UDP path on the first poll, and a follow-up `ping -c 3`
   over nvpn had 0% loss with about 7 ms average RTT. This is a smoke test only;
   it does not cover Wi-Fi roaming.
 
 Observations:
-- The remaining MacBook-to-mini UDP400 ceiling is still around 260-280 Mbit/s;
+- The remaining macOS-laptop-to-desktop UDP400 ceiling is still around 260-280 Mbit/s;
   this is the macOS/Wi-Fi sender side and still trails Tailscale's current
   UDP400 result on this LAN.
 - Reverse UDP400 no longer collapses deterministically, but it is still less
@@ -431,12 +429,12 @@ Observations:
 Decision:
 - Keep owned packet movement and raw TUN write backpressure.
 - Continue investigating the residual reverse UDP400 variability and the
-  MacBook sender-side UDP400 ceiling before claiming parity with Tailscale.
+  macOS laptop sender-side UDP400 ceiling before claiming parity with Tailscale.
 
 ## 2026-05-12 - pipeline trace and connected UDP activation
 
 Setup:
-- Local MacBook on Wi-Fi to Mac mini on Ethernet.
+- Local macOS laptop on Wi-Fi to macOS desktop on Ethernet.
 - Both daemons built with `NVPN_PIPELINE_TRACE_DEFAULT=1` and
   `FIPS_PIPELINE_TRACE_DEFAULT=1`.
 - FIPS added queue-wait counters for endpoint command, FMP worker, transport,
@@ -450,22 +448,22 @@ Results:
   binaries showed `connected_udp_installed`, then steady `udp_send_connected`
   traffic.
 - Current 20s TCP samples after the connected-UDP fix:
-  nvpn MacBook-to-mini about 227 Mbit/s receiver, nvpn mini-to-MacBook about
+  nvpn macOS-laptop-to-desktop about 227 Mbit/s receiver, nvpn macOS-desktop-to-laptop about
   350 Mbit/s receiver; same-window Tailscale was about 268 Mbit/s forward and
   348 Mbit/s reverse.
-- MacBook-to-mini forward traces still show sender-side Darwin UDP pressure:
+- macOS-laptop-to-desktop forward traces still show sender-side Darwin UDP pressure:
   one 5s interval saw about `24k/s` FMP worker sends, about `15.7k/s` successful
   UDP send calls, and about `91k/s` `udp_send_backpressure` events with
   `fmp_worker_queue_wait` p95 near 134 ms.
-- Reverse mini-to-MacBook traces were much cleaner, with high connected send
+- Reverse macOS-desktop-to-laptop traces were much cleaner, with high connected send
   rates and little or no backpressure, matching the throughput result.
 - Queue-cap trials: 256 was too shallow and hurt reverse throughput; 32768 hid
   saturation and inflated latency/retransmits; 1024 is the best known balance
   for pushing back toward TUN without building a large userspace buffer.
 
 Observations:
-- The remaining MacBook-to-mini gap is not from crypto and not from the
-  connected-UDP fast path being absent. `sample(1)` on the MacBook sender spent
+- The remaining macOS-laptop-to-desktop gap is not from crypto and not from the
+  connected-UDP fast path being absent. `sample(1)` on the macOS laptop sender spent
   most active worker time in `sendto`, with ChaCha20-Poly1305 a secondary cost.
 - Wireguard-go and boringtun do not expose an obvious Darwin send primitive that
   we are missing: non-Linux wireguard-go uses single-packet `WriteMsgUDP`, and
@@ -489,15 +487,15 @@ Decision:
 ## 2026-05-12 - adaptive ENOBUFS pause and ordered macOS sender v2
 
 Setup:
-- Same MacBook Wi-Fi to Mac mini Ethernet path, LAN MTU profile, connected UDP
+- Same macOS laptop Wi-Fi to macOS desktop Ethernet path, LAN MTU profile, connected UDP
   active, pipeline tracing compiled on.
 - First deployed adaptive macOS send pacing: retry/yield remains the default,
   but after four consecutive `ENOBUFS`/`ENOMEM` results the sender sleeps for
   1 us before retrying.
 
 Results:
-- 20s same-window TCP after adaptive pacing: nvpn MacBook-to-mini about
-  248 Mbit/s receiver with 0 retransmits; nvpn mini-to-MacBook about
+- 20s same-window TCP after adaptive pacing: nvpn macOS-laptop-to-desktop about
+  248 Mbit/s receiver with 0 retransmits; nvpn macOS-desktop-to-laptop about
   409 Mbit/s receiver with 2117 retransmits. Tailscale in the same window was
   about 301 Mbit/s forward and 355 Mbit/s reverse.
 - Local sender traces confirmed the pause triggers under load: representative
@@ -524,7 +522,7 @@ Decision:
 ## 2026-05-13 - macOS sender wake and receive hot-path cleanup
 
 Setup:
-- Same MacBook Wi-Fi to Mac mini Ethernet path, LAN MTU profile, connected UDP
+- Same macOS laptop Wi-Fi to macOS desktop Ethernet path, LAN MTU profile, connected UDP
   active. Pipeline tracing defaults are now runtime-env only so normal benches
   are trace-off unless explicitly enabled.
 - Both launchd daemons were rebuilt from the same temporary FIPS ref, copied into
@@ -533,14 +531,14 @@ Setup:
 
 Results:
 - Trace-off plus corrected ENOBUFS drop accounting: nvpn about 221 Mbit/s
-  MacBook-to-mini and about 249 Mbit/s mini-to-MacBook. Same-window Tailscale was
+  macOS-laptop-to-desktop and about 249 Mbit/s macOS-desktop-to-laptop. Same-window Tailscale was
   about 290/359 Mbit/s; raw LAN was about 540/415 Mbit/s.
 - macOS custom worker queue removed the earlier crossbeam
   `semaphore_signal_trap` hotspot. 20s TCP was about 205/348 Mbit/s; same-window
   Tailscale about 298/354 Mbit/s. `sample(1)` then showed the ordered sender
   completion condvar as the next sender-side cost.
 - Splitting the ordered sender condvars gave about 215/428 Mbit/s in one clean
-  window. Reverse beat the same-window Tailscale sample, but MacBook-to-mini
+  window. Reverse beat the same-window Tailscale sample, but macOS-laptop-to-desktop
   still trailed. Sender samples were mostly Darwin UDP `sendto` plus completion
   wakeups; receiver samples still showed `npub_for_node_addr`/`encode_npub` on
   each delivered endpoint packet.
@@ -563,15 +561,15 @@ Results:
   Tailscale 329/390 Mbit/s.
 - Skipping endpoint identity registration on already-established sessions
   removed the remaining per-packet identity-cache work from the steady sender
-  path. Repeated MacBook-to-mini samples remained variable at about
+  path. Repeated macOS-laptop-to-desktop samples remained variable at about
   232-255 Mbit/s, so this was correctness/CPU cleanup rather than a sender
   ceiling fix.
 - Moving established endpoint FSP encryption into the existing FMP worker job
   kept wire format and nonce ordering but removed the inner ChaCha20-Poly1305
   seal from the rx-loop task. Final default-stride 20s sample: nvpn about
   232/426 Mbit/s vs same-window Tailscale about 323/369 Mbit/s. Final 90s nvpn
-  stability runs stayed up: about 223 Mbit/s MacBook-to-mini and about
-  391 Mbit/s mini-to-MacBook; both meshes still showed the tested peer reachable
+  stability runs stayed up: about 223 Mbit/s macOS-laptop-to-desktop and about
+  391 Mbit/s macOS-desktop-to-laptop; both meshes still showed the tested peer reachable
   afterward.
 - `FIPS_MACOS_WORKER_STRIDE=4` as a compiled default was rejected twice. Before
   the FSP worker it slightly helped reverse but did not help the weak direction;
@@ -587,7 +585,7 @@ Decision:
   for experiments.
 - Keep `FIPS_MACOS_WORKER_STRIDE` only as an experiment knob; the compiled
   default remains 1.
-- The current MacBook-to-mini gap is still the macOS sender side, not LAN
+- The current macOS-laptop-to-desktop gap is still the macOS sender side, not LAN
   capacity, not receive-side npub encode, and no longer the inner FSP AEAD.
   Next likely wins are a lower-wakeup dispatch/completion design, less frequent
   diagnostics under data-plane load, or a Darwin utun/channel/offload backend
@@ -596,7 +594,7 @@ Decision:
 ## 2026-05-13 - Darwin sender mode and socket option retest
 
 Setup:
-- Same macOS Wi-Fi sender to Ethernet mini receiver path with the LAN MTU
+- Same macOS Wi-Fi sender to Ethernet macOS desktop receiver path with the LAN MTU
   profile still enabled.
 - Connected UDP is disabled by default on macOS. Earlier per-peer connected
   sockets improved the syscall shape on Linux, but on Darwin they caused direct
@@ -608,8 +606,8 @@ Setup:
 
 Results:
 - Clean two-sided default restart with connected UDP off and ordered sender on:
-  nvpn about 103-109 Mbit/s MacBook-to-mini and about 317 Mbit/s
-  mini-to-MacBook. Same-window Tailscale was about 251/355 Mbit/s.
+  nvpn about 103-109 Mbit/s macOS-laptop-to-desktop and about 317 Mbit/s
+  macOS-desktop-to-laptop. Same-window Tailscale was about 251/355 Mbit/s.
 - `FIPS_PERF=1` on the sender showed the active path was `udp_send_wildcard`,
   not connected UDP, with no `udp_send_backpressure` events. Representative
   intervals were `udp_send_wildcard` about 10k-12k/s, `udp_send` average
@@ -623,12 +621,12 @@ Results:
   weak direction to about 109.9 Mbit/s. Keep Darwin service-class sockopts
   opt-in only.
 - `FIPS_MACOS_WORKER_BATCH=8` on both Macs was worse than the default worker
-  drain batch: about 126.6 Mbit/s MacBook-to-mini and about 277.0 Mbit/s
-  mini-to-MacBook, with more retransmits in the weak direction. Default batch
-  32 in the same build reached about 157-160 Mbit/s MacBook-to-mini in short
+  drain batch: about 126.6 Mbit/s macOS-laptop-to-desktop and about 277.0 Mbit/s
+  macOS-desktop-to-laptop, with more retransmits in the weak direction. Default batch
+  32 in the same build reached about 157-160 Mbit/s macOS-laptop-to-desktop in short
   samples.
 - `FIPS_MACOS_WORKER_BATCH=64` was rejected without a throughput run because the
-  Mac-to-mini link stayed relayed for more than two discovery/rekey intervals
+  Mac-to-macOS desktop link stayed relayed for more than two discovery/rekey intervals
   after the two-sided launchd restart. Default batch 32 recovered direct again.
 - On this machine Tailscale's utun does show `TSO4`, `TSO6`, `CHANNEL_IO`, and
   checksum offload flags while the boringtun-created nvpn utun does not. Stock
@@ -651,18 +649,18 @@ Decision:
   specialization, a Darwin utun backend that can match Tailscale's channel/offload
   flags, or FIPS-level packet coalescing, which would be a wire-format change.
 
-## 2026-05-13 - mini Docker nvpn versus boringtun
+## 2026-05-13 - macOS desktop Docker nvpn versus boringtun
 
 Setup:
-- Host: `Siriuss-Mac-mini`.
+- Host: `mac-bench-host`.
 - nostr-vpn at `cc8e603` on `codex/nvpn-perf-test`; FIPS sibling checkout at
   `e036c0e` on `master`.
 - Docker PATH for non-interactive shell:
   `export PATH=/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:$HOME/.docker/cli-plugins:/Applications/Docker.app/Contents/Resources/cli-plugins:$PATH`.
 - Commands:
-  `DURATION=10 PROJECT_NAME=nvpn-perf-mini scripts/perf-docker.sh`
+  `DURATION=10 PROJECT_NAME=nvpn-perf-macOS desktop scripts/perf-docker.sh`
   and
-  `DURATION=10 PROJECT_NAME=nvpn-boringtun-mini WG_THREADS_LIST='1 4' scripts/perf-docker-boringtun.sh`.
+  `DURATION=10 PROJECT_NAME=nvpn-boringtun-macOS desktop WG_THREADS_LIST='1 4' scripts/perf-docker-boringtun.sh`.
 - The e2e Docker image patched embedded FIPS to the sibling BuildKit context.
 
 Results:
@@ -681,7 +679,7 @@ Results:
   loss at 200 Mbit/s and 0.3% loss at 1000 Mbit/s.
 
 Profiling:
-- `scripts/perf-docker-cpu.sh` with `DURATION=20 PROJECT_NAME=nvpn-cpu-mini`
+- `scripts/perf-docker-cpu.sh` with `DURATION=20 PROJECT_NAME=nvpn-cpu-macOS desktop`
   showed nvpn using about 193-198% CPU on node-a and about 267-273% CPU on
   node-b during a 2794 Mbit/s single-stream TCP run.
 - `FIPS_PERF=1 NVPN_PIPELINE_TRACE=1` on a kept Docker mesh showed the sender
@@ -712,9 +710,9 @@ Decision:
 ## 2026-05-13 - macOS connected UDP default and sender profiling
 
 Setup:
-- Same MacBook Wi-Fi sender to Ethernet mini receiver path, using the
+- Same macOS laptop Wi-Fi sender to Ethernet macOS desktop receiver path, using the
   direct LAN endpoint between the Macs.
-- FIPS commits tested and pushed to the mini checkout:
+- FIPS commits tested and pushed to the macOS desktop checkout:
   `090e241` removed unnecessary Darwin wildcard reuse when connected UDP is
   disabled, `2d18ab7` enabled connected UDP by default on macOS, and
   `3d566c7` aligned the Darwin listener reuse default so connected siblings can
@@ -725,22 +723,22 @@ Setup:
   service variables.
 
 Results:
-- Fresh same-window TCP after connected UDP default-on: nvpn MacBook-to-mini
-  about 256 Mbit/s, Tailscale MacBook-to-mini about 341 Mbit/s; nvpn
-  mini-to-MacBook about 404 Mbit/s, Tailscale mini-to-MacBook about
+- Fresh same-window TCP after connected UDP default-on: nvpn macOS-laptop-to-desktop
+  about 256 Mbit/s, Tailscale macOS-laptop-to-desktop about 341 Mbit/s; nvpn
+  macOS-desktop-to-laptop about 404 Mbit/s, Tailscale macOS-desktop-to-laptop about
   379 Mbit/s. Reverse can now match or beat Tailscale; the remaining gap is the
-  MacBook Wi-Fi sender direction.
+  macOS laptop Wi-Fi sender direction.
 - Later samples varied with Wi-Fi conditions. One noisy post-restart window was
   nvpn about 169-181 Mbit/s while Tailscale was about 272-328 Mbit/s; direct LAN
-  in the same period still reached about 559 Mbit/s MacBook-to-mini and about
-  421 Mbit/s mini-to-MacBook.
+  in the same period still reached about 559 Mbit/s macOS-laptop-to-desktop and about
+  421 Mbit/s macOS-desktop-to-laptop.
 - Final clean-env 10s sanity after removing all A/B launchd variables: nvpn
   about 174/351 Mbit/s and same-window Tailscale about 232/349 Mbit/s.
 - MTU-safe UDP payloads (`iperf3 -u -l 1200`) showed the same directional cap:
-  nvpn MacBook-to-mini about 223 Mbit/s with near-zero loss, while Tailscale
+  nvpn macOS-laptop-to-desktop about 223 Mbit/s with near-zero loss, while Tailscale
   could carry a 300 Mbit/s target with low loss. This points at packet-rate /
   sender path efficiency, not crypto correctness or MTU blackholing.
-- Runtime tracing on the MacBook sender showed nostr-vpn's TUN-to-mesh handoff
+- Runtime tracing on the macOS laptop sender showed nostr-vpn's TUN-to-mesh handoff
   was small: TUN-to-mesh queue wait mostly single-digit microseconds and mesh
   send about 2 us per packet. FIPS steady-state intervals were dominated by the
   single peer worker doing FMP/FSP AEAD plus connected UDP send: roughly
@@ -779,10 +777,10 @@ Decision:
 ## 2026-05-13: direct-link failure must route through FIPS neighbors
 
 Observation:
-- On the MacBook, `hashtree-node.nvpn` was reachable directly, but on the mini
-  it stayed `pending (fips link pending)` after repeated NAT traversal timeouts.
-  Mini still had six healthy FIPS links, so endpoint traffic should have routed
-  through the mesh instead of failing.
+- One macOS peer could reach a mesh node directly, but another local macOS peer
+  stayed `pending (fips link pending)` after repeated NAT traversal timeouts.
+  The second peer still had several healthy FIPS links, so endpoint traffic
+  should have routed through the mesh instead of failing.
 
 Finding:
 - FIPS core already supports multi-hop EndpointData once route coordinates are
@@ -802,7 +800,7 @@ Change:
 ## 2026-05-14: macOS lag without link loss traced to daemon bookkeeping
 
 Observation:
-- MacBook-to-mini screen sharing briefly lagged again while both nvpn daemons
+- macOS-laptop-to-desktop screen sharing briefly lagged again while both nvpn daemons
   stayed running and reported fresh direct UDP links. Short pings over nvpn had
   no loss but showed bursts up to roughly 100-400 ms, while the same LAN
   underlay stayed around 5-13 ms.
@@ -823,7 +821,7 @@ Change:
 ## 2026-05-14: macOS sender batching after bookkeeping fix
 
 Observation:
-- With the daemon-loop stalls removed, the MacBook Wi-Fi sender still lagged
+- With the daemon-loop stalls removed, the macOS laptop Wi-Fi sender still lagged
   Tailscale and one instrumented run collapsed to about 37 Mbit/s with 1194 TCP
   retransmits. Tailscale in the same window was about 272/348 Mbit/s.
 
@@ -834,7 +832,7 @@ Finding:
   sending and kernel/radio pacing, not crypto or MTU.
 - MTU was not the reason: nvpn utun was 1290 and Tailscale utun was 1280.
 - Connected UDP still matters: disabling it with the same batch setting dropped
-  MacBook-to-mini to about 149 Mbit/s. Ordered-sender mode stayed around
+  macOS-laptop-to-desktop to about 149 Mbit/s. Ordered-sender mode stayed around
   218 Mbit/s with more retransmits, so it remains opt-in.
 
 Result:
@@ -842,7 +840,7 @@ Result:
   mode. Final no-perf 20 second forward sweeps were close: batch 8 about
   215 Mbit/s, batch 32 about 214 Mbit/s, and batch 2 about 210 Mbit/s. A prior
   batch 2 run reached about 205 Mbit/s with 1 retransmit and about 356 Mbit/s
-  mini-to-MacBook.
+  macOS-desktop-to-laptop.
 - FIPS core now defaults macOS direct-worker batches to 8 instead of 32. This
   shortens Darwin send bursts without forcing one worker wake per datagram.
   Forward is still below the best same-window Tailscale result, but the severe

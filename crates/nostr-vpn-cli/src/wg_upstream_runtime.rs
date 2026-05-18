@@ -1916,13 +1916,13 @@ Address 127.0.0.1 Parameters
 ---------------------------------------------------------
 Interface Luid     : Loopback Pseudo-Interface 1
 
-Address 192.168.122.147 Parameters
+Address 192.0.2.147 Parameters
 ---------------------------------------------------------
 Interface Luid     : Ethernet
 Scope Id           : 0.0
 ";
         assert_eq!(
-            parse_windows_ipaddresses_interface(sample, "192.168.122.147".parse().expect("ip")),
+            parse_windows_ipaddresses_interface(sample, "192.0.2.147".parse().expect("ip")),
             Some(WindowsAddressInterface::Alias("Ethernet".to_string()))
         );
     }

@@ -84,7 +84,7 @@ internal fun ParticipantRow(
                     if (isSelf) Pill("This device", Color(0xFFECFDF5), Ok)
                     if (participant.isAdmin) Pill("Admin", Color(0xFFF5F3FF), Accent)
                     if (participant.offersExitNode) Pill("Exit", Color(0xFFFFF7ED), Color(0xFFA16207))
-                    if (participant.isFipsRouted(state)) Pill("Routed", Color(0xFFF1F5F9), Muted)
+                    if (participant.isFipsRouted(state)) Pill("via mesh", Color(0xFFF1F5F9), Muted)
                 }
                 Text(participant.subtitle(isSelf), color = Muted, maxLines = 1)
                 Text(participant.statusLabel(state), color = Muted, style = MaterialTheme.typography.bodySmall)
@@ -112,7 +112,7 @@ private fun DeviceDetailDialog(
     onDismiss: () -> Unit,
 ) {
     val isSelf = participant.isSelf(state)
-    val manageNetwork = network?.takeIf { it.localIsAdmin && !isSelf }
+    val manageNetwork = network?.takeIf { it.localIsAdmin }
     val manageDispatch = dispatch
     var aliasDraft by remember { mutableStateOf(participant.magicDnsAlias) }
     var pendingRemove by remember { mutableStateOf(false) }
@@ -140,6 +140,8 @@ private fun DeviceDetailDialog(
                     Text("Tunnel IP", style = MaterialTheme.typography.labelMedium, color = Muted)
                     CopyLine(participant.tunnelIp)
                 }
+                Text("FIPS path", style = MaterialTheme.typography.labelMedium, color = Muted)
+                Text(participant.fipsPathLabel(state))
                 if (manageNetwork != null && manageDispatch != null) {
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
@@ -153,15 +155,17 @@ private fun DeviceDetailDialog(
                         manageDispatch(JSONObject().put("type", "set_participant_alias")
                             .put("npub", participant.npub).put("alias", aliasDraft))
                     }) { Text("Save alias") }
-                    OutlinedButton(onClick = {
-                        val type = if (participant.isAdmin) "remove_admin" else "add_admin"
-                        manageDispatch(JSONObject().put("type", type)
-                            .put("networkId", manageNetwork.id).put("npub", participant.npub))
-                    }) {
-                        Text(if (participant.isAdmin) "Remove admin" else "Make admin")
-                    }
-                    OutlinedButton(onClick = { pendingRemove = true }) {
-                        Text("Remove from network")
+                    if (!isSelf) {
+                        OutlinedButton(onClick = {
+                            val type = if (participant.isAdmin) "remove_admin" else "add_admin"
+                            manageDispatch(JSONObject().put("type", type)
+                                .put("networkId", manageNetwork.id).put("npub", participant.npub))
+                        }) {
+                            Text(if (participant.isAdmin) "Remove admin" else "Make admin")
+                        }
+                        OutlinedButton(onClick = { pendingRemove = true }) {
+                            Text("Remove from network")
+                        }
                     }
                 }
             }
@@ -170,7 +174,7 @@ private fun DeviceDetailDialog(
             TextButton(onClick = onDismiss) { Text("Done") }
         },
     )
-    if (pendingRemove && manageNetwork != null && manageDispatch != null) {
+    if (pendingRemove && manageNetwork != null && manageDispatch != null && !isSelf) {
         AlertDialog(
             onDismissRequest = { pendingRemove = false },
             title = { Text("Remove ${participant.displayName(state)}?") },
@@ -575,6 +579,23 @@ private fun ParticipantState.detailStatusLabel(appState: AppState): String {
         statusText.isNotBlank() -> statusText
         else -> statusLabel(appState)
     }
+}
+
+private fun ParticipantState.fipsPathLabel(appState: AppState): String {
+    if (isSelf(appState)) return "This device"
+    if (reachable && fipsTransportAddr.isNotBlank()) {
+        val transport = if (fipsTransportType.isBlank()) "" else " (${fipsTransportType.uppercase()})"
+        return if (fipsSrttMs > 0) {
+            "Direct connection$transport, $fipsSrttMs ms"
+        } else {
+            "Direct connection$transport"
+        }
+    }
+    if (reachable) {
+        return if (fipsSrttMs > 0) "Via mesh, $fipsSrttMs ms" else "Via mesh"
+    }
+    if (state == "pending") return "Connecting"
+    return "Offline"
 }
 
 private fun ParticipantState.isFipsRouted(state: AppState): Boolean =

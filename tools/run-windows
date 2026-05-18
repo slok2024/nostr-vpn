@@ -68,7 +68,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     echo "Could not derive Windows shared repo path; set NVPN_WINDOWS_SHARED_REPO_PATH." >&2
     exit 1
   fi
-  GUEST_REPO="${GUEST_REPO:-C:\\Users\\sirius\\src\\nostr-vpn}"
+  GUEST_REPO="${GUEST_REPO:-C:\\Users\\Example\\src\\nostr-vpn}"
   if [[ -z "$GUEST_REPO" ]]; then
     echo "Could not derive Windows guest repo path; set GUEST_REPO." >&2
     exit 1

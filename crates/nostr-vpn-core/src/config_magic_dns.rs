@@ -1,7 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use sha2::{Digest, Sha256};
-
 const LEGACY_DEFAULT_NODE_NAME: &str = "nostr-vpn-node";
 
 pub(crate) fn default_network_name(ordinal: usize) -> String {
@@ -58,7 +56,7 @@ pub(crate) fn uses_default_node_name(value: &str, own_pubkey_hex: Option<&str>) 
 }
 
 pub fn default_node_name_for_pubkey(pubkey_hex: &str) -> String {
-    default_magic_dns_label_for_pubkey(pubkey_hex, &HashSet::new())
+    default_pubkey_label("device", pubkey_hex, &HashSet::new())
 }
 
 pub fn default_node_name_from_hostname(hostname: &str) -> Option<String> {
@@ -148,19 +146,48 @@ pub fn default_magic_dns_label_for_pubkey(
     pubkey_hex: &str,
     used_aliases: &HashSet<String>,
 ) -> String {
-    let digest = Sha256::digest(pubkey_hex.as_bytes());
-    let mut index =
-        ((digest[0] as usize) << 8 | digest[1] as usize) % HASHTREE_ANIMAL_ALIASES.len();
-    for _ in 0..HASHTREE_ANIMAL_ALIASES.len() {
-        let candidate = HASHTREE_ANIMAL_ALIASES[index];
-        if !used_aliases.contains(candidate) {
-            return candidate.to_string();
+    default_pubkey_label("peer", pubkey_hex, used_aliases)
+}
+
+fn default_pubkey_label(prefix: &str, pubkey_hex: &str, used_aliases: &HashSet<String>) -> String {
+    let hex = pubkey_hex
+        .trim()
+        .chars()
+        .filter(|ch| ch.is_ascii_hexdigit())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect::<String>();
+
+    for len in [12_usize, 16, 20, 32, 64] {
+        let short = hex.chars().take(len).collect::<String>();
+        if short.is_empty() {
+            break;
         }
-        index = (index + 1) % HASHTREE_ANIMAL_ALIASES.len();
+        let candidate = format!("{prefix}-{short}");
+        if !used_aliases.contains(&candidate) {
+            return candidate;
+        }
+        if short.len() == hex.len() {
+            break;
+        }
     }
 
-    let short = pubkey_hex.chars().take(12).collect::<String>();
-    format!("peer-{short}")
+    let base = if hex.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}-{hex}")
+    };
+    if !used_aliases.contains(&base) {
+        return base;
+    }
+
+    for counter in 2..10_000 {
+        let candidate = format!("{base}-{counter}");
+        if !used_aliases.contains(&candidate) {
+            return candidate;
+        }
+    }
+
+    base
 }
 
 pub(crate) fn uniquify_magic_dns_label(mut base: String, used: &mut HashSet<String>) -> String {
@@ -192,214 +219,3 @@ pub(crate) fn uniquify_magic_dns_label(mut base: String, used: &mut HashSet<Stri
 
     base
 }
-
-// Derived from hashtree animals list:
-// - apps/hashtree-cc/src/lib/data/animals.json
-// - apps/iris-files/src/utils/data/animals.json
-const HASHTREE_ANIMAL_ALIASES: &[&str] = &[
-    "aardvark",
-    "aardwolf",
-    "albatross",
-    "alligator",
-    "alpaca",
-    "anaconda",
-    "angelfish",
-    "ant",
-    "anteater",
-    "antelope",
-    "ape",
-    "armadillo",
-    "baboon",
-    "badger",
-    "barracuda",
-    "bat",
-    "bear",
-    "beaver",
-    "bee",
-    "beetle",
-    "bison",
-    "blackbird",
-    "boa",
-    "boar",
-    "bobcat",
-    "bonobo",
-    "butterfly",
-    "buzzard",
-    "camel",
-    "capybara",
-    "cardinal",
-    "caribou",
-    "carp",
-    "cat",
-    "catfish",
-    "centipede",
-    "chameleon",
-    "cheetah",
-    "chicken",
-    "chimpanzee",
-    "chinchilla",
-    "chipmunk",
-    "clam",
-    "clownfish",
-    "cobra",
-    "cockroach",
-    "condor",
-    "cougar",
-    "cow",
-    "coyote",
-    "crab",
-    "crane",
-    "crayfish",
-    "cricket",
-    "crocodile",
-    "crow",
-    "cuckoo",
-    "deer",
-    "dingo",
-    "dolphin",
-    "donkey",
-    "dove",
-    "dragonfly",
-    "duck",
-    "eagle",
-    "earthworm",
-    "echidna",
-    "eel",
-    "egret",
-    "elephant",
-    "elk",
-    "emu",
-    "falcon",
-    "ferret",
-    "finch",
-    "firefly",
-    "fish",
-    "flamingo",
-    "fox",
-    "frog",
-    "gazelle",
-    "gecko",
-    "gerbil",
-    "giraffe",
-    "goat",
-    "goldfish",
-    "goose",
-    "gorilla",
-    "grasshopper",
-    "grouse",
-    "guanaco",
-    "gull",
-    "hamster",
-    "hare",
-    "hawk",
-    "hedgehog",
-    "heron",
-    "hippopotamus",
-    "hornet",
-    "horse",
-    "hummingbird",
-    "hyena",
-    "ibis",
-    "iguana",
-    "impala",
-    "jackal",
-    "jaguar",
-    "jellyfish",
-    "kangaroo",
-    "koala",
-    "koi",
-    "ladybug",
-    "lemur",
-    "leopard",
-    "lion",
-    "lizard",
-    "llama",
-    "lobster",
-    "lynx",
-    "macaw",
-    "magpie",
-    "manatee",
-    "marten",
-    "meerkat",
-    "mink",
-    "mole",
-    "mongoose",
-    "monkey",
-    "moose",
-    "mosquito",
-    "moth",
-    "mouse",
-    "mule",
-    "narwhal",
-    "newt",
-    "nightingale",
-    "octopus",
-    "opossum",
-    "orangutan",
-    "orca",
-    "ostrich",
-    "otter",
-    "owl",
-    "oyster",
-    "panda",
-    "panther",
-    "parrot",
-    "peacock",
-    "pelican",
-    "penguin",
-    "pheasant",
-    "pig",
-    "pigeon",
-    "piranha",
-    "platypus",
-    "porcupine",
-    "porpoise",
-    "puffin",
-    "python",
-    "quail",
-    "rabbit",
-    "raccoon",
-    "ram",
-    "rat",
-    "raven",
-    "reindeer",
-    "rhino",
-    "salamander",
-    "salmon",
-    "scorpion",
-    "seahorse",
-    "seal",
-    "shark",
-    "sheep",
-    "skunk",
-    "sloth",
-    "snail",
-    "snake",
-    "sparrow",
-    "spider",
-    "squid",
-    "squirrel",
-    "starfish",
-    "stork",
-    "swan",
-    "tapir",
-    "termite",
-    "tiger",
-    "toad",
-    "toucan",
-    "trout",
-    "turkey",
-    "turtle",
-    "viper",
-    "vulture",
-    "walrus",
-    "wasp",
-    "weasel",
-    "whale",
-    "wildcat",
-    "wolf",
-    "wombat",
-    "woodpecker",
-    "yak",
-    "zebra",
-];

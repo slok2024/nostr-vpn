@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Windows GUI E2E driver. Runs on the host (macOS); pushes the working tree
-# to the win11-dev VM (reachable over the Nostr VPN mesh — see CLAUDE.md),
+# to a Windows VM reachable over SSH. Set NVPN_WINDOWS_SSH_HOST for local
+# machine-specific hostnames.
 # builds the app, launches the GUI, and pulls back a cropped screenshot of
 # the main window.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SSH_HOST="${NVPN_WINDOWS_SSH_HOST:-${1:-win11-dev}}"
+SSH_HOST="${NVPN_WINDOWS_SSH_HOST:-${1:-windows-dev}}"
 GUEST_REPO="${NVPN_WINDOWS_GUEST_REPO_PATH:-C:\\src\\nostr-vpn}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-$ROOT/artifacts}"
 RECT_JSON="$ARTIFACT_ROOT/windows-gui-rect.json"

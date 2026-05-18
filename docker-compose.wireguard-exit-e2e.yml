@@ -7,7 +7,7 @@ services:
       context: .
       dockerfile: Dockerfile.e2e
       additional_contexts:
-        fips: ../fips
+        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
     cap_add:
       - NET_ADMIN
     entrypoint: ["sleep", "infinity"]
@@ -20,7 +20,7 @@ services:
       context: .
       dockerfile: Dockerfile.e2e
       additional_contexts:
-        fips: ../fips
+        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
     cap_add:
       - NET_ADMIN
     sysctls:
@@ -41,7 +41,7 @@ services:
       context: .
       dockerfile: Dockerfile.e2e
       additional_contexts:
-        fips: ../fips
+        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
     cap_add:
       - NET_ADMIN
     devices:
@@ -56,7 +56,7 @@ services:
       context: .
       dockerfile: Dockerfile.e2e
       additional_contexts:
-        fips: ../fips
+        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
     cap_add:
       - NET_ADMIN
     devices:

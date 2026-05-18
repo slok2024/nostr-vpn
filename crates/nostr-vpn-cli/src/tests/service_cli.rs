@@ -67,10 +67,10 @@ fn macos_service_plist_runs_service_supervised_daemon() {
     let plist = crate::macos_service::macos_service_plist_content(
         "to.nostrvpn.nvpn",
         Path::new("/Applications/Nostr VPN.app/Contents/MacOS/nvpn"),
-        Path::new("/Users/sirius/Library/Application Support/nvpn/config.toml"),
+        Path::new("/Users/example/Library/Application Support/nvpn/config.toml"),
         "utun100",
         20,
-        Path::new("/Users/sirius/Library/Logs/nvpn/daemon.log"),
+        Path::new("/Users/example/Library/Logs/nvpn/daemon.log"),
     );
 
     assert!(plist.contains("<string>daemon</string>"));
@@ -83,10 +83,10 @@ fn macos_service_plist_parser_extracts_service_executable() {
     let plist = crate::macos_service::macos_service_plist_content(
         "to.nostrvpn.nvpn",
         Path::new("/Applications/Nostr VPN.app/Contents/MacOS/nvpn"),
-        Path::new("/Users/sirius/Library/Application Support/nvpn/config.toml"),
+        Path::new("/Users/example/Library/Application Support/nvpn/config.toml"),
         "utun100",
         20,
-        Path::new("/Users/sirius/Library/Logs/nvpn/daemon.log"),
+        Path::new("/Users/example/Library/Logs/nvpn/daemon.log"),
     );
 
     assert_eq!(
@@ -237,17 +237,17 @@ fn macos_stop_daemon_hint_ignores_non_service_pid() {
 fn linux_service_unit_runs_service_supervised_daemon() {
     let unit = crate::linux_service_unit_content(
         Path::new("/usr/local/bin/nvpn"),
-        Path::new("/home/sirius/.config/nvpn/config.toml"),
+        Path::new("/home/example/.config/nvpn/config.toml"),
         "nvpn",
         20,
-        Path::new("/home/sirius/.local/state/nvpn/daemon.log"),
+        Path::new("/home/example/.local/state/nvpn/daemon.log"),
     );
 
     assert!(unit.contains("ExecStart=\"/usr/local/bin/nvpn\" daemon --service --config"));
     assert!(unit.contains("--iface \"nvpn\""));
     assert!(unit.contains("--mesh-refresh-interval-secs 20"));
-    assert!(unit.contains("StandardOutput=append:/home/sirius/.local/state/nvpn/daemon.log"));
-    assert!(unit.contains("StandardError=append:/home/sirius/.local/state/nvpn/daemon.log"));
+    assert!(unit.contains("StandardOutput=append:/home/example/.local/state/nvpn/daemon.log"));
+    assert!(unit.contains("StandardError=append:/home/example/.local/state/nvpn/daemon.log"));
     assert!(!unit.contains("StandardOutput=append:\""));
     assert!(!unit.contains("StandardError=append:\""));
 }
@@ -264,10 +264,10 @@ fn linux_service_binary_uses_stable_path_copy() {
 fn linux_service_unit_parser_extracts_service_executable() {
     let unit = crate::linux_service_unit_content(
         Path::new("/usr/local/bin/nvpn"),
-        Path::new("/home/sirius/.config/nvpn/config.toml"),
+        Path::new("/home/example/.config/nvpn/config.toml"),
         "nvpn",
         20,
-        Path::new("/home/sirius/.local/state/nvpn/daemon.log"),
+        Path::new("/home/example/.local/state/nvpn/daemon.log"),
     );
 
     assert_eq!(
@@ -286,7 +286,7 @@ fn windows_service_query_parser_extracts_running_state() {
 
 #[test]
 fn windows_service_config_parser_extracts_disabled_state() {
-    let query = "SERVICE_NAME: NvpnService\n        TYPE               : 10  WIN32_OWN_PROCESS\n        START_TYPE         : 4   DISABLED\n        ERROR_CONTROL      : 1   NORMAL\n        BINARY_PATH_NAME   : \"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --service --config \"C:\\Users\\sirius\\AppData\\Roaming\\nvpn\\config.toml\"\n";
+    let query = "SERVICE_NAME: NvpnService\n        TYPE               : 10  WIN32_OWN_PROCESS\n        START_TYPE         : 4   DISABLED\n        ERROR_CONTROL      : 1   NORMAL\n        BINARY_PATH_NAME   : \"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --service --config \"C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml\"\n";
     assert!(windows_service_disabled_from_qc_output(query));
 
     let auto_start = "SERVICE_NAME: NvpnService\n        TYPE               : 10  WIN32_OWN_PROCESS\n        START_TYPE         : 2   AUTO_START\n";
@@ -295,7 +295,7 @@ fn windows_service_config_parser_extracts_disabled_state() {
 
 #[test]
 fn windows_service_config_parser_extracts_binary_path() {
-    let query = "SERVICE_NAME: NvpnService\n        TYPE               : 10  WIN32_OWN_PROCESS\n        START_TYPE         : 2   AUTO_START\n        BINARY_PATH_NAME   : \"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --service --config \"C:\\Users\\sirius\\AppData\\Roaming\\nvpn\\config.toml\"\n";
+    let query = "SERVICE_NAME: NvpnService\n        TYPE               : 10  WIN32_OWN_PROCESS\n        START_TYPE         : 2   AUTO_START\n        BINARY_PATH_NAME   : \"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --service --config \"C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml\"\n";
     assert_eq!(
         windows_service_binary_path_from_sc_qc_output(query),
         Some(Path::new(r"C:\Program Files\Nostr VPN\nvpn.exe").to_path_buf())

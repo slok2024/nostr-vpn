@@ -14,16 +14,16 @@ fn legacy_prefixed_network_ids_are_normalized_at_runtime() {
 #[test]
 fn default_node_name_from_hostname_uses_first_label() {
     assert_eq!(
-        default_node_name_from_hostname("Siriuss-Mini.fritz.box").as_deref(),
-        Some("siriuss-mini")
+        default_node_name_from_hostname("example-mini.lan").as_deref(),
+        Some("example-mini")
     );
 }
 
 #[test]
 fn default_node_name_from_hostname_normalizes_human_device_names() {
     assert_eq!(
-        default_node_name_from_hostname("Sirius's Mac mini").as_deref(),
-        Some("sirius-s-mac-mini")
+        default_node_name_from_hostname("Example Mac mini").as_deref(),
+        Some("example-mac-mini")
     );
 }
 
@@ -43,18 +43,18 @@ fn default_node_name_from_hostname_ignores_container_hex_names() {
 }
 
 #[test]
-fn default_node_name_resolution_prefers_hostname_over_petname() {
+fn default_node_name_resolution_prefers_hostname_over_pubkey_fallback() {
     let keys = Keys::generate();
     let own_hex = keys.public_key().to_hex();
 
     assert_eq!(
-        default_node_name_for_hostname_or_pubkey(Some("Siriuss-Mini.fritz.box"), &own_hex),
-        "siriuss-mini"
+        default_node_name_for_hostname_or_pubkey(Some("example-mini.lan"), &own_hex),
+        "example-mini"
     );
 }
 
 #[test]
-fn default_node_name_resolution_falls_back_to_petname_for_localhost() {
+fn default_node_name_resolution_falls_back_to_device_id_for_localhost() {
     let keys = Keys::generate();
     let own_hex = keys.public_key().to_hex();
 
@@ -203,7 +203,8 @@ fn tunnel_ip_stays_stable_when_roster_changes_if_network_id_is_fixed() {
 fn endpoint_and_tunnel_autoconfig_detection_works() {
     assert!(needs_endpoint_autoconfig("127.0.0.1:51820"));
     assert!(needs_endpoint_autoconfig("0.0.0.0:51820"));
-    assert!(!needs_endpoint_autoconfig("198.51.100.10:51820"));
+    assert!(needs_endpoint_autoconfig("198.51.100.10:51820"));
+    assert!(!needs_endpoint_autoconfig("192.168.1.10:51820"));
 
     assert!(needs_tunnel_ip_autoconfig("10.44.0.1/32"));
     assert!(!needs_tunnel_ip_autoconfig("10.44.0.15/32"));

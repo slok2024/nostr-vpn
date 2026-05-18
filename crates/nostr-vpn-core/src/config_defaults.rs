@@ -152,12 +152,24 @@ pub fn needs_endpoint_autoconfig(endpoint: &str) -> bool {
         .trim_start_matches('[')
         .trim_end_matches(']');
 
-    matches!(host, "127.0.0.1" | "0.0.0.0" | "localhost" | "::1")
+    if matches!(host, "127.0.0.1" | "0.0.0.0" | "localhost" | "::1") {
+        return true;
+    }
+
+    host.parse::<IpAddr>()
+        .is_ok_and(|ip| matches!(ip, IpAddr::V4(ipv4) if ipv4_is_documentation(ipv4.octets())))
 }
 
 pub fn needs_tunnel_ip_autoconfig(tunnel_ip: &str) -> bool {
     let value = tunnel_ip.trim();
     value.is_empty() || value == "10.44.0.1/32"
+}
+
+fn ipv4_is_documentation(octets: [u8; 4]) -> bool {
+    matches!(
+        octets,
+        [192, 0, 2, _] | [198, 51, 100, _] | [203, 0, 113, _]
+    )
 }
 
 fn detect_primary_ipv4() -> Option<IpAddr> {

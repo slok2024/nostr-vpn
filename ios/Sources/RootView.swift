@@ -7,6 +7,7 @@ struct RootView: View {
     @State private var vpnDisclosurePresented = false
     @State private var startVpnAfterDisclosure = false
     @State private var shownNetworkId: String?
+    @State private var selectedTab = Self.initialTab()
 
     private var shownNetwork: NetworkState? {
         if let shownNetworkId,
@@ -14,6 +15,12 @@ struct RootView: View {
             return network
         }
         return model.activeNetwork
+    }
+
+    private var incomingJoinRequestCount: Int {
+        model.state.networks.reduce(0) { count, network in
+            count + network.inboundJoinRequests.count
+        }
     }
 
     var body: some View {
@@ -30,12 +37,14 @@ struct RootView: View {
                         .navigationBarTitleDisplayMode(.inline)
                 }
             } else {
-                TabView {
+                TabView(selection: $selectedTab) {
                     NavigationStack {
                         DevicesPage(model: model, network: shownNetwork)
                             .toolbar { networkSwitcherToolbar }
                     }
                     .tabItem { Label("Devices", systemImage: "circle.grid.2x2.fill") }
+                    .tag(AppTab.devices)
+                    .badge(incomingJoinRequestCount > 0 ? Text("") : nil)
 
                     NavigationStack {
                         ExitNodesPage(model: model, network: shownNetwork)
@@ -43,6 +52,7 @@ struct RootView: View {
                             .toolbar { networkSwitcherToolbar }
                     }
                     .tabItem { Label("Exit Nodes", systemImage: "arrow.triangle.branch") }
+                    .tag(AppTab.exitNodes)
 
                     NavigationStack {
                         SettingsPage(model: model)
@@ -50,6 +60,7 @@ struct RootView: View {
                             .toolbar { networkSwitcherToolbar }
                     }
                     .tabItem { Label("Settings", systemImage: "gearshape") }
+                    .tag(AppTab.settings)
                 }
             }
         }
@@ -127,6 +138,23 @@ struct RootView: View {
         startVpnAfterDisclosure = startVpnAfterAccept
         vpnDisclosurePresented = true
     }
+
+    private static func initialTab() -> AppTab {
+        switch AppModel.screenshotTabArgument()?.lowercased() {
+        case "exit", "exit-node", "exit-nodes", "routes", "routing":
+            return .exitNodes
+        case "settings", "diagnostics":
+            return .settings
+        default:
+            return .devices
+        }
+    }
+}
+
+private enum AppTab: Hashable {
+    case devices
+    case exitNodes
+    case settings
 }
 
 /// Header dropdown that shows the active network's name and lets the user
@@ -215,6 +243,7 @@ private struct AddNetworkPage: View {
             }
             .padding()
         }
+        .safeAreaPadding(.bottom, 92)
         .background(AppColors.background)
     }
 }
@@ -294,6 +323,7 @@ private struct DevicesPage: View {
             }
             .padding()
         }
+        .safeAreaPadding(.bottom, 92)
         .background(AppColors.background)
         .sheet(isPresented: $addDevicePresented) {
             if let network {
@@ -568,6 +598,25 @@ private struct AddDeviceSheet: View {
                 if network.enabled {
                     InviteToMyNetworkCard(model: model, network: network)
                 }
+                ForEach(network.inboundJoinRequests) { request in
+                    JoinRequestRow(request: request) {
+                        model.dispatch(
+                            NativeActions.acceptJoinRequest(
+                                networkId: network.id,
+                                requesterNpub: request.requesterNpub
+                            ),
+                            status: "Accepting request"
+                        )
+                    } reject: {
+                        model.dispatch(
+                            NativeActions.rejectJoinRequest(
+                                networkId: network.id,
+                                requesterNpub: request.requesterNpub
+                            ),
+                            status: "Rejecting request"
+                        )
+                    }
+                }
                 ManualPairingInfoCard(model: model, network: network)
                 AddDeviceCard(network: network) { npub, alias in
                     model.dispatch(
@@ -578,6 +627,7 @@ private struct AddDeviceSheet: View {
             }
             .padding()
         }
+        .safeAreaPadding(.bottom, 92)
         .background(AppColors.background)
     }
 }
@@ -631,7 +681,11 @@ private struct InviteToMyNetworkCard: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     CopyLine(value: model.state.activeNetworkInvite, model: model)
-                    if !model.state.activeNetworkInvite.isEmpty {
+                    if let inviteUrl = URL(string: model.state.activeNetworkInvite) {
+                        ShareLink(item: inviteUrl) {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
+                    } else if !model.state.activeNetworkInvite.isEmpty {
                         ShareLink(item: model.state.activeNetworkInvite) {
                             Label("Share", systemImage: "square.and.arrow.up")
                         }
@@ -779,6 +833,7 @@ private struct ExitNodesPage: View {
             }
             .padding()
         }
+        .safeAreaPadding(.bottom, 92)
         .background(AppColors.background)
     }
 }
@@ -862,7 +917,7 @@ private struct ParticipantRow: View {
                                 Pill("Exit", tint: .orange)
                             }
                             if isFipsRouted(participant, state: model.state) {
-                                Pill("Routed", tint: .secondary)
+                                Pill("via mesh", tint: .secondary)
                             }
                         }
                         Text(deviceSubtitle(participant, state: model.state))
@@ -938,12 +993,13 @@ private struct DeviceDetailSheet: View {
                     if !participant.tunnelIp.isEmpty {
                         labelValueRow("Tunnel IP", participant.tunnelIp, copyable: true)
                     }
+                    labelValueRow("FIPS path", fipsPath(participant, state: model.state))
                     if !participant.fipsTransportAddr.isEmpty {
                         labelValueRow("Endpoint", participant.fipsTransportAddr)
                     }
                 }
 
-                if localIsAdmin && !isMe {
+                if localIsAdmin {
                     AppCard {
                         Text("Manage")
                             .font(.headline)
@@ -960,29 +1016,31 @@ private struct DeviceDetailSheet: View {
                         }
                         .buttonStyle(.bordered)
 
-                        Button {
-                            if participant.isAdmin {
-                                model.dispatch(
-                                    NativeActions.removeAdmin(networkId: network.id, npub: participant.npub),
-                                    status: "Removing admin"
-                                )
-                            } else {
-                                model.dispatch(
-                                    NativeActions.addAdmin(networkId: network.id, npub: participant.npub),
-                                    status: "Granting admin"
-                                )
+                        if !isMe {
+                            Button {
+                                if participant.isAdmin {
+                                    model.dispatch(
+                                        NativeActions.removeAdmin(networkId: network.id, npub: participant.npub),
+                                        status: "Removing admin"
+                                    )
+                                } else {
+                                    model.dispatch(
+                                        NativeActions.addAdmin(networkId: network.id, npub: participant.npub),
+                                        status: "Granting admin"
+                                    )
+                                }
+                            } label: {
+                                Label(participant.isAdmin ? "Remove admin" : "Make admin", systemImage: participant.isAdmin ? "person.fill.badge.minus" : "person.fill.badge.plus")
                             }
-                        } label: {
-                            Label(participant.isAdmin ? "Remove admin" : "Make admin", systemImage: participant.isAdmin ? "person.fill.badge.minus" : "person.fill.badge.plus")
-                        }
-                        .buttonStyle(.bordered)
+                            .buttonStyle(.bordered)
 
-                        Button(role: .destructive) {
-                            pendingRemove = true
-                        } label: {
-                            Label("Remove from network", systemImage: "trash")
+                            Button(role: .destructive) {
+                                pendingRemove = true
+                            } label: {
+                                Label("Remove from network", systemImage: "trash")
+                            }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.bordered)
                     }
                     .confirmationDialog(
                         "Remove \(deviceName(participant, state: model.state))?",
@@ -1535,6 +1593,31 @@ private func deviceDetailStatus(_ participant: ParticipantState, state: AppState
         return participant.statusText
     }
     return deviceStatus(participant, state: state)
+}
+
+private func fipsPath(_ participant: ParticipantState, state: AppState) -> String {
+    if isSelf(participant, state: state) {
+        return "This device"
+    }
+    if participant.reachable
+        && !participant.fipsTransportAddr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    {
+        let transport = participant.fipsTransportType.isEmpty ? "" : " (\(participant.fipsTransportType.uppercased()))"
+        if participant.fipsSrttMs > 0 {
+            return "Direct connection\(transport), \(participant.fipsSrttMs) ms"
+        }
+        return "Direct connection\(transport)"
+    }
+    if participant.reachable {
+        if participant.fipsSrttMs > 0 {
+            return "Via mesh, \(participant.fipsSrttMs) ms"
+        }
+        return "Via mesh"
+    }
+    if participant.state == "pending" {
+        return "Connecting"
+    }
+    return "Offline"
 }
 
 private func connectivityTint(_ participant: ParticipantState, state: AppState) -> Color {

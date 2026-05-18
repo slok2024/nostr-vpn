@@ -4,11 +4,110 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.31 - 2026-05-18
+
+### Changed
+
+- FIPS peers without a direct endpoint are now labeled as `via mesh` across the
+  native and web device UIs.
+- Incoming join requests are now visible from the Add Device flow as well as
+  the Devices list, with a Devices tab attention dot when requests are waiting.
+
+### Fixed
+
+- Routed FIPS peers now retain control-channel RTT on desktop and mobile, so
+  cellular/mesh paths can show live latency instead of falling back to only
+  `seen N seconds ago`.
+- Importing an invite for a different network now creates and activates that
+  network instead of mutating an existing named active network.
+- FIPS endpoint hints now ignore placeholder, documentation, localhost, and
+  public-key-shaped values before saving or advertising them.
+
+## 4.0.30 - 2026-05-18
+
+### Fixed
+
+- Invites now carry the inviter's current FIPS endpoint hint and import stores
+  that hint for the admin peer, so join requests do not depend only on stale
+  overlay endpoint discovery.
+- Placeholder/documentation endpoints such as `198.51.100.10:51820` now trigger
+  endpoint autoconfiguration instead of being advertised as real peer addresses.
+
+## 4.0.29 - 2026-05-17
+
+### Changed
+
+- MagicDNS no longer invents aliases for unnamed roster members;
+  devices can be in a roster without an `.nvpn` name until an admin names them.
+- Pending join requests seed only temporary local `self.nvpn` and `admin.nvpn`
+  names until the accepted shared roster provides real aliases.
+- Pending FIPS join requests now use the same 10-second retry cadence on
+  desktop and mobile.
+
+### Fixed
+
+- Admins can rename their own device from every native network UI.
+- Enabling join requests from the native app now starts the background FIPS
+  listener when needed, so admins can receive requests while the app is open.
+- FIPS join-request senders on desktop and mobile keep endpoint hints for
+  admin-only control peers without treating them as accepted data-plane peers,
+  and the Docker e2e no longer pre-seeds admin config by editing TOML.
+- Mobile join-request listeners and pending senders now enable FIPS discovery
+  even before any accepted roster peer exists.
+- Mobile join requests now have an app-core integration test that sends the
+  request through real FIPS endpoints and records it on the admin side.
+
+## 4.0.28 - 2026-05-17
+
+### Changed
+
+- FIPS Docker e2e runs now use deterministic configured-only Nostr discovery,
+  keeping the test meshes off the public relay overlay while preserving open
+  discovery as the runtime default.
+- Docker e2e compose files can use `NVPN_FIPS_REPO_PATH` for the local FIPS
+  checkout path.
+- The release gate now includes a Docker e2e check for invite-based FIPS join
+  requests from a non-roster requester to an admin listener.
+
+### Fixed
+
+- Admin-signed shared rosters now apply MagicDNS aliases for the local device
+  itself, so an admin-set name such as `iphone.nvpn` replaces an older local
+  fallback.
+- Mobile admins now persist inbound FIPS join requests from unknown requesters,
+  and native app state exposes pending requests for every UI shell.
+- The release gate now runs the routed FIPS and NAT safe-MTU Docker e2e tests
+  again instead of printing a known-broken skip.
+
+## 4.0.27 - 2026-05-17
+
+### Added
+
+- iOS debug builds now support fixture mode for App Store screenshots,
+  using non-real mesh, device, exit-node, and WireGuard data.
+- Added App Store Connect draft tooling that can update metadata, attach
+  the release build, and upload iPhone/iPad screenshot sets.
+- Added repeatable iPhone and iPad simulator screenshot capture for the
+  required App Store display classes.
+- Umbrel now has a responsive web control panel path with app-core API
+  routing and Docker e2e coverage for the VPN toggle flow.
+
+### Changed
+
+- iOS mobile flows now use the manual add-network path and a quieter VPN
+  disclosure notice.
+- Native and web device lists show calmer, more consistent peer status
+  labels, with MagicDNS names treated as authoritative when present.
+- Exit-node leak protection is enabled by default.
+
 ### Fixed
 
 - iOS now persists the generated Nostr identity when first-run device-name
   seeding creates a partial config file, avoiding a fresh install that shows no
   saved identity until another config write happens.
+- Android peer presence and GUI autostart now recover correctly.
+- Mobile FIPS reachability state is reported correctly.
+- The final saved network can be deleted.
 
 ## 4.0.26 - 2026-05-17
 
@@ -359,8 +458,8 @@ All notable changes to this project are documented in this file.
 - **Bumped fips-endpoint to `02c00a0` — Darwin connected-UDP and tunnel
   reliability refresh.** The macOS private mesh now installs per-peer connected
   UDP sockets by default after fixing the listener/peer `SO_REUSE*` mismatch
-  that made earlier Darwin connected-socket tests unstable. On the MacBook
-  Wi-Fi to Ethernet-mini path, the best same-window sample improved to about
+  that made earlier Darwin connected-socket tests unstable. On the macOS laptop
+  Wi-Fi to Ethernet desktop path, the best same-window sample improved to about
   256 Mbit/s forward and 404 Mbit/s reverse; reverse is now Tailscale-level in
   current samples, while the forward direction remains packet-rate limited by
   the Darwin Wi-Fi sender path.
@@ -379,14 +478,14 @@ All notable changes to this project are documented in this file.
 - Private FIPS mesh packet routing now moves owned packet buffers through the
   send/receive hot path instead of cloning each packet at the nvpn mesh layer.
 - FIPS macOS sending now defaults to the hash-by-send-target worker path instead
-  of the per-flow ordered sender thread. Live MacBook Wi-Fi to Ethernet-mini
+  of the per-flow ordered sender thread. Live macOS laptop Wi-Fi to Ethernet desktop
   testing improved the weak direction from about 103-109 Mbit/s to about
   147 Mbit/s while keeping reverse around 350 Mbit/s; the ordered path remains
   available for A/B runs with `FIPS_MACOS_ORDERED_SENDER=1`.
 - FIPS macOS worker drain size can now be A/B tested with
   `FIPS_MACOS_WORKER_BATCH`; the default remains 32 after smaller batches
   regressed local Wi-Fi/Ethernet throughput.
-- Added runtime-only pipeline tracing and recorded the MacBook/mini and mini
+- Added runtime-only pipeline tracing and recorded the macOS laptop/desktop and
   Docker performance experiments in `docs/EXPERIMENTS.md`.
 
 ### Fixed
@@ -416,7 +515,7 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
-- **Bumped fips-endpoint to `9b7c723` — boringtun-style data-plane perf overhaul.** Single squash-merge landing 49 commits worth of FIPS receive/send hot-path work. **Single-stream TCP went from ~1.5 Gbps baseline to ~2.2 Gbps on Mac docker bench (+47%) and 2.24 Gbps on ubuntu-dev netns+veth host bench (+62% over same-host baseline).** Multi-stream throughput moves up 8-15% across 4/8-stream configurations. Highlights:
+- **Bumped fips-endpoint to `9b7c723` — boringtun-style data-plane perf overhaul.** Single squash-merge landing 49 commits worth of FIPS receive/send hot-path work. **Single-stream TCP went from ~1.5 Gbps baseline to ~2.2 Gbps on Mac docker bench (+47%) and 2.24 Gbps on linux-dev netns+veth host bench (+62% over same-host baseline).** Multi-stream throughput moves up 8-15% across 4/8-stream configurations. Highlights:
   - **Shard-owned decrypt worker pool** (std::thread + crossbeam_channel) — each worker owns its session state in a thread-local HashMap. No `Arc<RwLock<HashMap>>` cache on Node, no `Arc<Mutex<ReplayWindow>>` shared with rx_loop. Direct `&mut` access per packet, zero lock acquires per AEAD layer. Hash-by-cache_key dispatch so a session always lands on the same shard.
   - **UDP_GSO on Linux** — `sendmsg(2)` + `UDP_SEGMENT` cmsg path for uniform-size batches, falling back to `sendmmsg(2)` on EINVAL/EOPNOTSUPP. Kernel splits one super-skb into N on-the-wire UDP datagrams via a single skb walk (the same primitive WireGuard kernel + boringtun use to hit 2.5–3.2 Gbps).
   - **Connected UDP per peer on Linux** — `ConnectedPeerSocket` (SO_REUSEPORT + bind + connect) for each established peer, with a `PeerRecvDrain` std::thread feeding the existing `packet_tx`. Encrypt-worker send path uses the peer's connected fd with `msg_name = NULL`; kernel skips per-packet sockaddr handling + route lookup + neighbor resolve. Pairs cleanly with UDP_GSO.
@@ -539,7 +638,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
-- FIPS spanning-tree: nodes whose only smaller-NodeAddr parent disappeared no longer advertise an ancestry whose advertised root is not the path's minimum entry. Previously such announces were rejected by recipients with `invalid ancestry: advertised root X is not the minimum path entry Y`, blocking mesh transit (e.g. mini→ubuntu-dev / mini→win11 through a shared mac peer).
+- FIPS spanning-tree: nodes whose only smaller-NodeAddr parent disappeared no longer advertise an ancestry whose advertised root is not the path's minimum entry. Previously such announces were rejected by recipients with `invalid ancestry: advertised root X is not the minimum path entry Y`, blocking mesh transit (e.g. macOS desktop→linux-dev / macOS desktop→windows-dev through a shared mac peer).
 
 ## 4.0.2 - 2026-05-08
 

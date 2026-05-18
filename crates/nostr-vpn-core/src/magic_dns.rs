@@ -185,7 +185,11 @@ pub fn build_magic_dns_records(config: &AppConfig) -> HashMap<String, Ipv4Addr> 
         }
     }
 
-    for participant in &config.participant_pubkeys_hex() {
+    let own_pubkey_hex = config.own_nostr_pubkey_hex().ok();
+    for participant in &config.active_network_signal_pubkeys_hex() {
+        if own_pubkey_hex.as_deref() == Some(participant.as_str()) {
+            continue;
+        }
         let Some(alias) = config.peer_alias(participant) else {
             continue;
         };

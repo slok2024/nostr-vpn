@@ -20,7 +20,16 @@
       <DockPanel LastChildFill="True">
         <StackPanel DockPanel.Dock="Top">
           <Button Style="{StaticResource NavButton}" Command="{Binding ShowDevicesCommand}">
-            <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE772;" Width="24" /><TextBlock Text="Devices" /></StackPanel>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="24" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <TextBlock Grid.Column="0" FontFamily="Segoe MDL2 Assets" Text="&#xE772;" />
+              <TextBlock Grid.Column="1" Text="Devices" />
+              <Ellipse Grid.Column="2" Width="8" Height="8" Fill="{StaticResource Danger}" VerticalAlignment="Center" Margin="8,0,0,0" Visibility="{Binding HasIncomingJoinRequests, Converter={StaticResource BoolToVisibility}}" />
+            </Grid>
           </Button>
           <Button Style="{StaticResource NavButton}" Command="{Binding ShowExitNodesCommand}">
             <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8B8;" Width="24" /><TextBlock Text="Exit Nodes" /></StackPanel>
@@ -253,7 +262,7 @@
                       </StackPanel>
                     </DockPanel>
 
-                    <Grid Margin="0,20,0,0" Visibility="{Binding SelectedParticipantCanManage, Converter={StaticResource BoolToVisibility}}">
+                    <Grid Margin="0,20,0,0" Visibility="{Binding SelectedParticipantCanRename, Converter={StaticResource BoolToVisibility}}">
                       <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="80" />
                         <ColumnDefinition Width="*" />
@@ -264,8 +273,8 @@
                       <TextBlock Text="Name" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
                       <TextBox x:Name="AliasInput" Grid.Column="1" Text="{Binding SelectedParticipant.MagicDnsAlias, Mode=OneWay}" Margin="0,0,8,0" />
                       <Button Grid.Column="2" Content="Save" Tag="{Binding SelectedParticipant}" Click="SetParticipantAlias_Click" Margin="0,0,8,0" />
-                      <Button Grid.Column="3" Content="Admin" Tag="{Binding SelectedParticipant}" Click="ToggleAdmin_Click" Margin="0,0,8,0" />
-                      <Button Grid.Column="4" Content="Remove" Tag="{Binding SelectedParticipant}" Click="RemoveParticipant_Click" />
+                      <Button Grid.Column="3" Content="Admin" Tag="{Binding SelectedParticipant}" Click="ToggleAdmin_Click" Margin="0,0,8,0" Visibility="{Binding SelectedParticipantCanManage, Converter={StaticResource BoolToVisibility}}" />
+                      <Button Grid.Column="4" Content="Remove" Tag="{Binding SelectedParticipant}" Click="RemoveParticipant_Click" Visibility="{Binding SelectedParticipantCanManage, Converter={StaticResource BoolToVisibility}}" />
                     </Grid>
 
                     <Border BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,18,0,0">
@@ -458,6 +467,30 @@
                   </StackPanel>
                 </StackPanel>
               </Grid>
+            </Border>
+
+            <Border Style="{StaticResource Card}" Visibility="{Binding ActiveNetworkHasIncomingJoinRequests, Converter={StaticResource BoolToVisibility}}">
+              <StackPanel>
+                <TextBlock Text="Join Requests" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
+                <ItemsControl ItemsSource="{Binding ActiveNetwork.InboundJoinRequests}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Border Style="{StaticResource Card}">
+                        <DockPanel>
+                          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Content="Reject" Tag="{Binding}" Click="RejectJoin_Click" Margin="0,0,8,0" />
+                            <Button Content="Accept" Tag="{Binding}" Click="AcceptJoin_Click" />
+                          </StackPanel>
+                          <StackPanel>
+                            <TextBlock Text="{Binding RequesterNodeName}" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding RequestedAtText}" Foreground="{StaticResource TextSecondary}" />
+                          </StackPanel>
+                        </DockPanel>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
             </Border>
 
             <Border Style="{StaticResource Card}" Visibility="{Binding HasActiveNetwork, Converter={StaticResource BoolToVisibility}}">

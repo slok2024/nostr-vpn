@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile.e2e
       additional_contexts:
-        fips: ../fips
+        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
     entrypoint: ["sleep", "infinity"]
     environment:
       FIPS_PEER_ACTOR: "${FIPS_PEER_ACTOR:-0}"
@@ -21,7 +21,7 @@ services:
       context: .
       dockerfile: Dockerfile.e2e
       additional_contexts:
-        fips: ../fips
+        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
     entrypoint: ["sleep", "infinity"]
     environment:
       FIPS_PEER_ACTOR: "${FIPS_PEER_ACTOR:-0}"
@@ -38,7 +38,7 @@ services:
       context: .
       dockerfile: Dockerfile.e2e
       additional_contexts:
-        fips: ../fips
+        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
     entrypoint: ["sleep", "infinity"]
     environment:
       FIPS_PEER_ACTOR: "${FIPS_PEER_ACTOR:-0}"

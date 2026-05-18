@@ -61,6 +61,9 @@
   $: shownNetwork = state
     ? state.networks.find((network) => network.id === shownNetworkId) ?? activeNetwork
     : null;
+  $: incomingJoinRequestCount = state
+    ? state.networks.reduce((count, network) => count + network.inboundJoinRequests.length, 0)
+    : 0;
   $: participants = shownNetwork?.participants ?? [];
   $: visibleParticipants = participants.filter((participant) => {
     const query = deviceSearch.trim().toLowerCase();
@@ -374,10 +377,14 @@
   }
 
   function fipsPathText(participant: ParticipantView): string {
-    if (participant.fipsTransportType) {
+    if (participant.fipsTransportAddr || participant.fipsTransportType) {
+      const transport = participant.fipsTransportType || 'fips';
       return participant.fipsSrttMs
-        ? `${participant.fipsTransportType} ${participant.fipsSrttMs} ms`
-        : participant.fipsTransportType;
+        ? `${transport} ${participant.fipsSrttMs} ms`
+        : transport;
+    }
+    if (participant.reachable) {
+      return participant.fipsSrttMs ? `Via mesh, ${participant.fipsSrttMs} ms` : 'Via mesh';
     }
     return participant.meshState || participant.state || '-';
   }
@@ -738,10 +745,14 @@
           <button
             type="button"
             class:active={tab === item.id}
+            class:attention={item.id === 'devices' && incomingJoinRequestCount > 0}
             aria-current={tab === item.id ? 'page' : undefined}
             on:click={() => (tab = item.id)}
           >
-            {item.label}
+            <span>{item.label}</span>
+            {#if item.id === 'devices' && incomingJoinRequestCount > 0}
+              <span class="nav-attention-dot" aria-hidden="true"></span>
+            {/if}
           </button>
         {/each}
       </nav>
@@ -853,6 +864,35 @@
                   </div>
                 </div>
               </div>
+
+              {#if shownNetwork.inboundJoinRequests.length > 0}
+                <div class="modal-section join-requests-list">
+                  <div class="section-heading compact">
+                    <div>
+                      <h3>Requests</h3>
+                      <p>{shownNetwork.inboundJoinRequests.length}</p>
+                    </div>
+                  </div>
+                  <div class="stack">
+                    {#each shownNetwork.inboundJoinRequests as request (request.requesterPubkeyHex || request.requesterNpub)}
+                      <div class="request-row">
+                        <div>
+                          <strong>{nonEmpty(request.requesterNodeName, shortMiddle(request.requesterNpub, 20))}</strong>
+                          <span>{request.requestedAtText}</span>
+                        </div>
+                        <div class="row-actions">
+                          <button type="button" class="small-button" on:click={() => acceptJoinRequest(shownNetwork, request)}>
+                            Accept
+                          </button>
+                          <button type="button" class="small-button danger" on:click={() => rejectJoinRequest(shownNetwork, request)}>
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
 
               <div class="modal-section">
                 <div class="section-heading">

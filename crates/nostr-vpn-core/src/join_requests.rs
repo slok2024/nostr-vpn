@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::normalize_runtime_network_id;
 
+pub const FIPS_JOIN_REQUEST_RETRY_SECS: u64 = 10;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MeshJoinRequest {
     pub network_id: String,

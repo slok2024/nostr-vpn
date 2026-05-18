@@ -38,6 +38,7 @@ use crate::config_magic_dns::{
     default_peer_aliases, detected_hostname, normalize_network_entry_id, uniquify_magic_dns_label,
     uniquify_network_entry_id, uses_default_node_name,
 };
+use crate::fips_control::{PeerEndpointHint, peer_endpoint_hint_addr};
 use crate::network_roster::{
     canonical_npub_key, canonicalize_inbound_join_requests, canonicalize_outbound_join_request,
     normalize_inbound_join_requests, normalize_network_admins, normalize_npub_key,
@@ -47,6 +48,10 @@ use crate::network_routes::is_exit_node_route;
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_RELAYS: &[&str] = &[];
+
+pub fn normalize_fips_peer_endpoint_hint(endpoint: &str) -> Option<String> {
+    peer_endpoint_hint_addr(&PeerEndpointHint::udp(endpoint.trim()))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NostrConfig {
@@ -1037,14 +1042,7 @@ impl AppConfig {
             return;
         }
 
-        let Some(label) = normalize_magic_dns_label(&self.node_name) else {
-            return;
-        };
-        let Ok(own_pubkey_hex) = self.own_nostr_pubkey_hex() else {
-            return;
-        };
-        let own_npub = npub_for_pubkey_hex(&own_pubkey_hex);
-        self.peer_aliases.insert(own_npub, label);
+        let _ = self.ensure_self_magic_dns_alias();
     }
 
     pub fn rename_network(&mut self, network_id: &str, name: &str) -> Result<()> {
@@ -1517,6 +1515,9 @@ impl AppConfig {
 
         let mut allowed_members = network.participants.clone();
         allowed_members.extend(network.admins.iter().cloned());
+        if own_in_shared_roster && let Some(own_pubkey) = &own_pubkey {
+            allowed_members.push(own_pubkey.clone());
+        }
         allowed_members.sort();
         allowed_members.dedup();
         let allowed_members = allowed_members.into_iter().collect::<HashSet<_>>();
@@ -1524,9 +1525,6 @@ impl AppConfig {
             let Ok(normalized_participant) = normalize_nostr_pubkey(&participant) else {
                 continue;
             };
-            if Some(normalized_participant.as_str()) == own_pubkey.as_deref() {
-                continue;
-            }
             if !allowed_members.contains(&normalized_participant) {
                 continue;
             }
@@ -1569,6 +1567,21 @@ impl AppConfig {
             .any(|endpoints| endpoints.iter().any(|endpoint| !endpoint.trim().is_empty()))
     }
 
+    pub fn add_fips_peer_endpoint_hints(&mut self, peer: &str, endpoints: &[String]) -> Result<()> {
+        let peer_pubkey = normalize_nostr_pubkey(peer)?;
+        let peer_npub = npub_for_pubkey_hex(&peer_pubkey);
+        let entry = self.fips_peer_endpoints.entry(peer_npub).or_default();
+        entry.extend(
+            endpoints
+                .iter()
+                .filter_map(|endpoint| normalize_fips_peer_endpoint_hint(endpoint)),
+        );
+        entry.sort();
+        entry.dedup();
+        self.normalize_fips_peer_endpoints();
+        Ok(())
+    }
+
     fn ensure_single_active_network(&mut self) {
         let mut first_active_index = None;
         for (index, network) in self.networks.iter_mut().enumerate() {
@@ -1602,8 +1615,7 @@ impl AppConfig {
             }
             let mut endpoints = endpoints
                 .into_iter()
-                .map(|endpoint| endpoint.trim().to_string())
-                .filter(|endpoint| !endpoint.is_empty())
+                .filter_map(|endpoint| normalize_fips_peer_endpoint_hint(&endpoint))
                 .collect::<Vec<_>>();
             endpoints.sort();
             endpoints.dedup();
@@ -1686,19 +1698,42 @@ impl AppConfig {
         let mut used_aliases = HashSet::new();
         let mut final_aliases = HashMap::new();
         let mut members = self.all_network_member_pubkeys_hex();
-        if let Ok(own_pubkey_hex) = self.own_nostr_pubkey_hex()
-            && let Some(index) = members
+        let member_set = members.iter().cloned().collect::<HashSet<_>>();
+        let mut own_npub = None;
+        if let Ok(own_pubkey_hex) = self.own_nostr_pubkey_hex() {
+            let own_npub_value = npub_for_pubkey_hex(&own_pubkey_hex);
+            own_npub = Some(own_npub_value.clone());
+            if member_set.contains(&own_pubkey_hex)
+                && let Some(node_alias) = self.custom_node_name_magic_dns_label()
+            {
+                let existing = normalized_aliases.get(&own_npub_value).cloned();
+                if existing
+                    .as_deref()
+                    .is_some_and(|alias| self.is_generated_self_magic_dns_label(alias))
+                {
+                    normalized_aliases.insert(own_npub_value.clone(), node_alias);
+                }
+            }
+            if let Some(index) = members
                 .iter()
                 .position(|participant| participant == &own_pubkey_hex)
-        {
-            let own = members.remove(index);
-            members.insert(0, own);
+            {
+                let own = members.remove(index);
+                members.insert(0, own);
+            } else if normalized_aliases.contains_key(&own_npub_value) {
+                members.insert(0, own_pubkey_hex);
+            }
         }
         for participant in &members {
             let participant_npub = npub_for_pubkey_hex(participant);
-            let preferred = normalized_aliases
-                .remove(&participant_npub)
-                .unwrap_or_else(|| default_magic_dns_label_for_pubkey(participant, &used_aliases));
+            if own_npub.as_deref() == Some(participant_npub.as_str())
+                && !normalized_aliases.contains_key(&participant_npub)
+            {
+                continue;
+            }
+            let Some(preferred) = normalized_aliases.remove(&participant_npub) else {
+                continue;
+            };
             let alias = uniquify_magic_dns_label(preferred, &mut used_aliases);
             final_aliases.insert(participant_npub, alias);
         }
@@ -1739,8 +1774,51 @@ impl AppConfig {
         self.peer_aliases.get(&participant_npub).cloned()
     }
 
+    fn custom_node_name_magic_dns_label(&self) -> Option<String> {
+        let own_pubkey_hex = self.own_nostr_pubkey_hex().ok();
+        if uses_default_node_name(&self.node_name, own_pubkey_hex.as_deref()) {
+            return None;
+        }
+        normalize_magic_dns_label(&self.node_name)
+    }
+
+    fn default_self_magic_dns_label(&self) -> Option<String> {
+        self.custom_node_name_magic_dns_label()
+            .or_else(|| Some("self".to_string()))
+    }
+
+    fn is_generated_self_magic_dns_label(&self, alias: &str) -> bool {
+        if alias == "self" {
+            return true;
+        }
+        self.own_nostr_pubkey_hex()
+            .ok()
+            .is_some_and(|own_pubkey| alias == default_node_name_for_pubkey(&own_pubkey))
+    }
+
+    pub fn ensure_self_magic_dns_alias(&mut self) -> Result<String> {
+        let own_pubkey_hex = self.own_nostr_pubkey_hex()?;
+        if let Some(alias) = self.peer_alias(&own_pubkey_hex) {
+            return Ok(alias);
+        }
+        let alias = self
+            .default_self_magic_dns_label()
+            .ok_or_else(|| anyhow::anyhow!("could not derive local device name"))?;
+        self.set_peer_alias(&own_pubkey_hex, &alias)
+    }
+
+    pub fn ensure_temporary_self_magic_dns_alias(&mut self) -> Result<String> {
+        let own_pubkey_hex = self.own_nostr_pubkey_hex()?;
+        if let Some(alias) = self.peer_alias(&own_pubkey_hex) {
+            return Ok(alias);
+        }
+        self.set_peer_alias(&own_pubkey_hex, "self")
+    }
+
     pub fn set_peer_alias(&mut self, participant: &str, alias: &str) -> Result<String> {
         let participant_hex = normalize_nostr_pubkey(participant)?;
+        let is_own_pubkey =
+            self.own_nostr_pubkey_hex().ok().as_deref() == Some(participant_hex.as_str());
         let affected_network_ids = self
             .networks
             .iter()
@@ -1760,6 +1838,7 @@ impl AppConfig {
             .all_network_member_pubkeys_hex()
             .iter()
             .any(|configured| configured == &participant_hex)
+            && !is_own_pubkey
         {
             return Err(anyhow::anyhow!("participant is not configured"));
         }
@@ -1772,11 +1851,7 @@ impl AppConfig {
             for network_id in &affected_network_ids {
                 let _ = self.note_network_roster_local_change(network_id);
             }
-            return self
-                .peer_aliases
-                .get(&participant_npub)
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("failed to persist alias"));
+            return Ok(String::new());
         }
 
         let normalized_alias =
@@ -2094,6 +2169,9 @@ mod tests {
             vec![
                 " 10.203.0.12:51820 ".to_string(),
                 "10.203.0.12:51820".to_string(),
+                "198.51.100.10:51820".to_string(),
+                format!("{peer_public_key}:51820"),
+                "fips".to_string(),
             ],
         );
         config

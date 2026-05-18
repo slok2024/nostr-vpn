@@ -16,15 +16,25 @@ final class AppModel: ObservableObject {
     @Published var copiedValue = ""
     @Published var vpnDisclosurePromptVisible = false
 
-    private let core: NativeCoreClient
+    private let core: NativeCoreClient?
     private let vpnController = PacketTunnelController()
     private let supportDir: URL?
+    private let fixtureMode: Bool
     private var refreshTask: Task<Void, Never>?
     private var copyClearTask: Task<Void, Never>?
+    private var tunnelConfigSyncTask: Task<Void, Never>?
     private var launchAutomationHandled = false
     private var tunnelStateRefreshInFlight = false
 
     init() {
+        fixtureMode = Self.fixtureModeRequested()
+        if fixtureMode {
+            supportDir = nil
+            core = nil
+            state = ScreenshotFixtures.state()
+            return
+        }
+
         supportDir = Self.supportDirectory()
         if let supportDir {
             try? FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
@@ -33,14 +43,16 @@ final class AppModel: ObservableObject {
         // Pass empty so the FFI falls back to its own CARGO_PKG_VERSION
         // (workspace-inherited). Avoids drift between MARKETING_VERSION in the
         // xcodeproj and the bundled nvpn binary.
-        core = NativeCoreClient(dataDir: supportDir?.path ?? "", appVersion: "")
-        state = core.state()
+        let client = NativeCoreClient(dataDir: supportDir?.path ?? "", appVersion: "")
+        core = client
+        state = client.state()
         debugLog("init args=\(ProcessInfo.processInfo.arguments)")
     }
 
     deinit {
         refreshTask?.cancel()
-        core.close()
+        tunnelConfigSyncTask?.cancel()
+        core?.close()
     }
 
     var activeNetwork: NetworkState? {
@@ -48,6 +60,9 @@ final class AppModel: ObservableObject {
     }
 
     func start() {
+        guard !fixtureMode else {
+            return
+        }
         guard refreshTask == nil else {
             return
         }
@@ -69,6 +84,10 @@ final class AppModel: ObservableObject {
     }
 
     func refresh() {
+        guard let core else {
+            state.rev += 1
+            return
+        }
         state = core.refresh()
         refreshTunnelSidecarState()
     }
@@ -77,11 +96,22 @@ final class AppModel: ObservableObject {
         guard !actionInFlight else {
             return
         }
+        let actionType = action["type"] as? String ?? ""
         actionInFlight = true
         statusMessage = status
-        state = core.dispatch(action)
+        if fixtureMode {
+            state = ScreenshotFixtures.dispatch(action, state: state)
+        } else if let core {
+            state = core.dispatch(action)
+        }
         actionInFlight = false
         statusMessage = state.error
+        debugLog(
+            "dispatch action=\(actionType) error=\(!state.error.isEmpty) vpn=\(state.vpnEnabled)/\(state.vpnActive) network=\(activeNetwork?.id ?? "nil")"
+        )
+        if state.error.isEmpty && actionRequiresPacketTunnelConfigSync(actionType) {
+            schedulePacketTunnelConfigSync(reason: actionType)
+        }
     }
 
     func toggleVpn() {
@@ -103,6 +133,19 @@ final class AppModel: ObservableObject {
 
     private func setVpnEnabled(_ enabled: Bool, force: Bool = false) {
         debugLog("setVpnEnabled enabled=\(enabled) force=\(force) stateEnabled=\(state.vpnEnabled)")
+        if fixtureMode {
+            state.vpnEnabled = enabled
+            state.vpnActive = enabled
+            state.vpnStatus = enabled ? "Connected" : "Disconnected"
+            state.connectedPeerCount = enabled ? min(state.expectedPeerCount, 3) : 0
+            state.rev += 1
+            statusMessage = ""
+            return
+        }
+        guard let core else {
+            statusMessage = "Native core unavailable"
+            return
+        }
         Task {
             if enabled {
                 guard force || !state.vpnEnabled else {
@@ -148,11 +191,84 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func schedulePacketTunnelConfigSync(reason: String) {
+        guard !fixtureMode else {
+            return
+        }
+        guard state.vpnEnabled || state.vpnActive else {
+            debugLog("PacketTunnel config sync skipped reason=\(reason) vpn off")
+            return
+        }
+        tunnelConfigSyncTask?.cancel()
+        tunnelConfigSyncTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            await self?.syncPacketTunnelConfig(reason: reason)
+        }
+    }
+
+    private func syncPacketTunnelConfig(reason: String) async {
+        guard let core else {
+            statusMessage = "Native core unavailable"
+            return
+        }
+        guard state.vpnEnabled || state.vpnActive else {
+            debugLog("PacketTunnel config sync aborted reason=\(reason) vpn off")
+            return
+        }
+        let tunnelConfigJson = core.mobileTunnelConfigJson()
+        debugLog(
+            "PacketTunnel config sync begin reason=\(reason) configLen=\(tunnelConfigJson.count) network=\(activeNetwork?.id ?? "nil")"
+        )
+        statusMessage = "Updating VPN"
+        do {
+            try await vpnController.stop()
+            debugLog("PacketTunnel config sync stop returned")
+        } catch {
+            debugLog("PacketTunnel config sync stop failed: \(String(describing: error))")
+        }
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        do {
+            try await vpnController.start(
+                state: state,
+                network: activeNetwork,
+                tunnelConfigJson: tunnelConfigJson
+            )
+            debugLog("PacketTunnel config sync start returned")
+            refresh()
+            statusMessage = state.error
+        } catch {
+            dispatch(NativeActions.disconnectVpn(), status: "Turning VPN off")
+            statusMessage = error.localizedDescription
+            debugLog("PacketTunnel config sync start failed: \(String(describing: error))")
+        }
+    }
+
+    private func actionRequiresPacketTunnelConfigSync(_ type: String) -> Bool {
+        switch type {
+        case "import_network_invite",
+             "request_network_join",
+             "manual_add_network",
+             "set_network_enabled",
+             "set_network_mesh_id",
+             "set_network_join_requests_enabled",
+             "add_participant",
+             "add_admin",
+             "remove_participant",
+             "remove_admin",
+             "accept_join_request",
+             "reject_join_request":
+            return true
+        default:
+            return false
+        }
+    }
+
     func importInvite(_ invite: String) {
         let trimmed = invite.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return
         }
+        debugLog("importInvite len=\(trimmed.count)")
         dispatch(NativeActions.importInvite(trimmed), status: "Importing")
     }
 
@@ -272,6 +388,9 @@ final class AppModel: ObservableObject {
     }
 
     private func startVpnForDebugProbe() async -> String? {
+        guard let core else {
+            return "Native core unavailable"
+        }
         let tunnelConfigJson = core.mobileTunnelConfigJson()
         if !state.vpnEnabled {
             dispatch(NativeActions.connectVpn())
@@ -335,7 +454,7 @@ final class AppModel: ObservableObject {
         debugLog("debug probe wrote \(url.path)")
     }
 
-    private static func argumentValue(after name: String, in arguments: [String]) -> String? {
+    nonisolated private static func argumentValue(after name: String, in arguments: [String]) -> String? {
         guard let index = arguments.firstIndex(of: name) else {
             return nil
         }
@@ -347,7 +466,10 @@ final class AppModel: ObservableObject {
     }
 
     func qrMatrix(for invite: String) -> QrMatrix {
-        core.qrMatrix(invite: invite)
+        if fixtureMode {
+            return ScreenshotFixtures.qrMatrix()
+        }
+        return core?.qrMatrix(invite: invite) ?? QrMatrix()
     }
 
     func copy(_ value: String) {
@@ -405,7 +527,7 @@ final class AppModel: ObservableObject {
                     wrote = true
                 }
                 if wrote {
-                    self.state = self.core.refresh()
+                    self.state = self.core?.refresh() ?? self.state
                 }
             }
         }
@@ -496,6 +618,23 @@ final class AppModel: ObservableObject {
 
         let model = UIDevice.current.model.trimmingCharacters(in: .whitespacesAndNewlines)
         return model.isEmpty ? "iOS device" : model
+    }
+
+    nonisolated static func screenshotTabArgument() -> String? {
+        argumentValue(after: "--nvpn-screenshot-tab", in: ProcessInfo.processInfo.arguments)
+    }
+
+    nonisolated private static func fixtureModeRequested() -> Bool {
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--nvpn-fixture-mode") {
+            return true
+        }
+        let raw = ProcessInfo.processInfo.environment["NVPN_IOS_FIXTURE_MODE"] ?? ""
+        return ["1", "true", "yes", "on"].contains(raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        #else
+        return false
+        #endif
     }
 
     private func debugLog(_ message: String) {

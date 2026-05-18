@@ -28,6 +28,8 @@ pub struct NetworkInvite {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub inviter_node_name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inviter_endpoints: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub admins: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub participants: Vec<String>,
@@ -97,6 +99,7 @@ pub fn parse_network_invite(value: &str) -> Result<NetworkInvite> {
     }
 
     invite.inviter_node_name = invite.inviter_node_name.trim().to_string();
+    invite.inviter_endpoints = normalized_invite_strings(&invite.inviter_endpoints);
     invite.participants = normalized_invite_pubkeys(&invite.participants)?;
     if invite.participants.is_empty() && invite.v < NETWORK_INVITE_VERSION {
         invite.participants.push(invite.inviter_npub.clone());
@@ -133,4 +136,15 @@ fn normalized_invite_pubkeys(pubkeys: &[String]) -> Result<Vec<String>> {
     normalized.sort();
     normalized.dedup();
     Ok(normalized)
+}
+
+fn normalized_invite_strings(values: &[String]) -> Vec<String> {
+    let mut normalized = values
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized.dedup();
+    normalized
 }

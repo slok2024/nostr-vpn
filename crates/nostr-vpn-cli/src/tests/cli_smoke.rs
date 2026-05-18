@@ -54,6 +54,20 @@ fn clap_set_supports_autoconnect_flag() {
 }
 
 #[test]
+fn clap_set_supports_join_request_listener_flag() {
+    let command = Cli::command();
+    let set = command
+        .get_subcommands()
+        .find(|subcommand| subcommand.get_name() == "set")
+        .expect("set subcommand exists");
+    assert!(
+        set.get_arguments()
+            .any(|argument| argument.get_long() == Some("join-requests-enabled")),
+        "missing --join-requests-enabled on set command"
+    );
+}
+
+#[test]
 fn clap_set_supports_route_advertisement_flags() {
     let command = Cli::command();
     let set = command

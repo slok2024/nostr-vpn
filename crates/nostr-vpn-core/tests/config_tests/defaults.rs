@@ -233,7 +233,11 @@ fn apply_admin_signed_shared_roster_replaces_members_from_known_admin() {
         .apply_admin_signed_shared_roster(
             "mesh-home",
             "Home",
-            vec![current_admin_hex.clone(), member_hex.clone(), own_hex],
+            vec![
+                current_admin_hex.clone(),
+                member_hex.clone(),
+                own_hex.clone(),
+            ],
             vec![current_admin_hex.clone(), new_admin_hex.clone()],
             std::collections::HashMap::new(),
             1_726_000_000,
@@ -386,6 +390,7 @@ fn apply_admin_signed_shared_roster_applies_aliases_for_members() {
     let current_admin = Keys::generate();
     let member = Keys::generate();
     let own_hex = own.public_key().to_hex();
+    let own_npub = own.public_key().to_bech32().expect("own npub");
     let current_admin_hex = current_admin.public_key().to_hex();
     let member_hex = member.public_key().to_hex();
 
@@ -395,15 +400,24 @@ fn apply_admin_signed_shared_roster_applies_aliases_for_members() {
     config.networks[0].network_id = "mesh-home".to_string();
     config.networks[0].admins = vec![current_admin_hex.clone()];
     config.networks[0].participants = vec![current_admin_hex.clone()];
+    config
+        .peer_aliases
+        .insert(own_npub, "old-local".to_string());
     config.ensure_defaults();
+    assert_eq!(config.self_magic_dns_label().as_deref(), Some("old-local"));
 
     let changed = config
         .apply_admin_signed_shared_roster(
             "mesh-home",
             "Home",
-            vec![current_admin_hex.clone(), member_hex.clone(), own_hex],
+            vec![
+                current_admin_hex.clone(),
+                member_hex.clone(),
+                own_hex.clone(),
+            ],
             vec![current_admin_hex.clone()],
             std::collections::HashMap::from([
+                (own_hex.clone(), "iphone".to_string()),
                 (current_admin_hex.clone(), "home-server".to_string()),
                 (member_hex.clone(), "alice-phone".to_string()),
             ]),
@@ -413,6 +427,7 @@ fn apply_admin_signed_shared_roster_applies_aliases_for_members() {
         .expect("apply shared roster");
 
     assert!(changed);
+    assert_eq!(config.self_magic_dns_label().as_deref(), Some("iphone"));
     assert_eq!(
         config.peer_alias(&current_admin_hex).as_deref(),
         Some("home-server")

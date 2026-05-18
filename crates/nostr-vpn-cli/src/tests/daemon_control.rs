@@ -560,9 +560,9 @@ fn daemon_runtime_state_tracks_live_endpoint_and_listen_port() {
 
 #[test]
 fn daemon_pid_scan_matches_processes_for_config() {
-    let config_path = Path::new("/Users/sirius/Library/Application Support/nvpn/config.toml");
-    let ps = "  42063 /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /Users/sirius/Library/Application Support/nvpn/config.toml --iface utun100\n\
-              97597 /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /Users/sirius/Library/Application Support/nvpn/config.toml --iface utun100\n\
+    let config_path = Path::new("/Users/example/Library/Application Support/nvpn/config.toml");
+    let ps = "  42063 /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /Users/example/Library/Application Support/nvpn/config.toml --iface utun100\n\
+              97597 /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /Users/example/Library/Application Support/nvpn/config.toml --iface utun100\n\
               55555 /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /tmp/other.toml --iface utun100\n";
     let pids = daemon_pids_from_ps_output(ps, config_path);
     assert_eq!(pids, vec![42063, 97597]);
@@ -570,9 +570,9 @@ fn daemon_pid_scan_matches_processes_for_config() {
 
 #[test]
 fn daemon_pid_scan_ignores_exiting_processes_for_config() {
-    let config_path = Path::new("/Users/sirius/Library/Application Support/nvpn/config.toml");
-    let ps = "  42063 UNE /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /Users/sirius/Library/Application Support/nvpn/config.toml --iface utun100\n\
-              97597 Ss /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /Users/sirius/Library/Application Support/nvpn/config.toml --iface utun100\n";
+    let config_path = Path::new("/Users/example/Library/Application Support/nvpn/config.toml");
+    let ps = "  42063 UNE /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /Users/example/Library/Application Support/nvpn/config.toml --iface utun100\n\
+              97597 Ss /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /Users/example/Library/Application Support/nvpn/config.toml --iface utun100\n";
 
     let pids = daemon_pids_from_ps_output(ps, config_path);
 
@@ -586,8 +586,8 @@ fn daemon_pid_scan_matches_macos_service_helper_path() {
     // `.nvpn`, not `/nvpn`, so the original heuristic missed it and `nvpn
     // status` reported `daemon.running: false` even when the launchd daemon
     // was healthy.
-    let config_path = Path::new("/Users/sirius/Library/Application Support/nvpn/config.toml");
-    let ps = "  2853 Ss /Library/PrivilegedHelperTools/to.nostrvpn.nvpn daemon --service --config /Users/sirius/Library/Application Support/nvpn/config.toml --iface utun --mesh-refresh-interval-secs 20\n";
+    let config_path = Path::new("/Users/example/Library/Application Support/nvpn/config.toml");
+    let ps = "  2853 Ss /Library/PrivilegedHelperTools/to.nostrvpn.nvpn daemon --service --config /Users/example/Library/Application Support/nvpn/config.toml --iface utun --mesh-refresh-interval-secs 20\n";
     let pids = daemon_pids_from_ps_output(ps, config_path);
     assert_eq!(pids, vec![2853]);
 }
@@ -613,16 +613,16 @@ fn daemon_pid_scan_ignores_shell_wrappers_that_mention_nvpn_daemon() {
 
 #[test]
 fn windows_daemon_pid_scan_matches_processes_for_config() {
-    let config_path = Path::new("C:\\Users\\sirius\\AppData\\Roaming\\nvpn\\config.toml");
-    let cim_json = r#"[{"ProcessId":42063,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\Users\\sirius\\AppData\\Roaming\\nvpn\\config.toml\" --iface NostrVPN"},{"ProcessId":97597,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\Users\\sirius\\AppData\\Roaming\\nvpn\\config.toml\" --iface NostrVPN"},{"ProcessId":55555,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\temp\\other.toml\" --iface NostrVPN"}]"#;
+    let config_path = Path::new("C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml");
+    let cim_json = r#"[{"ProcessId":42063,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml\" --iface NostrVPN"},{"ProcessId":97597,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml\" --iface NostrVPN"},{"ProcessId":55555,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\temp\\other.toml\" --iface NostrVPN"}]"#;
     let pids = crate::daemon_pids_from_windows_cim_json(cim_json, config_path);
     assert_eq!(pids, vec![42063, 97597]);
 }
 
 #[test]
 fn windows_daemon_pid_scan_accepts_single_process_object() {
-    let config_path = Path::new("C:\\Users\\sirius\\AppData\\Roaming\\nvpn\\config.toml");
-    let cim_json = r#"{"ProcessId":42063,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\Users\\sirius\\AppData\\Roaming\\nvpn\\config.toml\" --iface NostrVPN"}"#;
+    let config_path = Path::new("C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml");
+    let cim_json = r#"{"ProcessId":42063,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml\" --iface NostrVPN"}"#;
     let pids = crate::daemon_pids_from_windows_cim_json(cim_json, config_path);
     assert_eq!(pids, vec![42063]);
 }
@@ -630,7 +630,7 @@ fn windows_daemon_pid_scan_accepts_single_process_object() {
 #[test]
 fn windows_service_bin_path_runs_hidden_service_daemon_with_same_config() {
     let executable = Path::new("C:\\Program Files\\Nostr VPN\\nvpn.exe");
-    let config_path = Path::new("C:\\Users\\sirius\\AppData\\Roaming\\nvpn\\config.toml");
+    let config_path = Path::new("C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml");
 
     let command = windows_service_bin_path(executable, config_path, "nvpn", 20);
 
@@ -638,7 +638,7 @@ fn windows_service_bin_path_runs_hidden_service_daemon_with_same_config() {
     assert!(command.contains(" daemon "));
     assert!(command.contains(" --service "));
     assert!(command.contains(" --config "));
-    assert!(command.contains("\"C:\\Users\\sirius\\AppData\\Roaming\\nvpn\\config.toml\""));
+    assert!(command.contains("\"C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml\""));
     assert!(command.contains(" --iface \"nvpn\""));
     assert!(command.contains(" --mesh-refresh-interval-secs 20"));
 }
@@ -722,9 +722,9 @@ fn daemon_reload_config_uses_reloaded_network_id() {
 
 #[test]
 fn daemon_pid_scan_excludes_current_pid_when_filtering_duplicates() {
-    let config_path = Path::new("/Users/sirius/Library/Application Support/nvpn/config.toml");
-    let ps = "  42063 /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /Users/sirius/Library/Application Support/nvpn/config.toml --iface utun100\n\
-              97597 /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /Users/sirius/Library/Application Support/nvpn/config.toml --iface utun100\n";
+    let config_path = Path::new("/Users/example/Library/Application Support/nvpn/config.toml");
+    let ps = "  42063 /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /Users/example/Library/Application Support/nvpn/config.toml --iface utun100\n\
+              97597 /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /Users/example/Library/Application Support/nvpn/config.toml --iface utun100\n";
     let mut pids = daemon_pids_from_ps_output(ps, config_path);
     pids.retain(|pid| *pid != 97597);
     assert_eq!(pids, vec![42063]);
