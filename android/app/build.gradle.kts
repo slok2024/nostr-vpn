@@ -123,4 +123,6 @@ dependencies {
     implementation("androidx.compose.ui:ui:1.9.2")
     implementation("androidx.compose.ui:ui-tooling-preview:1.9.2")
     debugImplementation("androidx.compose.ui:ui-tooling:1.9.2")
+
+    testImplementation("junit:junit:4.13.2")
 }
