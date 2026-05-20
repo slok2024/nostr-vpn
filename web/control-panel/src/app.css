@@ -109,8 +109,7 @@ code {
 }
 
 .network-picker {
-  display: grid;
-  grid-template-columns: auto minmax(0, 220px) auto;
+  display: flex;
   align-items: center;
   gap: 8px;
 }
@@ -127,7 +126,7 @@ code {
 }
 
 .network-picker select {
-  width: 100%;
+  flex: 0 1 220px;
   min-width: 0;
   height: 38px;
   border: 1px solid rgba(246, 241, 229, 0.12);
@@ -1023,8 +1022,9 @@ textarea:focus {
     padding: 14px 16px;
   }
 
-  .network-picker {
-    grid-template-columns: minmax(0, 1fr) auto;
+  .network-picker select {
+    flex: 1 1 0;
+    max-width: none;
   }
 
   .header-vpn {
