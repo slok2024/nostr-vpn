@@ -11,7 +11,7 @@ exclude = ["linux"]
 resolver = "2"
 
 [workspace.package]
-version = "4.0.37"
+version = "4.0.38"
 edition = "2024"
 license = "MIT"
 authors = ["Nostr VPN contributors"]
@@ -25,7 +25,7 @@ base64 = "0.22"
 boringtun = "0.7"
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = "0.3.14"
+fips-endpoint = "0.3.15"
 futures = "0.3"
 hex = "0.4"
 hickory-proto = "0.26"
@@ -45,8 +45,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.35", default-features = false, features = ["nip44"] }
-nostr-vpn-core = { version = "4.0.37", path = "crates/nostr-vpn-core" }
-nostr-vpn-wintun = { version = "4.0.37", path = "crates/nostr-vpn-wintun" }
+nostr-vpn-core = { version = "4.0.38", path = "crates/nostr-vpn-core" }
+nostr-vpn-wintun = { version = "4.0.38", path = "crates/nostr-vpn-wintun" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

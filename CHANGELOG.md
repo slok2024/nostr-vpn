@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.38 - 2026-05-20
+
+### Fixed
+
+- Updated the embedded FIPS endpoint stack to `fips-endpoint` 0.3.15 so
+  outbound-only stale sessions are expired and re-handshaken when peers stop
+  returning authenticated FSP frames, preventing direct LAN links from staying
+  wedged until daemon restart.
+
 ## 4.0.37 - 2026-05-19
 
 ### Changed
