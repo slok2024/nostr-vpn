@@ -56,6 +56,13 @@ pub(crate) struct InviteRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ManualNetworkRequest {
+    pub admin_npub: String,
+    pub mesh_network_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct JoinRequestAction {
     pub network_id: String,
     pub requester_npub: String,

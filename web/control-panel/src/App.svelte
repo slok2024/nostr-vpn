@@ -24,6 +24,7 @@
     { id: 'settings', label: 'Settings' },
   ];
   const SEARCH_VISIBILITY_THRESHOLD = 7;
+  const DEVICE_ID_BODY = /^[qpzry9x8gf2tvdw0s3jn54khce6mua7l]+$/;
 
   let state: UiState | null = null;
   let tab: Tab = 'devices';
@@ -38,6 +39,8 @@
   let participantNpub = '';
   let participantAlias = '';
   let inviteDraft = '';
+  let manualAdminNpub = '';
+  let manualNetworkId = '';
   let newNetworkName = '';
   let addNetworkOpen = false;
   let addDeviceOpen = false;
@@ -72,6 +75,14 @@
     ? state.networks.reduce((count, network) => count + network.inboundJoinRequests.length, 0)
     : 0;
   $: participants = shownNetwork?.participants ?? [];
+  $: manualAdminNpubTrimmed = manualAdminNpub.trim();
+  $: manualNetworkIdNormalized = normalizeNetworkIdInput(manualNetworkId);
+  $: manualAdminInvalid =
+    manualAdminNpubTrimmed.length > 0 && !isValidDeviceId(manualAdminNpubTrimmed);
+  $: canManualAddNetwork =
+    Boolean(manualAdminNpubTrimmed) &&
+    Boolean(manualNetworkIdNormalized) &&
+    !manualAdminInvalid;
   $: showDeviceSearch = participants.length > SEARCH_VISIBILITY_THRESHOLD;
   $: deviceSearchQuery = showDeviceSearch ? deviceSearch.trim().toLowerCase() : '';
   $: visibleParticipants = participants
@@ -262,6 +273,15 @@
       return '';
     }
     return compact && /^[0-9a-f]+$/i.test(compact) ? compact.toLowerCase() : trimmed;
+  }
+
+  function isValidDeviceId(value: string): boolean {
+    const trimmed = value.trim();
+    return (
+      trimmed.length === 63 &&
+      trimmed.startsWith('npub1') &&
+      DEVICE_ID_BODY.test(trimmed.slice(5))
+    );
   }
 
   function heroTone(value: UiState | null): Tone {
@@ -685,6 +705,29 @@
     }
   }
 
+  async function manualAddNetwork() {
+    if (!canManualAddNetwork) {
+      return;
+    }
+    const existingIds = new Set(state?.networks.map((network) => network.id) ?? []);
+    const next = await runState(
+      '/api/manual_add_network',
+      {
+        adminNpub: manualAdminNpubTrimmed,
+        meshNetworkId: manualNetworkIdNormalized,
+      },
+      'Adding network',
+    );
+    if (next) {
+      const createdNetwork = next.networks.find((network) => !existingIds.has(network.id));
+      shownNetworkId = createdNetwork?.id ?? preferredNetworkId(next, '');
+      manualAdminNpub = '';
+      manualNetworkId = '';
+      addNetworkOpen = false;
+      tab = 'devices';
+    }
+  }
+
   async function pasteInviteFromClipboard() {
     try {
       inviteDraft = (await navigator.clipboard.readText()).trim();
@@ -1092,6 +1135,39 @@
                 Paste
               </button>
             </div>
+          </form>
+
+          <form class="modal-section" on:submit|preventDefault={manualAddNetwork}>
+            <div class="section-heading">
+              <div>
+                <h3>Add manually</h3>
+                <p>Admin Device ID + Network ID</p>
+              </div>
+            </div>
+            <div class="form-grid">
+              <label>
+                <span>Admin Device ID</span>
+                <input
+                  bind:value={manualAdminNpub}
+                  class:invalid={manualAdminInvalid}
+                  autocomplete="off"
+                />
+              </label>
+              <label>
+                <span>Network ID</span>
+                <input bind:value={manualNetworkId} autocomplete="off" />
+              </label>
+            </div>
+            {#if manualAdminInvalid}
+              <div class="field-error">Not a valid device ID</div>
+            {/if}
+            <button
+              class="secondary-button"
+              type="submit"
+              disabled={Boolean(busyAction) || !canManualAddNetwork}
+            >
+              Add
+            </button>
           </form>
 
           <div class="modal-section">

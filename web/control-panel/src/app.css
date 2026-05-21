@@ -872,6 +872,15 @@ textarea:focus {
   border-color: var(--accent);
 }
 
+input.invalid {
+  border-color: var(--bad);
+}
+
+.field-error {
+  color: var(--bad);
+  font-size: 0.82rem;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
