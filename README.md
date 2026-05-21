@@ -41,6 +41,7 @@ It currently ships:
 | `windows` | WPF native shell and installer over the shared app core |
 | `android` / `ios` | Native mobile shells with shared Rust state/action and packet-tunnel scaffolding |
 | `umbrel` | Umbrel app package with a web control panel and daemon container |
+| `startos` | StartOS service package with a StartOS-managed web control panel |
 
 ## Getting Started
 
@@ -98,6 +99,7 @@ Private mesh traffic defaults to [FIPS]. `nvpn` uses the configured VPN particip
 | Android arm64 | Native app-core UI, signed APK/AAB release artifacts when signing is configured, VPN runtime still being hardened |
 | iOS | Native SwiftUI app builds/runs from source and simulator, NetworkExtension target exists, [TestFlight link](https://testflight.apple.com/join/jPRVxbSv) exists but public beta access is pending |
 | Umbrel | Web control panel and daemon package tested on umbrelOS; app-store submission bundle generated from a pinned multi-arch container image |
+| StartOS | Service package builds for x86_64 and aarch64; tested on a StartOS VM |
 | Intel macOS | Source-only |
 
 ## What the project does today
@@ -161,56 +163,9 @@ Additional automation:
 
 ### StartOS package
 
-The StartOS package entrypoint lives in [`startos`](startos) and builds the
-same daemon + web-control-panel container used by the Umbrel package.
-
-```bash
-npm install
-npm run check
-npm run build
-make
-```
-
-`make` requires the StartOS `start-cli` tooling and emits architecture-specific
-`.s9pk` files for x86_64 and aarch64.
-
-StartOS package details:
-
-- Image and runtime: local Docker build from [`umbrel/Dockerfile`](umbrel/Dockerfile);
-  the runtime image contains `nvpn`, `nostr-vpn-web`, and the compiled web UI.
-- Volume layout: the `main` volume is mounted at `/data`; config is stored under
-  `/data/config/nvpn`, and home/runtime state is under `/data/home`.
-- Network access: one HTTP UI interface is exported through StartOS as `Web UI`;
-  the internal web service listens on port 38080 on the StartOS container
-  interface only, so it is meant to be opened through StartOS rather than
-  directly over Nostr VPN.
-- Actions: no custom StartOS actions are currently exposed.
-- Backups: the `main` volume is included in StartOS backups.
-- Health checks: StartOS checks the `nvpn` daemon process and the web health
-  endpoint at `/api/health`.
-- Dependencies: none.
-- Limitations: the service needs tunnel-device access from StartOS; the manifest
-  enables the runtime flag that exposes `/dev/net/tun`.
-
-Quick reference:
-
-```yaml
-package_id: nostr-vpn
-architectures: [x86_64, aarch64]
-volumes:
-  main: /data
-ports:
-  ui: 38080
-dependencies: none
-startos_managed_env_vars:
-  - HOME
-  - XDG_CONFIG_HOME
-  - RUST_LOG
-  - NVPN_CLI_PATH
-  - NVPN_DAEMON_STATUS_MODE
-  - NVPN_EXTERNAL_DAEMON
-actions: []
-```
+The StartOS package lives in [`startos`](startos), builds for x86_64 and
+aarch64, exposes one StartOS-managed Web UI, and has no service dependencies.
+Maintainer commands are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ### Umbrel app
 
