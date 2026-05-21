@@ -959,7 +959,7 @@
             <div class="detail-list two-column">
               <div>
                 <span>Your Device ID</span>
-                <strong>{shortMiddle(state.ownNpub, 36)}</strong>
+                <strong>{state.ownNpub}</strong>
                 <CopyButton value={state.ownNpub} label="Device ID" on:copied={handleCopied} />
               </div>
               <div>
