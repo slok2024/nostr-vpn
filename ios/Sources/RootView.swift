@@ -1056,7 +1056,7 @@ private struct DeviceDetailSheet: View {
                         .buttonStyle(.bordered)
 
                         if !isMe {
-                            TextField("Address hints", text: $endpointHintsDraft)
+                            TextField("host or host:port", text: $endpointHintsDraft)
                                 .textFieldStyle(.roundedBorder)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()

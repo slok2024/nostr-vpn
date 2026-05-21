@@ -1331,7 +1331,7 @@
                       <div class="inline-form">
                         <input
                           aria-label="FIPS address hints"
-                          placeholder="host:port"
+                          placeholder="host or host:port"
                           bind:value={endpointHintDrafts[selectedParticipant.npub]}
                           disabled={Boolean(busyAction)}
                         />

@@ -715,7 +715,7 @@ struct RootView: View {
             if !isSelf(participant) {
                 SyncedTextFieldRow(
                     title: "Hints",
-                    placeholder: "host:port",
+                    placeholder: "host or host:port",
                     identity: participant.pubkeyHex,
                     value: participant.fipsEndpointHints.joined(separator: ", "),
                     systemImage: "network",

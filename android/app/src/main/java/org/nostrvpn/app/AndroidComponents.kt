@@ -179,6 +179,7 @@ private fun DeviceDetailDialog(
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             label = { Text("Address hints") },
+                            placeholder = { Text("host or host:port") },
                         )
                         Button(onClick = {
                             manageDispatch(NativeActions.setParticipantEndpointHints(

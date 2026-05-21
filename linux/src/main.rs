@@ -1435,7 +1435,10 @@ fn device_detail_card(
             hint_label.add_css_class("dim-label");
             hint_row.append(&hint_label);
 
-            let hints = entry("host:port", &participant.fips_endpoint_hints.join(", "));
+            let hints = entry(
+                "host or host:port",
+                &participant.fips_endpoint_hints.join(", "),
+            );
             hints.set_hexpand(true);
             hint_row.append(&hints);
 

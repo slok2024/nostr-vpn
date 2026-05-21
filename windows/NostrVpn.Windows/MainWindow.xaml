@@ -283,7 +283,7 @@
                         <ColumnDefinition Width="Auto" />
                       </Grid.ColumnDefinitions>
                       <TextBlock Text="Hints" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
-                      <TextBox x:Name="EndpointHintsInput" Grid.Column="1" Text="{Binding SelectedParticipant.FipsEndpointHintsEditText, Mode=OneWay}" Margin="0,0,8,0" />
+                      <TextBox x:Name="EndpointHintsInput" Grid.Column="1" Text="{Binding SelectedParticipant.FipsEndpointHintsEditText, Mode=OneWay}" ToolTip="host or host:port" Margin="0,0,8,0" />
                       <Button Grid.Column="2" Content="Save" Tag="{Binding SelectedParticipant}" Click="SetEndpointHints_Click" />
                     </Grid>
 

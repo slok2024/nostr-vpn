@@ -51,8 +51,8 @@ use anyhow::{Context, Result, anyhow};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use nostr_vpn_core::config::{
     AppConfig, derive_mesh_tunnel_ip, exit_node_default_routes, maybe_autoconfigure_node,
-    normalize_advertised_route, normalize_nostr_pubkey, normalize_runtime_network_id,
-    parse_wireguard_exit_config,
+    normalize_advertised_route, normalize_fips_peer_endpoint_hint, normalize_nostr_pubkey,
+    normalize_runtime_network_id, parse_wireguard_exit_config,
 };
 use nostr_vpn_core::control::PeerAnnouncement;
 use nostr_vpn_core::data_plane::MeshPeerStatus;
@@ -3910,7 +3910,7 @@ fn parse_fips_peer_endpoint_args(values: &[String]) -> Result<HashMap<String, Ve
         }
         let (peer, endpoint) = value
             .split_once('=')
-            .ok_or_else(|| anyhow!("expected --fips-peer-endpoint npub=host:port"))?;
+            .ok_or_else(|| anyhow!("expected --fips-peer-endpoint npub=host or npub=host:port"))?;
         let peer = normalize_nostr_pubkey(peer.trim())?;
         let endpoint = normalize_fips_peer_endpoint(endpoint.trim())?;
         peers.entry(peer).or_default().push(endpoint);
@@ -3928,23 +3928,8 @@ fn normalize_fips_peer_endpoint(value: &str) -> Result<String> {
     if value.is_empty() {
         return Err(anyhow!("empty FIPS peer endpoint"));
     }
-    if value.parse::<SocketAddr>().is_ok() {
-        return Ok(value.to_string());
-    }
-    let (host, port) = value
-        .rsplit_once(':')
-        .ok_or_else(|| anyhow!("FIPS peer endpoint must be host:port"))?;
-    if host.trim().is_empty() {
-        return Err(anyhow!("FIPS peer endpoint host is empty"));
-    }
-    let port = port
-        .trim()
-        .parse::<u16>()
-        .with_context(|| format!("invalid FIPS peer endpoint port in '{value}'"))?;
-    if port == 0 {
-        return Err(anyhow!("FIPS peer endpoint port must be nonzero"));
-    }
-    Ok(value.to_string())
+    normalize_fips_peer_endpoint_hint(value)
+        .ok_or_else(|| anyhow!("FIPS peer endpoint must be a usable UDP host or host:port"))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

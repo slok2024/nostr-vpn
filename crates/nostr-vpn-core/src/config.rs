@@ -51,7 +51,30 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_RELAYS: &[&str] = &[];
 
 pub fn normalize_fips_peer_endpoint_hint(endpoint: &str) -> Option<String> {
-    peer_endpoint_hint_addr(&PeerEndpointHint::udp(endpoint.trim()))
+    let endpoint = endpoint.trim();
+    if endpoint.is_empty() {
+        return None;
+    }
+    if let Some(addr) = peer_endpoint_hint_addr(&PeerEndpointHint::udp(endpoint)) {
+        return Some(addr);
+    }
+
+    let default_port = default_listen_port();
+    let endpoint = if let Some(host) = endpoint
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+    {
+        let host = host.trim();
+        if host.is_empty() || !host.contains(':') {
+            return None;
+        }
+        format!("[{host}]:{default_port}")
+    } else if endpoint.contains(':') {
+        return None;
+    } else {
+        format!("{endpoint}:{default_port}")
+    };
+    peer_endpoint_hint_addr(&PeerEndpointHint::udp(endpoint))
 }
 
 pub fn normalize_relay_urls(values: Vec<String>) -> Vec<String> {
@@ -1671,7 +1694,7 @@ impl AppConfig {
             }
             let Some(endpoint) = normalize_fips_peer_endpoint_hint(endpoint) else {
                 return Err(anyhow!(
-                    "FIPS address hint must be a usable UDP host:port, for example 192.168.1.10:51820 or peer.example.com:51820"
+                    "FIPS address hint must be a usable UDP host or host:port, for example 192.168.1.10, 192.168.1.10:51820, or peer.example.com"
                 ));
             };
             normalized.push(endpoint);
@@ -2299,7 +2322,10 @@ mod tests {
 
         assert_eq!(
             config.fips_static_peer_endpoints(),
-            vec![(peer_public_key, vec!["10.203.0.12:51820".to_string()])]
+            vec![(
+                peer_public_key,
+                vec!["10.203.0.12:51820".to_string(), "fips:51820".to_string()]
+            )]
         );
         assert!(config.has_fips_static_peer_endpoints());
     }
@@ -2315,9 +2341,10 @@ mod tests {
             .set_fips_peer_endpoint_hints(
                 &peer_public_key,
                 &[
-                    " peer.example.com:51820 ".to_string(),
-                    "192.168.1.23:51821".to_string(),
+                    " peer.example.com ".to_string(),
+                    "192.168.1.23".to_string(),
                     "peer.example.com:51820".to_string(),
+                    "[fd00::23]".to_string(),
                 ],
             )
             .expect("set hints");
@@ -2325,7 +2352,8 @@ mod tests {
         assert_eq!(
             config.fips_peer_endpoint_hints(&peer_public_key_hex),
             vec![
-                "192.168.1.23:51821".to_string(),
+                "192.168.1.23:51820".to_string(),
+                "[fd00::23]:51820".to_string(),
                 "peer.example.com:51820".to_string()
             ]
         );
@@ -2338,7 +2366,8 @@ mod tests {
         assert_eq!(
             config.fips_peer_endpoint_hints(&peer_public_key),
             vec![
-                "192.168.1.23:51821".to_string(),
+                "192.168.1.23:51820".to_string(),
+                "[fd00::23]:51820".to_string(),
                 "peer.example.com:51820".to_string()
             ]
         );
