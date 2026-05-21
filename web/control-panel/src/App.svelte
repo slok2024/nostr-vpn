@@ -1731,7 +1731,7 @@
                 <input bind:value={settingsDraft.advertisedRoutes} on:input={() => (settingsDirty = true)} />
               </label>
               <label>
-                <span>FIPS TCP Ports</span>
+                <span>Inbound .fips TCP Ports</span>
                 <input bind:value={settingsDraft.fipsHostInboundTcpPorts} on:input={() => (settingsDirty = true)} />
               </label>
             </div>
@@ -1760,7 +1760,7 @@
             </label>
 
             <label class="switch-row">
-              <span>FIPS Hosts</span>
+              <span>Non-VPN .fips</span>
               <input
                 type="checkbox"
                 bind:checked={settingsDraft.fipsHostTunnelEnabled}

@@ -74,5 +74,37 @@
       <Setter Property="Margin" Value="0,4,18,4" />
       <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
+
+    <Style x:Key="SwitchCheckBox" TargetType="{x:Type CheckBox}" BasedOn="{StaticResource {x:Type CheckBox}}">
+      <Setter Property="Margin" Value="0,4,0,4" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="{x:Type CheckBox}">
+            <Grid MinHeight="32">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True" />
+              <Border x:Name="Track" Grid.Column="1" Width="42" Height="24" CornerRadius="12" Background="#DDE3EA" BorderBrush="#C9D2DC" BorderThickness="1">
+                <Ellipse x:Name="Thumb" Width="18" Height="18" Fill="#FFFFFF" HorizontalAlignment="Left" Margin="3" />
+              </Border>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Track" Property="Background" Value="{StaticResource Accent}" />
+                <Setter TargetName="Track" Property="BorderBrush" Value="{StaticResource Accent}" />
+                <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.55" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Application.Resources>
 </Application>

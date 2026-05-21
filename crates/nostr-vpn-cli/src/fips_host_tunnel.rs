@@ -15,6 +15,7 @@ use std::process::{Command as ProcessCommand, Stdio};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
+#[cfg(any(test, target_os = "linux"))]
 pub(crate) const FIPS_HOST_ROUTE_TARGET: &str = "fd00::/8";
 const FIPS_HOST_IFACE: &str = "nvpnfips0";
 const FIPS_HOST_MTU: u16 = 1280;
@@ -158,6 +159,11 @@ impl FipsHostTunnelRuntime {
             .context(".fips node task join failed")?
             .context(".fips node task failed")
     }
+
+    pub(crate) fn cleanup_disabled_artifacts() {
+        SystemResolverGuard::cleanup_disabled_artifacts();
+        LinuxFirewallGuard::cleanup_disabled_artifacts();
+    }
 }
 
 fn spawn_fips_node_task(
@@ -211,6 +217,25 @@ impl SystemResolverGuard {
             Ok(None)
         }
     }
+
+    fn cleanup_disabled_artifacts() {
+        #[cfg(target_os = "macos")]
+        {
+            remove_owned_file("/etc/resolver/fips");
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if remove_owned_file("/etc/systemd/resolved.conf.d/nostr-vpn-fips.conf") {
+                restart_service("systemd-resolved");
+            }
+            if remove_owned_file("/etc/dnsmasq.d/nostr-vpn-fips.conf") {
+                reload_service("dnsmasq");
+            }
+            if remove_owned_file("/etc/NetworkManager/dnsmasq.d/nostr-vpn-fips.conf") {
+                reload_service("NetworkManager");
+            }
+        }
+    }
 }
 
 impl Drop for SystemResolverGuard {
@@ -222,13 +247,15 @@ impl Drop for SystemResolverGuard {
             }
             #[cfg(target_os = "linux")]
             ResolverBackend::SystemdResolved { path } => {
-                remove_owned_file(path);
-                restart_service("systemd-resolved");
+                if remove_owned_file(path) {
+                    restart_service("systemd-resolved");
+                }
             }
             #[cfg(target_os = "linux")]
             ResolverBackend::Dnsmasq { path, service } => {
-                remove_owned_file(path);
-                reload_service(service);
+                if remove_owned_file(path) {
+                    reload_service(service);
+                }
             }
         }
     }
@@ -314,12 +341,10 @@ fn write_owned_file(path: &str, contents: &str) -> Result<()> {
     fs::write(path, contents).with_context(|| format!("failed to write {path}"))
 }
 
-fn remove_owned_file(path: &str) {
+fn remove_owned_file(path: &str) -> bool {
     match fs::read_to_string(path) {
-        Ok(contents) if contents.contains("Managed by nostr-vpn") => {
-            let _ = fs::remove_file(path);
-        }
-        _ => {}
+        Ok(contents) if contents.contains("Managed by nostr-vpn") => fs::remove_file(path).is_ok(),
+        _ => false,
     }
 }
 
@@ -373,20 +398,37 @@ impl LinuxFirewallGuard {
             Ok(None)
         }
     }
+
+    fn cleanup_disabled_artifacts() {
+        #[cfg(target_os = "linux")]
+        {
+            remove_nft_table(NFT_TABLE_NAME);
+        }
+    }
 }
 
 impl Drop for LinuxFirewallGuard {
     fn drop(&mut self) {
         #[cfg(target_os = "linux")]
-        if command_exists("nft") {
-            let _ = ProcessCommand::new("nft")
-                .arg("delete")
-                .arg("table")
-                .arg("inet")
-                .arg(&self.table_name)
-                .status();
+        {
+            remove_nft_table(&self.table_name);
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn remove_nft_table(table_name: &str) {
+    if !command_exists("nft") {
+        return;
+    }
+    let _ = ProcessCommand::new("nft")
+        .arg("delete")
+        .arg("table")
+        .arg("inet")
+        .arg(table_name)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 #[cfg(any(test, target_os = "linux"))]

@@ -1347,35 +1347,33 @@ struct RootView: View {
                     TextField("Tunnel IP", text: $tunnelIp)
                 }
                 GridRow {
-                    label("FIPS TCP Ports")
-                    TextField("FIPS TCP Ports", text: $fipsHostInboundTcpPorts)
+                    label("Inbound .fips TCP Ports")
+                    TextField("Inbound .fips TCP Ports", text: $fipsHostInboundTcpPorts)
                 }
             }
-            HStack(spacing: 14) {
-                Toggle("Autoconnect", isOn: Binding(
+            VStack(alignment: .leading, spacing: 8) {
+                settingsToggleRow("Autoconnect", isOn: Binding(
                     get: { state.autoconnect },
                     set: { manager.setAutoconnect($0) }
                 ))
-                Toggle("FIPS Hosts", isOn: Binding(
+                settingsToggleRow("Non-VPN .fips", isOn: Binding(
                     get: { state.fipsHostTunnelEnabled },
                     set: { manager.setFipsHostTunnel($0) }
                 ))
-                Toggle("Launch on startup", isOn: Binding(
+                settingsToggleRow("Launch on startup", isOn: Binding(
                     get: { state.launchOnStartup },
                     set: { manager.setLaunchOnStartup($0) }
-                ))
-                .disabled(!state.startupSettingsSupported)
-                Toggle("Menu bar on close", isOn: Binding(
+                ), disabled: !state.startupSettingsSupported)
+                settingsToggleRow("Menu bar on close", isOn: Binding(
                     get: { state.closeToTrayOnClose },
                     set: { manager.setCloseToTray($0) }
-                ))
-                .disabled(!state.trayBehaviorSupported)
+                ), disabled: !state.trayBehaviorSupported)
             }
-            Toggle("Block internet if exit node disconnects", isOn: Binding(
+            .frame(maxWidth: .infinity, alignment: .leading)
+            settingsToggleRow("Block internet if exit node disconnects", isOn: Binding(
                 get: { state.exitNodeLeakProtection },
                 set: { manager.setExitNodeLeakProtection($0) }
-            ))
-            .disabled(manager.actionInFlight)
+            ), disabled: manager.actionInFlight)
             Button {
                 manager.saveNodeSettings(
                     nodeName: nodeName,
@@ -1390,6 +1388,18 @@ struct RootView: View {
             }
             .disabled(manager.actionInFlight)
         }
+    }
+
+    private func settingsToggleRow(_ title: String, isOn: Binding<Bool>, disabled: Bool = false) -> some View {
+        HStack(spacing: 12) {
+            Text(title)
+            Spacer(minLength: 16)
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .disabled(disabled)
     }
 
     private var wireGuardExitSettings: some View {

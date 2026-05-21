@@ -56,7 +56,7 @@ nostr_pubkey_from_config() {
 fips_dns_aaaa() {
   local service="$1"
   local npub="$2"
-  "${COMPOSE[@]}" exec -T "$service" sh -lc "dig @::1 -p 5354 +short AAAA '${npub}.fips' | tail -n 1" | tr -d '\r'
+  "${COMPOSE[@]}" exec -T "$service" sh -lc "dig +time=1 +tries=1 @::1 -p 5354 +short AAAA '${npub}.fips' 2>/dev/null | awk '/^[0-9A-Fa-f:]+$/ { print; exit }'" | tr -d '\r'
 }
 
 wait_for_fips_dns_aaaa() {
@@ -221,6 +221,34 @@ assert_fips_firewall_blocks() {
   fi
 }
 
+assert_fips_host_disabled() {
+  local service="$1"
+  local peer_npub="$2"
+  local link route table dns
+
+  for _ in $(seq 1 20); do
+    link="$("${COMPOSE[@]}" exec -T "$service" sh -lc "ip link show dev '$FIPS_HOST_IFACE' 2>/dev/null || true")"
+    route="$("${COMPOSE[@]}" exec -T "$service" sh -lc 'ip -6 route show fd00::/8 2>/dev/null || true')"
+    table="$("${COMPOSE[@]}" exec -T "$service" sh -lc 'nft list table inet nvpn_fips_host >/dev/null 2>&1 && echo present || true')"
+    dns="$(fips_dns_aaaa "$service" "$peer_npub" 2>/dev/null || true)"
+    if [[ -z "$link" && -z "$route" && -z "$table" && -z "$dns" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "docker e2e failed: $service disabled .fips host tunnel left runtime state behind" >&2
+  echo "--- link ---" >&2
+  echo "$link" >&2
+  echo "--- fd00::/8 route ---" >&2
+  echo "$route" >&2
+  echo "--- nft table ---" >&2
+  echo "$table" >&2
+  echo "--- dns ---" >&2
+  echo "$dns" >&2
+  exit 1
+}
+
 cleanup
 
 "${COMPOSE[@]}" build >/dev/null
@@ -297,6 +325,29 @@ assert_fips_firewall_rules node-a
 assert_fips_firewall_rules node-b "$FIPS_HOST_TCP_PORT"
 assert_fips_tcp_crosses "$BOB_NPUB"
 assert_fips_firewall_blocks
+"${COMPOSE[@]}" exec -T node-a nvpn set --fips-host-tunnel-enabled false >/dev/null
+"${COMPOSE[@]}" exec -T node-a sh -lc 'pkill -TERM -x nvpn || true'
+for _ in $(seq 1 10); do
+  if ! "${COMPOSE[@]}" exec -T node-a sh -lc 'pgrep -x nvpn >/dev/null'; then
+    break
+  fi
+  sleep 1
+done
+"${COMPOSE[@]}" exec -d node-a sh -lc "rm -f /tmp/connect.log; nvpn connect > /tmp/connect.log 2>&1"
+for _ in $(seq 1 30); do
+  ALICE_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
+  if grep -q "mesh: 1/1 peers connected" <<<"$ALICE_CONNECT_LOGS"; then
+    break
+  fi
+  sleep 1
+done
+ALICE_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
+if ! grep -q "mesh: 1/1 peers connected" <<<"$ALICE_CONNECT_LOGS"; then
+  echo "docker e2e failed: alice mesh did not recover after disabling .fips host tunnel" >&2
+  echo "$ALICE_CONNECT_LOGS"
+  exit 1
+fi
+assert_fips_host_disabled node-a "$BOB_NPUB"
 
 if ! "${COMPOSE[@]}" exec -T node-a ping -c 3 -W 2 "$BOB_TUNNEL_IP" >/tmp/ping-a.log; then
   echo "docker e2e failed: ping A -> B failed" >&2
@@ -321,4 +372,4 @@ cat /tmp/ping-a.log
 echo "--- Ping B -> A ---"
 cat /tmp/ping-b.log
 
-echo "docker e2e passed: FIPS private mesh established, .fips firewall enforced, resolver/tunnel carried TCP, and tunnel pings succeeded"
+echo "docker e2e passed: FIPS private mesh established, .fips firewall enforced, disable removed IPv6 host state, resolver/tunnel carried TCP, and tunnel pings succeeded"

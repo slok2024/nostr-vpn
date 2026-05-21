@@ -2001,12 +2001,16 @@ impl FipsPrivateTunnelRuntime {
             self.stop_fips_host_runtime().await;
         }
 
-        if let Some(config) = config
-            && self.fips_host.is_none()
-        {
-            let runtime = crate::fips_host_tunnel::FipsHostTunnelRuntime::start(config).await?;
-            eprintln!("fips-host: .fips IPv6 resolver active");
-            self.fips_host = Some(runtime);
+        match config {
+            Some(config) if self.fips_host.is_none() => {
+                let runtime = crate::fips_host_tunnel::FipsHostTunnelRuntime::start(config).await?;
+                eprintln!("fips-host: .fips IPv6 resolver active");
+                self.fips_host = Some(runtime);
+            }
+            None => {
+                crate::fips_host_tunnel::FipsHostTunnelRuntime::cleanup_disabled_artifacts();
+            }
+            Some(_) => {}
         }
         Ok(())
     }

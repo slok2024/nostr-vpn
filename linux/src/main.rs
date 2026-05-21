@@ -2395,7 +2395,12 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     setting_entry(app, &device, "Endpoint", "endpoint");
     setting_entry(app, &device, "Listen Port", "listen_port");
     setting_entry(app, &device, "DNS Suffix", "magic_dns_suffix");
-    setting_entry(app, &device, "FIPS TCP Ports", "fips_host_inbound_tcp_ports");
+    setting_entry(
+        app,
+        &device,
+        "Inbound .fips TCP Ports",
+        "fips_host_inbound_tcp_ports",
+    );
 
     let save = icon_text_button("Save", "");
     save.add_css_class("suggested-action");
@@ -2639,14 +2644,18 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
             },
         }
     });
-    switch_row(app, &system, "FIPS Hosts", state.fips_host_tunnel_enabled, |enabled| {
-        NativeAppAction::UpdateSettings {
+    switch_row(
+        app,
+        &system,
+        "Non-VPN .fips",
+        state.fips_host_tunnel_enabled,
+        |enabled| NativeAppAction::UpdateSettings {
             patch: SettingsPatch {
                 fips_host_tunnel_enabled: Some(enabled),
                 ..SettingsPatch::default()
             },
-        }
-    });
+        },
+    );
     if state.startup_settings_supported {
         switch_row(
             app,
