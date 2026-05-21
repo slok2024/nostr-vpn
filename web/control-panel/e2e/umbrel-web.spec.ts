@@ -48,6 +48,25 @@ type QrMatrix = {
 
 test.describe.configure({ mode: 'serial', timeout: 60_000 });
 
+const TEST_WG_PRIVATE_KEY = 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=';
+const TEST_WG_PUBLIC_KEY = 'AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=';
+
+function wireGuardConfig(endpoint = '198.51.100.20:51820'): string {
+  return `
+[Interface]
+PrivateKey = ${TEST_WG_PRIVATE_KEY}
+Address = 10.64.70.195/32
+DNS = 10.64.0.1
+MTU = 1380
+
+[Peer]
+PublicKey = ${TEST_WG_PUBLIC_KEY}
+AllowedIPs = 0.0.0.0/0
+Endpoint = ${endpoint}
+PersistentKeepalive = 20
+`;
+}
+
 async function postJson<T>(
   request: APIRequestContext,
   path: string,
@@ -78,7 +97,11 @@ function byName(state: UiState, name: string): NetworkView {
   return network!;
 }
 
-async function expectNoConsoleErrors(page: Page, action: () => Promise<void>) {
+async function expectNoConsoleErrors(
+  page: Page,
+  action: () => Promise<void>,
+  allowedErrors: RegExp[] = [],
+) {
   const errors: string[] = [];
   page.on('console', (message) => {
     if (message.type() === 'error') {
@@ -89,7 +112,9 @@ async function expectNoConsoleErrors(page: Page, action: () => Promise<void>) {
 
   await action();
 
-  expect(errors).toEqual([]);
+  expect(
+    errors.filter((error) => !allowedErrors.some((allowed) => allowed.test(error))),
+  ).toEqual([]);
 }
 
 async function expectModalClosesWithEscape(page: Page, openerName: string, modalName: string) {
@@ -194,6 +219,79 @@ test('bundled UI loads, navigates, renders QR, and stays responsive', async ({ p
     );
     expect(overflow).toBeLessThanOrEqual(0);
   });
+});
+
+test('WireGuard exit settings import, save, toggle, and reject bad config from the UI', async ({
+  page,
+  request,
+}) => {
+  await expectNoConsoleErrors(
+    page,
+    async () => {
+      const validConfig = wireGuardConfig();
+
+      await page.goto('/');
+      await page.getByRole('button', { name: 'Exit Nodes' }).click();
+
+      const wireGuardPanel = page.locator('form.panel.wide').filter({
+        has: page.getByRole('heading', { name: 'WireGuard Upstream' }),
+      });
+      await expect(wireGuardPanel).toBeVisible();
+
+      const configField = wireGuardPanel.getByLabel('Config');
+      await expect(configField).toBeVisible();
+
+      await wireGuardPanel.locator('input[type="file"]').setInputFiles({
+        name: 'wg-upstream.conf',
+        mimeType: 'text/plain',
+        buffer: Buffer.from(validConfig),
+      });
+
+      await expect
+        .poll(async () => (await postJson<UiState>(request, '/api/tick')).wireguardExitConfigured)
+        .toBe(true);
+      let state = await postJson<UiState>(request, '/api/tick');
+      expect(state.wireguardExitConfig).toContain(`PrivateKey = ${TEST_WG_PRIVATE_KEY}`);
+      expect(state.wireguardExitConfig).toContain('Endpoint = 198.51.100.20:51820');
+      await expect(configField).toHaveValue(/Endpoint = 198\.51\.100\.20:51820/);
+
+      const enabled = wireGuardPanel.getByRole('checkbox', { name: 'Enabled' });
+      await expect(enabled).toBeEnabled();
+      await enabled.check();
+      await expect
+        .poll(async () => (await postJson<UiState>(request, '/api/tick')).wireguardExitEnabled)
+        .toBe(true);
+      await enabled.uncheck();
+      await expect
+        .poll(async () => (await postJson<UiState>(request, '/api/tick')).wireguardExitEnabled)
+        .toBe(false);
+
+      const savedConfig = (await postJson<UiState>(request, '/api/tick')).wireguardExitConfig;
+      await configField.fill(`
+[Interface]
+PrivateKey = not-a-wireguard-key
+Address = 10.64.70.200/32
+
+[Peer]
+PublicKey = also-bad
+AllowedIPs = 0.0.0.0/0
+Endpoint = bad.example.test:51820
+`);
+      await wireGuardPanel.getByRole('button', { name: 'Save' }).click();
+      await expect(page.locator('.notice-row.error')).toContainText('PrivateKey');
+      state = await postJson<UiState>(request, '/api/tick');
+      expect(state.wireguardExitConfig).toBe(savedConfig);
+      expect(state.wireguardExitEnabled).toBe(false);
+
+      await configField.fill(validConfig);
+      await wireGuardPanel.getByRole('button', { name: 'Save' }).click();
+      await expect
+        .poll(async () => (await postJson<UiState>(request, '/api/tick')).wireguardExitConfig)
+        .toContain('Endpoint = 198.51.100.20:51820');
+      await expect(page.locator('.notice-row.error')).toHaveCount(0);
+    },
+    [/Failed to load resource: the server responded with a status of 400 \(Bad Request\)/],
+  );
 });
 
 test('API supports the Umbrel web config action surface', async ({ request }) => {
