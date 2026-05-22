@@ -26,6 +26,10 @@ pub struct DaemonRuntimeState {
     pub expected_peer_count: usize,
     #[serde(alias = "connected_peer_count")]
     pub connected_peer_count: usize,
+    #[serde(default, alias = "fips_direct_roster_peer_count")]
+    pub fips_direct_roster_peer_count: usize,
+    #[serde(default, alias = "fips_other_peer_count")]
+    pub fips_other_peer_count: usize,
     #[serde(alias = "mesh_ready")]
     pub mesh_ready: bool,
     #[serde(default)]
@@ -414,6 +418,8 @@ mod tests {
             "vpn_status": "Running",
             "expected_peer_count": 1,
             "connected_peer_count": 1,
+            "fips_direct_roster_peer_count": 1,
+            "fips_other_peer_count": 2,
             "mesh_ready": true,
             "port_mapping": {
                 "upnp": { "state": "unknown" },
@@ -446,6 +452,8 @@ mod tests {
 
         assert!(state.vpn_enabled);
         assert_eq!(state.connected_peer_count, 1);
+        assert_eq!(state.fips_direct_roster_peer_count, 1);
+        assert_eq!(state.fips_other_peer_count, 2);
         assert_eq!(state.port_mapping.active_protocol, None);
         assert_eq!(state.relays[0].url, "wss://temp.iris.to");
         assert_eq!(state.relays[0].status, "connected");

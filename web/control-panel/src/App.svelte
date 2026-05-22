@@ -44,6 +44,7 @@
   let newNetworkName = '';
   let addNetworkOpen = false;
   let addDeviceOpen = false;
+  let diagnosticsOpen = false;
   let shownNetworkId = '';
   let selectedParticipantKey = '';
   let deviceSearch = '';
@@ -1723,10 +1724,6 @@
                 <input inputmode="numeric" bind:value={settingsDraft.listenPort} on:input={() => (settingsDirty = true)} />
               </label>
               <label>
-                <span>DNS Suffix</span>
-                <input bind:value={settingsDraft.magicDnsSuffix} on:input={() => (settingsDirty = true)} />
-              </label>
-              <label>
                 <span>Advertised Routes</span>
                 <input bind:value={settingsDraft.advertisedRoutes} on:input={() => (settingsDirty = true)} />
               </label>
@@ -1823,44 +1820,6 @@
           <div class="panel">
             <div class="section-heading">
               <div>
-                <h3>Diagnostics</h3>
-                <p>{state.health.length > 0 ? `${state.health.length} issues` : 'Healthy'}</p>
-              </div>
-            </div>
-            <div class="detail-list">
-              <div>
-                <span>Peers</span>
-                <strong>{state.connectedPeerCount}/{state.expectedPeerCount}</strong>
-              </div>
-              <div>
-                <span>FIPS</span>
-                <strong>{state.fipsConnectedPeerCount}/{state.fipsRosterPeerCount}</strong>
-              </div>
-              <div>
-                <span>Roster</span>
-                <strong>FIPS {state.fipsRosterPeerCount} · other {state.nonFipsRosterPeerCount}</strong>
-              </div>
-            </div>
-            {#if state.health.length === 0}
-              <div class="empty-state">No health issues</div>
-            {:else}
-              <div class="stack">
-                {#each state.health as issue (issue.code)}
-                  <div class="issue-row">
-                    <span class="status-dot {issueTone(issue)}"></span>
-                    <div>
-                      <strong>{issue.summary}</strong>
-                      <span>{issue.detail}</span>
-                    </div>
-                  </div>
-                {/each}
-              </div>
-            {/if}
-          </div>
-
-          <div class="panel">
-            <div class="section-heading">
-              <div>
                 <h3>System</h3>
                 <p>{state.appVersion}</p>
               </div>
@@ -1891,6 +1850,62 @@
                 <strong>{state.portMapping.externalEndpoint ?? '-'}</strong>
               </div>
             </div>
+          </div>
+
+          <div class="panel diagnostics-panel">
+            <button
+              type="button"
+              class="section-toggle"
+              aria-expanded={diagnosticsOpen}
+              on:click={() => (diagnosticsOpen = !diagnosticsOpen)}
+            >
+              <div>
+                <h3>Diagnostics</h3>
+                <p>{state.health.length > 0 ? `${state.health.length} issues` : 'Healthy'}</p>
+              </div>
+              <svg
+                class:open={diagnosticsOpen}
+                class="chevron-icon"
+                aria-hidden="true"
+                viewBox="0 0 16 16"
+                focusable="false"
+              >
+                <path d="M4 6l4 4 4-4" />
+              </svg>
+            </button>
+            {#if diagnosticsOpen}
+              <div class="diagnostics-body">
+                <div class="detail-list">
+                  <div>
+                    <span>Remote roster</span>
+                    <strong>{state.connectedPeerCount}/{state.expectedPeerCount}</strong>
+                  </div>
+                  <div>
+                    <span>Roster FIPS</span>
+                    <strong>{state.fipsConnectedPeerCount}/{state.fipsRosterPeerCount} direct</strong>
+                  </div>
+                  <div>
+                    <span>Other FIPS</span>
+                    <strong>{state.nonFipsRosterPeerCount}</strong>
+                  </div>
+                </div>
+                {#if state.health.length === 0}
+                  <div class="empty-state">No health issues</div>
+                {:else}
+                  <div class="stack">
+                    {#each state.health as issue (issue.code)}
+                      <div class="issue-row">
+                        <span class="status-dot {issueTone(issue)}"></span>
+                        <div>
+                          <strong>{issue.summary}</strong>
+                          <span>{issue.detail}</span>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
           </div>
         </section>
       {/if}

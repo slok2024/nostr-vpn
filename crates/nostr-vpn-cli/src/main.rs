@@ -1980,6 +1980,10 @@ struct DaemonRuntimeState {
     vpn_status: String,
     expected_peer_count: usize,
     connected_peer_count: usize,
+    #[serde(default)]
+    fips_direct_roster_peer_count: usize,
+    #[serde(default)]
+    fips_other_peer_count: usize,
     mesh_ready: bool,
     #[serde(default)]
     health: Vec<HealthIssue>,

@@ -2993,16 +2993,13 @@ fn build_diagnostics(parent: &gtk::Box, state: &NativeAppState) {
         state.connected_peer_count, state.expected_peer_count
     );
     let fips_peer_count = format!(
-        "{}/{}",
+        "{}/{} direct",
         state.fips_connected_peer_count, state.fips_roster_peer_count
     );
-    let fips_roster = format!(
-        "FIPS {} · other {}",
-        state.fips_roster_peer_count, state.non_fips_roster_peer_count
-    );
+    let other_fips = state.non_fips_roster_peer_count.to_string();
     metrics.append(&metric("Peers", &peer_count));
-    metrics.append(&metric("FIPS", &fips_peer_count));
-    metrics.append(&metric("Roster", &fips_roster));
+    metrics.append(&metric("Roster FIPS", &fips_peer_count));
+    metrics.append(&metric("Other FIPS", &other_fips));
     metrics.append(&metric(
         "Interface",
         &non_empty_or(&state.network.default_interface, "unknown"),

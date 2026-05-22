@@ -528,6 +528,53 @@ code {
   font-size: 1.05rem;
 }
 
+.section-toggle {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  color: var(--text-primary);
+  background: transparent;
+  text-align: left;
+}
+
+.section-toggle h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: 0;
+}
+
+.section-toggle p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+}
+
+.chevron-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  transition: transform 0.15s ease;
+}
+
+.chevron-icon.open {
+  transform: rotate(180deg);
+}
+
+.diagnostics-body {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
 .detail-list,
 .stack,
 .network-list,

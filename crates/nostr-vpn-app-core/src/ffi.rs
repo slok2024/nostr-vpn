@@ -485,6 +485,8 @@ impl NativeAppRuntime {
             self.network_states(&own_pubkey_hex, vpn_active)
         };
         let fips_peer_stats = active_network_fips_peer_stats(&networks, &own_pubkey_hex);
+        let other_fips_peer_count =
+            daemon_state.map_or(0, |state| state.fips_other_peer_count as u64);
 
         NativeAppState {
             rev: self.rev,
@@ -689,9 +691,10 @@ impl NativeAppRuntime {
             close_to_tray_on_close: !config_unavailable && self.config.close_to_tray_on_close,
             connected_peer_count: connected_peer_count as u64,
             expected_peer_count: expected_peer_count as u64,
-            fips_connected_peer_count: fips_peer_stats.connected_peer_count,
+            fips_connected_peer_count: fips_peer_stats.direct_roster_peer_count,
             fips_roster_peer_count: fips_peer_stats.roster_peer_count,
-            non_fips_roster_peer_count: fips_peer_stats.non_fips_roster_peer_count,
+            // Legacy wire field name: UIs now use this as connected non-roster FIPS peers.
+            non_fips_roster_peer_count: other_fips_peer_count,
             mesh_ready: !network_setup_required
                 && vpn_active
                 && daemon_state.is_some_and(|state| state.mesh_ready),
@@ -2339,9 +2342,8 @@ fn remote_network_participant_count(network: &NetworkConfig, own_pubkey_hex: &st
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct FipsPeerStats {
-    connected_peer_count: u64,
+    direct_roster_peer_count: u64,
     roster_peer_count: u64,
-    non_fips_roster_peer_count: u64,
 }
 
 fn active_network_fips_peer_stats(
@@ -2363,14 +2365,16 @@ fn active_network_fips_peer_stats(
         }
         if participant_has_fips_signal(participant) {
             stats.roster_peer_count += 1;
-            if participant.reachable {
-                stats.connected_peer_count += 1;
+            if participant_has_direct_fips_link(participant) {
+                stats.direct_roster_peer_count += 1;
             }
-        } else {
-            stats.non_fips_roster_peer_count += 1;
         }
     }
     stats
+}
+
+fn participant_has_direct_fips_link(participant: &NativeParticipantState) -> bool {
+    participant.reachable && !participant.fips_transport_addr.trim().is_empty()
 }
 
 fn participant_has_fips_signal(participant: &NativeParticipantState) -> bool {
@@ -3418,7 +3422,7 @@ mod tests {
         );
         let state = runtime.state();
         assert_eq!(state.fips_roster_peer_count, 0);
-        assert_eq!(state.non_fips_roster_peer_count, 1);
+        assert_eq!(state.non_fips_roster_peer_count, 0);
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -3634,6 +3638,7 @@ mod tests {
             vpn_active: true,
             expected_peer_count: 1,
             connected_peer_count: 1,
+            fips_other_peer_count: 2,
             mesh_ready: true,
             peers: vec![DaemonPeerState {
                 participant_pubkey: peer_pubkey.to_string(),
@@ -3656,11 +3661,51 @@ mod tests {
             .find(|participant| participant.pubkey_hex == peer_pubkey)
             .expect("peer participant");
 
+        assert_eq!(state.fips_connected_peer_count, 0);
+        assert_eq!(state.fips_roster_peer_count, 1);
+        assert_eq!(state.non_fips_roster_peer_count, 2);
+        assert_eq!(peer.status_text, "online via mesh (112 ms)");
+        assert_eq!(peer.fips_srtt_ms, 112);
+    }
+
+    #[test]
+    fn native_state_counts_direct_fips_roster_peer() {
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        let own_pubkey = runtime
+            .config
+            .own_nostr_pubkey_hex()
+            .expect("generated config should have own pubkey");
+        let peer_pubkey = "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc";
+        runtime.startup_error = None;
+        runtime.daemon_running = true;
+        runtime.vpn_enabled = true;
+        runtime.vpn_active = true;
+        create_test_network(&mut runtime, "Home");
+        runtime.config.networks[0].admins = vec![own_pubkey];
+        runtime.config.networks[0].participants = vec![peer_pubkey.to_string()];
+        runtime.daemon_state = Some(DaemonRuntimeState {
+            vpn_enabled: true,
+            vpn_active: true,
+            expected_peer_count: 1,
+            connected_peer_count: 1,
+            mesh_ready: true,
+            peers: vec![DaemonPeerState {
+                participant_pubkey: peer_pubkey.to_string(),
+                fips_endpoint_npub: "npub1peer".to_string(),
+                fips_transport_addr: "203.0.113.9:9000".to_string(),
+                fips_transport_type: "udp".to_string(),
+                reachable: true,
+                ..DaemonPeerState::default()
+            }],
+            ..DaemonRuntimeState::default()
+        });
+
+        let state = runtime.state();
+
         assert_eq!(state.fips_connected_peer_count, 1);
         assert_eq!(state.fips_roster_peer_count, 1);
         assert_eq!(state.non_fips_roster_peer_count, 0);
-        assert_eq!(peer.status_text, "online via mesh (112 ms)");
-        assert_eq!(peer.fips_srtt_ms, 112);
     }
 
     #[test]

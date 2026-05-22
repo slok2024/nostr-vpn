@@ -323,6 +323,83 @@ fn fips_runtime_state_is_ready_without_waiting_for_every_peer() {
 }
 
 #[test]
+fn fips_runtime_state_counts_direct_roster_and_other_peers() {
+    let mut config = AppConfig::generated();
+    let roster_peer = "11".repeat(32);
+    let routed_roster_peer = "22".repeat(32);
+    let other_peer = "33".repeat(32);
+    config.networks[0].participants = vec![roster_peer.clone(), routed_roster_peer.clone()];
+    let tunnel_runtime = crate::CliTunnelRuntime::new("utun100");
+
+    let state = crate::build_daemon_runtime_state(
+        &config,
+        true,
+        true,
+        2,
+        &tunnel_runtime,
+        &[
+            MeshPeerStatus {
+                pubkey: roster_peer,
+                connected: true,
+                endpoint_npub: "npub1roster".to_string(),
+                transport_addr: Some("203.0.113.8:9000".to_string()),
+                transport_type: Some("udp".to_string()),
+                srtt_ms: Some(5),
+                link_packets_sent: 0,
+                link_packets_recv: 0,
+                link_bytes_sent: 0,
+                link_bytes_recv: 0,
+                last_seen_at: Some(100),
+                tx_bytes: 0,
+                rx_bytes: 0,
+                error: None,
+            },
+            MeshPeerStatus {
+                pubkey: routed_roster_peer,
+                connected: true,
+                endpoint_npub: "npub1routed".to_string(),
+                transport_addr: None,
+                transport_type: None,
+                srtt_ms: Some(8),
+                link_packets_sent: 0,
+                link_packets_recv: 0,
+                link_bytes_sent: 0,
+                link_bytes_recv: 0,
+                last_seen_at: Some(100),
+                tx_bytes: 0,
+                rx_bytes: 0,
+                error: None,
+            },
+            MeshPeerStatus {
+                pubkey: other_peer,
+                connected: true,
+                endpoint_npub: "npub1other".to_string(),
+                transport_addr: Some("203.0.113.9:9000".to_string()),
+                transport_type: Some("udp".to_string()),
+                srtt_ms: Some(13),
+                link_packets_sent: 0,
+                link_packets_recv: 0,
+                link_bytes_sent: 0,
+                link_bytes_recv: 0,
+                last_seen_at: Some(100),
+                tx_bytes: 0,
+                rx_bytes: 0,
+                error: None,
+            },
+        ],
+        &[],
+        &std::collections::HashMap::new(),
+        "VPN on",
+        &nostr_vpn_core::diagnostics::NetworkSummary::default(),
+        &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
+    );
+
+    assert_eq!(state.connected_peer_count, 2);
+    assert_eq!(state.fips_direct_roster_peer_count, 1);
+    assert_eq!(state.fips_other_peer_count, 1);
+}
+
+#[test]
 fn daemon_runtime_state_marks_peers_unreachable_when_vpn_is_off() {
     let mut config = AppConfig::generated();
     let peer_pubkey = "11".repeat(32);

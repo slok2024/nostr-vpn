@@ -78,9 +78,10 @@ fn fips_peer_count(
     own_pubkey: Option<&str>,
     peer_statuses: &[MeshPeerStatus],
 ) -> usize {
-    let participant_pubkeys = app
-        .participant_pubkeys_hex()
-        .into_iter()
+    let participant_pubkeys_list = app.participant_pubkeys_hex();
+    let participant_pubkeys = participant_pubkeys_list
+        .iter()
+        .cloned()
         .collect::<HashSet<_>>();
     peer_statuses
         .iter()
@@ -1179,6 +1180,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         vpn_status: "Disconnected".to_string(),
         expected_peer_count: expected_peers,
         connected_peer_count: 0,
+        fips_direct_roster_peer_count: 0,
+        fips_other_peer_count: 0,
         mesh_ready: false,
         health: Vec::new(),
         network: network_snapshot.summary(network_changed_at, captive_portal),
@@ -1325,12 +1328,17 @@ pub(crate) fn build_daemon_runtime_state(
     let advertised_endpoint = local_endpoint.clone();
     let mut peers = Vec::new();
 
+    let participant_pubkeys_list = app.participant_pubkeys_hex();
+    let participant_pubkeys = participant_pubkeys_list
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
     let fips_status_by_pubkey = fips_peer_statuses
         .iter()
         .map(|status| (status.pubkey.as_str(), status))
         .collect::<HashMap<_, _>>();
     let network_id = app.effective_network_id();
-    for participant in &app.participant_pubkeys_hex() {
+    for participant in &participant_pubkeys_list {
         if Some(participant.as_str()) == own_pubkey.as_deref() {
             continue;
         }
@@ -1387,14 +1395,36 @@ pub(crate) fn build_daemon_runtime_state(
     let connected_peer_count = if !vpn_active {
         0
     } else {
-        let participant_pubkeys = app
-            .participant_pubkeys_hex()
-            .into_iter()
-            .collect::<HashSet<_>>();
         fips_peer_statuses
             .iter()
             .filter(|status| Some(status.pubkey.as_str()) != own_pubkey.as_deref())
             .filter(|status| participant_pubkeys.contains(&status.pubkey))
+            .filter(|status| status.connected)
+            .count()
+    };
+    let fips_direct_roster_peer_count = if !vpn_active {
+        0
+    } else {
+        fips_peer_statuses
+            .iter()
+            .filter(|status| Some(status.pubkey.as_str()) != own_pubkey.as_deref())
+            .filter(|status| participant_pubkeys.contains(&status.pubkey))
+            .filter(|status| status.connected)
+            .filter(|status| {
+                status
+                    .transport_addr
+                    .as_deref()
+                    .is_some_and(|addr| !addr.trim().is_empty())
+            })
+            .count()
+    };
+    let fips_other_peer_count = if !vpn_active {
+        0
+    } else {
+        fips_peer_statuses
+            .iter()
+            .filter(|status| Some(status.pubkey.as_str()) != own_pubkey.as_deref())
+            .filter(|status| !participant_pubkeys.contains(&status.pubkey))
             .filter(|status| status.connected)
             .count()
     };
@@ -1411,6 +1441,8 @@ pub(crate) fn build_daemon_runtime_state(
         vpn_status: vpn_status.to_string(),
         expected_peer_count: expected_peers,
         connected_peer_count,
+        fips_direct_roster_peer_count,
+        fips_other_peer_count,
         mesh_ready,
         health,
         network: network.clone(),
