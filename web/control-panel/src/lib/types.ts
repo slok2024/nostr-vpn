@@ -153,6 +153,9 @@ export type UiState = {
   closeToTrayOnClose: boolean;
   connectedPeerCount: number;
   expectedPeerCount: number;
+  fipsConnectedPeerCount: number;
+  fipsRosterPeerCount: number;
+  nonFipsRosterPeerCount: number;
   meshReady: boolean;
   health: HealthIssue[];
   network: NetworkSummary;

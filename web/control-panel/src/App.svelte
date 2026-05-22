@@ -1827,6 +1827,20 @@
                 <p>{state.health.length > 0 ? `${state.health.length} issues` : 'Healthy'}</p>
               </div>
             </div>
+            <div class="detail-list">
+              <div>
+                <span>Peers</span>
+                <strong>{state.connectedPeerCount}/{state.expectedPeerCount}</strong>
+              </div>
+              <div>
+                <span>FIPS</span>
+                <strong>{state.fipsConnectedPeerCount}/{state.fipsRosterPeerCount}</strong>
+              </div>
+              <div>
+                <span>Roster</span>
+                <strong>FIPS {state.fipsRosterPeerCount} · other {state.nonFipsRosterPeerCount}</strong>
+              </div>
+            </div>
             {#if state.health.length === 0}
               <div class="empty-state">No health issues</div>
             {:else}

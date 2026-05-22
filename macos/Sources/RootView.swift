@@ -1648,6 +1648,9 @@ struct RootView: View {
             ) {
                 VStack(alignment: .leading, spacing: 12) {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), alignment: .leading)], alignment: .leading, spacing: 10) {
+                        metric("Peers", "\(state.connectedPeerCount)/\(state.expectedPeerCount)")
+                        metric("FIPS", "\(state.fipsConnectedPeerCount)/\(state.fipsRosterPeerCount)")
+                        metric("Roster", "FIPS \(state.fipsRosterPeerCount) · other \(state.nonFipsRosterPeerCount)")
                         metric("Interface", state.network.defaultInterface.isEmpty ? "unknown" : state.network.defaultInterface)
                         metric("IPv4", state.network.primaryIpv4.isEmpty ? "-" : state.network.primaryIpv4)
                         metric("IPv6", state.network.primaryIpv6.isEmpty ? "-" : state.network.primaryIpv6)

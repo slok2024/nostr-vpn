@@ -574,6 +574,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public string DiagnosticsGateway => FirstNonEmpty(State.Network.GatewayIpv4, State.Network.GatewayIpv6, "unknown");
     public string DiagnosticsMapping => string.IsNullOrWhiteSpace(State.PortMapping.ActiveProtocol) ? "none" : State.PortMapping.ActiveProtocol;
     public string DiagnosticsExternal => string.IsNullOrWhiteSpace(State.PortMapping.ExternalEndpoint) ? "stun/direct" : State.PortMapping.ExternalEndpoint;
+    public string DiagnosticsPeers => $"{State.ConnectedPeerCount}/{State.ExpectedPeerCount}";
+    public string DiagnosticsFips => $"{State.FipsConnectedPeerCount}/{State.FipsRosterPeerCount}";
+    public string DiagnosticsFipsRoster => $"FIPS {State.FipsRosterPeerCount} · other {State.NonFipsRosterPeerCount}";
     public bool CanRequestActiveNetworkJoin => ActiveNetwork is { OutboundJoinRequest: null } network && !string.IsNullOrWhiteSpace(network.InviteInviterNpub);
     public string ActiveNetworkJoinStatus
     {
@@ -1390,6 +1393,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(DiagnosticsGateway));
         OnPropertyChanged(nameof(DiagnosticsMapping));
         OnPropertyChanged(nameof(DiagnosticsExternal));
+        OnPropertyChanged(nameof(DiagnosticsPeers));
+        OnPropertyChanged(nameof(DiagnosticsFips));
+        OnPropertyChanged(nameof(DiagnosticsFipsRoster));
         OnPropertyChanged(nameof(CanRequestActiveNetworkJoin));
         OnPropertyChanged(nameof(ActiveNetworkJoinStatus));
         OnPropertyChanged(nameof(DirectExitMarker));

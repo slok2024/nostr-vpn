@@ -1209,6 +1209,9 @@ final class AppManager: ObservableObject {
             closeToTrayOnClose: true,
             connectedPeerCount: 4,
             expectedPeerCount: 4,
+            fipsConnectedPeerCount: 4,
+            fipsRosterPeerCount: 4,
+            nonFipsRosterPeerCount: 0,
             meshReady: true,
             health: [],
             network: NativeNetworkSummary(

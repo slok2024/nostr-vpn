@@ -2901,6 +2901,18 @@ fn build_diagnostics(parent: &gtk::Box, state: &NativeAppState) {
     metrics.set_column_spacing(10);
     metrics.set_row_spacing(10);
     metrics.set_max_children_per_line(3);
+    let peer_count = format!("{}/{}", state.connected_peer_count, state.expected_peer_count);
+    let fips_peer_count = format!(
+        "{}/{}",
+        state.fips_connected_peer_count, state.fips_roster_peer_count
+    );
+    let fips_roster = format!(
+        "FIPS {} · other {}",
+        state.fips_roster_peer_count, state.non_fips_roster_peer_count
+    );
+    metrics.append(&metric("Peers", &peer_count));
+    metrics.append(&metric("FIPS", &fips_peer_count));
+    metrics.append(&metric("Roster", &fips_roster));
     metrics.append(&metric(
         "Interface",
         &non_empty_or(&state.network.default_interface, "unknown"),

@@ -778,6 +778,8 @@
                       <RowDefinition Height="Auto" />
                       <RowDefinition Height="Auto" />
                       <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Text="Interface" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
                     <TextBlock Grid.Column="1" Text="{Binding DiagnosticsInterface}" TextTrimming="CharacterEllipsis" Margin="0,0,16,8" />
@@ -787,10 +789,16 @@
                     <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding DiagnosticsIpv4}" TextTrimming="CharacterEllipsis" Margin="0,0,16,8" />
                     <TextBlock Grid.Row="1" Grid.Column="2" Text="IPv6" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
                     <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding DiagnosticsIpv6}" TextTrimming="CharacterEllipsis" Margin="0,0,0,8" />
-                    <TextBlock Grid.Row="2" Text="Mapping" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,0" />
-                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding DiagnosticsMapping}" TextTrimming="CharacterEllipsis" Margin="0,0,16,0" />
-                    <TextBlock Grid.Row="2" Grid.Column="2" Text="External" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,0" />
-                    <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding DiagnosticsExternal}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Row="2" Text="Mapping" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding DiagnosticsMapping}" TextTrimming="CharacterEllipsis" Margin="0,0,16,8" />
+                    <TextBlock Grid.Row="2" Grid.Column="2" Text="External" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                    <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding DiagnosticsExternal}" TextTrimming="CharacterEllipsis" Margin="0,0,0,8" />
+                    <TextBlock Grid.Row="3" Text="Peers" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                    <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding DiagnosticsPeers}" TextTrimming="CharacterEllipsis" Margin="0,0,16,8" />
+                    <TextBlock Grid.Row="3" Grid.Column="2" Text="FIPS" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                    <TextBlock Grid.Row="3" Grid.Column="3" Text="{Binding DiagnosticsFips}" TextTrimming="CharacterEllipsis" Margin="0,0,0,8" />
+                    <TextBlock Grid.Row="4" Text="Roster" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,0" />
+                    <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding DiagnosticsFipsRoster}" TextTrimming="CharacterEllipsis" />
                   </Grid>
 
                   <ItemsControl ItemsSource="{Binding State.Health}" Margin="0,12,0,0">

@@ -958,6 +958,9 @@ public struct NativeAppState {
     public var closeToTrayOnClose: Bool
     public var connectedPeerCount: UInt64
     public var expectedPeerCount: UInt64
+    public var fipsConnectedPeerCount: UInt64
+    public var fipsRosterPeerCount: UInt64
+    public var nonFipsRosterPeerCount: UInt64
     public var meshReady: Bool
     public var health: [NativeHealthIssue]
     public var network: NativeNetworkSummary
@@ -967,7 +970,7 @@ public struct NativeAppState {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(rev: UInt64, platform: String, mobile: Bool, vpnControlSupported: Bool, cliInstallSupported: Bool, startupSettingsSupported: Bool, trayBehaviorSupported: Bool, runtimeStatusDetail: String, appVersion: String, configPath: String, error: String, cliInstalled: Bool, serviceSupported: Bool, serviceEnablementSupported: Bool, serviceInstalled: Bool, serviceDisabled: Bool, serviceRunning: Bool, serviceStatusDetail: String, daemonRunning: Bool, vpnEnabled: Bool, vpnActive: Bool, vpnStatus: String, daemonBinaryVersion: String, serviceBinaryVersion: String, expectedServiceBinaryVersion: String, ownNpub: String, ownPubkeyHex: String, nodeId: String, nodeName: String, selfMagicDnsName: String, endpoint: String, tunnelIp: String, listenPort: UInt32, relays: [NativeRelayState], networkId: String, activeNetworkInvite: String, exitNode: String, exitNodeLeakProtection: Bool, exitNodeActive: Bool, exitNodeBlocked: Bool, exitNodeStatusText: String, advertiseExitNode: Bool, advertisedRoutes: [String], effectiveAdvertisedRoutes: [String], wireguardExitEnabled: Bool, wireguardExitConfigured: Bool, wireguardExitInterface: String, wireguardExitAddress: String, wireguardExitPrivateKey: String, wireguardExitPeerPublicKey: String, wireguardExitPeerPresharedKey: String, wireguardExitEndpoint: String, wireguardExitAllowedIps: String, wireguardExitDns: String, wireguardExitMtu: UInt16, wireguardExitPersistentKeepaliveSecs: UInt16, wireguardExitConfig: String, fipsHostTunnelEnabled: Bool, fipsHostInboundTcpPorts: String, magicDnsSuffix: String, magicDnsStatus: String, autoconnect: Bool, inviteBroadcastActive: Bool, inviteBroadcastRemainingSecs: UInt64, nearbyDiscoveryActive: Bool, nearbyDiscoveryRemainingSecs: UInt64, launchOnStartup: Bool, closeToTrayOnClose: Bool, connectedPeerCount: UInt64, expectedPeerCount: UInt64, meshReady: Bool, health: [NativeHealthIssue], network: NativeNetworkSummary, portMapping: NativePortMappingStatus, networks: [NativeNetworkState], lanPeers: [NativeLanPeerState]) {
+    public init(rev: UInt64, platform: String, mobile: Bool, vpnControlSupported: Bool, cliInstallSupported: Bool, startupSettingsSupported: Bool, trayBehaviorSupported: Bool, runtimeStatusDetail: String, appVersion: String, configPath: String, error: String, cliInstalled: Bool, serviceSupported: Bool, serviceEnablementSupported: Bool, serviceInstalled: Bool, serviceDisabled: Bool, serviceRunning: Bool, serviceStatusDetail: String, daemonRunning: Bool, vpnEnabled: Bool, vpnActive: Bool, vpnStatus: String, daemonBinaryVersion: String, serviceBinaryVersion: String, expectedServiceBinaryVersion: String, ownNpub: String, ownPubkeyHex: String, nodeId: String, nodeName: String, selfMagicDnsName: String, endpoint: String, tunnelIp: String, listenPort: UInt32, relays: [NativeRelayState], networkId: String, activeNetworkInvite: String, exitNode: String, exitNodeLeakProtection: Bool, exitNodeActive: Bool, exitNodeBlocked: Bool, exitNodeStatusText: String, advertiseExitNode: Bool, advertisedRoutes: [String], effectiveAdvertisedRoutes: [String], wireguardExitEnabled: Bool, wireguardExitConfigured: Bool, wireguardExitInterface: String, wireguardExitAddress: String, wireguardExitPrivateKey: String, wireguardExitPeerPublicKey: String, wireguardExitPeerPresharedKey: String, wireguardExitEndpoint: String, wireguardExitAllowedIps: String, wireguardExitDns: String, wireguardExitMtu: UInt16, wireguardExitPersistentKeepaliveSecs: UInt16, wireguardExitConfig: String, fipsHostTunnelEnabled: Bool, fipsHostInboundTcpPorts: String, magicDnsSuffix: String, magicDnsStatus: String, autoconnect: Bool, inviteBroadcastActive: Bool, inviteBroadcastRemainingSecs: UInt64, nearbyDiscoveryActive: Bool, nearbyDiscoveryRemainingSecs: UInt64, launchOnStartup: Bool, closeToTrayOnClose: Bool, connectedPeerCount: UInt64, expectedPeerCount: UInt64, fipsConnectedPeerCount: UInt64, fipsRosterPeerCount: UInt64, nonFipsRosterPeerCount: UInt64, meshReady: Bool, health: [NativeHealthIssue], network: NativeNetworkSummary, portMapping: NativePortMappingStatus, networks: [NativeNetworkState], lanPeers: [NativeLanPeerState]) {
         self.rev = rev
         self.platform = platform
         self.mobile = mobile
@@ -1038,6 +1041,9 @@ public struct NativeAppState {
         self.closeToTrayOnClose = closeToTrayOnClose
         self.connectedPeerCount = connectedPeerCount
         self.expectedPeerCount = expectedPeerCount
+        self.fipsConnectedPeerCount = fipsConnectedPeerCount
+        self.fipsRosterPeerCount = fipsRosterPeerCount
+        self.nonFipsRosterPeerCount = nonFipsRosterPeerCount
         self.meshReady = meshReady
         self.health = health
         self.network = network
@@ -1264,6 +1270,15 @@ extension NativeAppState: Equatable, Hashable {
         if lhs.expectedPeerCount != rhs.expectedPeerCount {
             return false
         }
+        if lhs.fipsConnectedPeerCount != rhs.fipsConnectedPeerCount {
+            return false
+        }
+        if lhs.fipsRosterPeerCount != rhs.fipsRosterPeerCount {
+            return false
+        }
+        if lhs.nonFipsRosterPeerCount != rhs.nonFipsRosterPeerCount {
+            return false
+        }
         if lhs.meshReady != rhs.meshReady {
             return false
         }
@@ -1356,6 +1371,9 @@ extension NativeAppState: Equatable, Hashable {
         hasher.combine(closeToTrayOnClose)
         hasher.combine(connectedPeerCount)
         hasher.combine(expectedPeerCount)
+        hasher.combine(fipsConnectedPeerCount)
+        hasher.combine(fipsRosterPeerCount)
+        hasher.combine(nonFipsRosterPeerCount)
         hasher.combine(meshReady)
         hasher.combine(health)
         hasher.combine(network)
@@ -1444,6 +1462,9 @@ public struct FfiConverterTypeNativeAppState: FfiConverterRustBuffer {
                 closeToTrayOnClose: FfiConverterBool.read(from: &buf),
                 connectedPeerCount: FfiConverterUInt64.read(from: &buf),
                 expectedPeerCount: FfiConverterUInt64.read(from: &buf),
+                fipsConnectedPeerCount: FfiConverterUInt64.read(from: &buf),
+                fipsRosterPeerCount: FfiConverterUInt64.read(from: &buf),
+                nonFipsRosterPeerCount: FfiConverterUInt64.read(from: &buf),
                 meshReady: FfiConverterBool.read(from: &buf),
                 health: FfiConverterSequenceTypeNativeHealthIssue.read(from: &buf),
                 network: FfiConverterTypeNativeNetworkSummary.read(from: &buf),
@@ -1524,6 +1545,9 @@ public struct FfiConverterTypeNativeAppState: FfiConverterRustBuffer {
         FfiConverterBool.write(value.closeToTrayOnClose, into: &buf)
         FfiConverterUInt64.write(value.connectedPeerCount, into: &buf)
         FfiConverterUInt64.write(value.expectedPeerCount, into: &buf)
+        FfiConverterUInt64.write(value.fipsConnectedPeerCount, into: &buf)
+        FfiConverterUInt64.write(value.fipsRosterPeerCount, into: &buf)
+        FfiConverterUInt64.write(value.nonFipsRosterPeerCount, into: &buf)
         FfiConverterBool.write(value.meshReady, into: &buf)
         FfiConverterSequenceTypeNativeHealthIssue.write(value.health, into: &buf)
         FfiConverterTypeNativeNetworkSummary.write(value.network, into: &buf)

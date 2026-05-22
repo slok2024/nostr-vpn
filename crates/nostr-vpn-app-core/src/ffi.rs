@@ -479,6 +479,12 @@ impl NativeAppRuntime {
                 })
                 .unwrap_or_default()
         };
+        let networks = if config_unavailable {
+            Vec::new()
+        } else {
+            self.network_states(&own_pubkey_hex, vpn_active)
+        };
+        let fips_peer_stats = active_network_fips_peer_stats(&networks, &own_pubkey_hex);
 
         NativeAppState {
             rev: self.rev,
@@ -683,17 +689,16 @@ impl NativeAppRuntime {
             close_to_tray_on_close: !config_unavailable && self.config.close_to_tray_on_close,
             connected_peer_count: connected_peer_count as u64,
             expected_peer_count: expected_peer_count as u64,
+            fips_connected_peer_count: fips_peer_stats.connected_peer_count,
+            fips_roster_peer_count: fips_peer_stats.roster_peer_count,
+            non_fips_roster_peer_count: fips_peer_stats.non_fips_roster_peer_count,
             mesh_ready: !network_setup_required
                 && vpn_active
                 && daemon_state.is_some_and(|state| state.mesh_ready),
             health,
             network,
             port_mapping,
-            networks: if config_unavailable {
-                Vec::new()
-            } else {
-                self.network_states(&own_pubkey_hex, vpn_active)
-            },
+            networks,
             lan_peers: self.lan_peer_states(),
         }
     }
@@ -2332,6 +2337,53 @@ fn remote_network_participant_count(network: &NetworkConfig, own_pubkey_hex: &st
         .count()
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct FipsPeerStats {
+    connected_peer_count: u64,
+    roster_peer_count: u64,
+    non_fips_roster_peer_count: u64,
+}
+
+fn active_network_fips_peer_stats(
+    networks: &[NativeNetworkState],
+    own_pubkey_hex: &str,
+) -> FipsPeerStats {
+    let Some(network) = networks
+        .iter()
+        .find(|network| network.enabled)
+        .or_else(|| networks.first())
+    else {
+        return FipsPeerStats::default();
+    };
+
+    let mut stats = FipsPeerStats::default();
+    for participant in &network.participants {
+        if !own_pubkey_hex.is_empty() && participant.pubkey_hex == own_pubkey_hex {
+            continue;
+        }
+        if participant_has_fips_signal(participant) {
+            stats.roster_peer_count += 1;
+            if participant.reachable {
+                stats.connected_peer_count += 1;
+            }
+        } else {
+            stats.non_fips_roster_peer_count += 1;
+        }
+    }
+    stats
+}
+
+fn participant_has_fips_signal(participant: &NativeParticipantState) -> bool {
+    !participant.fips_endpoint_hints.is_empty()
+        || !participant.fips_endpoint_npub.trim().is_empty()
+        || !participant.fips_transport_addr.trim().is_empty()
+        || !participant.fips_transport_type.trim().is_empty()
+        || participant.fips_packets_sent > 0
+        || participant.fips_packets_recv > 0
+        || participant.fips_bytes_sent > 0
+        || participant.fips_bytes_recv > 0
+}
+
 fn network_setup_required_for_config(config: &AppConfig) -> bool {
     config.active_network_opt().is_none()
 }
@@ -3340,6 +3392,9 @@ mod tests {
                 "peer.example.com:51820".to_string()
             ]
         );
+        assert_eq!(state.fips_connected_peer_count, 0);
+        assert_eq!(state.fips_roster_peer_count, 1);
+        assert_eq!(state.non_fips_roster_peer_count, 0);
 
         let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
         assert_eq!(
@@ -3361,6 +3416,9 @@ mod tests {
                 .fips_endpoint_hints
                 .is_empty()
         );
+        let state = runtime.state();
+        assert_eq!(state.fips_roster_peer_count, 0);
+        assert_eq!(state.non_fips_roster_peer_count, 1);
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -3598,6 +3656,9 @@ mod tests {
             .find(|participant| participant.pubkey_hex == peer_pubkey)
             .expect("peer participant");
 
+        assert_eq!(state.fips_connected_peer_count, 1);
+        assert_eq!(state.fips_roster_peer_count, 1);
+        assert_eq!(state.non_fips_roster_peer_count, 0);
         assert_eq!(peer.status_text, "online via mesh (112 ms)");
         assert_eq!(peer.fips_srtt_ms, 112);
     }

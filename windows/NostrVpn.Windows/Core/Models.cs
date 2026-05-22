@@ -71,6 +71,9 @@ public sealed class NativeAppState
     public bool CloseToTrayOnClose { get; set; }
     public ulong ConnectedPeerCount { get; set; }
     public ulong ExpectedPeerCount { get; set; }
+    public ulong FipsConnectedPeerCount { get; set; }
+    public ulong FipsRosterPeerCount { get; set; }
+    public ulong NonFipsRosterPeerCount { get; set; }
     public bool MeshReady { get; set; }
     public List<NativeHealthIssue> Health { get; set; } = [];
     public NativeNetworkSummary Network { get; set; } = new();
