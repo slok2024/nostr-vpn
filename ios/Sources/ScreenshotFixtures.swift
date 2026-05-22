@@ -29,6 +29,9 @@ enum ScreenshotFixtures {
         state.activeNetworkInvite = "nvpn://invite/demo-home-mesh"
         state.connectedPeerCount = 3
         state.expectedPeerCount = 4
+        state.fipsConnectedPeerCount = 3
+        state.fipsRosterPeerCount = 5
+        state.nonFipsRosterPeerCount = 0
         state.meshReady = true
         state.exitNode = macNpub
         state.exitNodeLeakProtection = true
@@ -97,11 +100,13 @@ enum ScreenshotFixtures {
             state.vpnActive = true
             state.vpnStatus = "Connected"
             state.connectedPeerCount = min(state.expectedPeerCount, 3)
+            state.fipsConnectedPeerCount = min(state.fipsRosterPeerCount, 3)
         case "disconnect_vpn":
             state.vpnEnabled = false
             state.vpnActive = false
             state.vpnStatus = "Disconnected"
             state.connectedPeerCount = 0
+            state.fipsConnectedPeerCount = 0
         case "set_network_enabled":
             if let networkId = action["networkId"] as? String,
                let enabled = action["enabled"] as? Bool,

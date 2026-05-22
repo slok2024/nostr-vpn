@@ -573,6 +573,9 @@ internal fun DiagnosticsCard(state: AppState) {
     AppCard {
         Text("Diagnostics", style = MaterialTheme.typography.titleMedium)
         Metric("Runtime", state.runtimeStatusDetail.ifBlank { state.platform })
+        Metric("Peers", "${state.connectedPeerCount}/${state.expectedPeerCount}")
+        Metric("FIPS", "${state.fipsConnectedPeerCount}/${state.fipsRosterPeerCount}")
+        Metric("Roster", "FIPS ${state.fipsRosterPeerCount} · other ${state.nonFipsRosterPeerCount}")
         Metric("MagicDNS", state.magicDnsStatus)
         Metric("Version", state.appVersion)
         state.health.forEach { issue ->

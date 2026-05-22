@@ -138,6 +138,7 @@ final class AppModel: ObservableObject {
             state.vpnActive = enabled
             state.vpnStatus = enabled ? "Connected" : "Disconnected"
             state.connectedPeerCount = enabled ? min(state.expectedPeerCount, 3) : 0
+            state.fipsConnectedPeerCount = enabled ? min(state.fipsRosterPeerCount, 3) : 0
             state.rev += 1
             statusMessage = ""
             return
@@ -364,6 +365,9 @@ final class AppModel: ObservableObject {
         result["vpnActive"] = state.vpnActive
         result["connectedPeerCount"] = state.connectedPeerCount
         result["expectedPeerCount"] = state.expectedPeerCount
+        result["fipsConnectedPeerCount"] = state.fipsConnectedPeerCount
+        result["fipsRosterPeerCount"] = state.fipsRosterPeerCount
+        result["nonFipsRosterPeerCount"] = state.nonFipsRosterPeerCount
 
         for (key, value) in await fetchDebugProbe(urlString: urlString) {
             result[key] = value

@@ -22,6 +22,9 @@ struct AppState: Decodable {
     var activeNetworkInvite = ""
     var connectedPeerCount: UInt64 = 0
     var expectedPeerCount: UInt64 = 0
+    var fipsConnectedPeerCount: UInt64 = 0
+    var fipsRosterPeerCount: UInt64 = 0
+    var nonFipsRosterPeerCount: UInt64 = 0
     var meshReady = false
     var exitNode = ""
     var exitNodeLeakProtection = false
@@ -63,7 +66,9 @@ struct AppState: Decodable {
         case rev, error, appVersion, platform, mobile, vpnControlSupported
         case runtimeStatusDetail, vpnEnabled, vpnActive, vpnStatus, daemonRunning
         case ownNpub, nodeName, selfMagicDnsName, tunnelIp, endpoint, listenPort, relays, activeNetworkInvite
-        case connectedPeerCount, expectedPeerCount, meshReady, exitNode, exitNodeLeakProtection
+        case connectedPeerCount, expectedPeerCount
+        case fipsConnectedPeerCount, fipsRosterPeerCount, nonFipsRosterPeerCount
+        case meshReady, exitNode, exitNodeLeakProtection
         case exitNodeActive, exitNodeBlocked, exitNodeStatusText, advertiseExitNode
         case advertisedRoutes
         case wireguardExitEnabled, wireguardExitConfigured, wireguardExitInterface, wireguardExitAddress
@@ -101,6 +106,9 @@ struct AppState: Decodable {
         activeNetworkInvite = container.string(.activeNetworkInvite)
         connectedPeerCount = container.uint64(.connectedPeerCount)
         expectedPeerCount = container.uint64(.expectedPeerCount)
+        fipsConnectedPeerCount = container.uint64(.fipsConnectedPeerCount)
+        fipsRosterPeerCount = container.uint64(.fipsRosterPeerCount)
+        nonFipsRosterPeerCount = container.uint64(.nonFipsRosterPeerCount)
         meshReady = container.bool(.meshReady)
         exitNode = container.string(.exitNode)
         exitNodeLeakProtection = container.bool(.exitNodeLeakProtection)
