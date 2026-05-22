@@ -80,7 +80,7 @@ pub(crate) fn default_fips_advertise_endpoint() -> bool {
 }
 
 pub(crate) fn default_fips_host_tunnel_enabled() -> bool {
-    true
+    cfg!(any(target_os = "linux", target_os = "macos"))
 }
 
 pub(crate) fn default_close_to_tray_on_close() -> bool {

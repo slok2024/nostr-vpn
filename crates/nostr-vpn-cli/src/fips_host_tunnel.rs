@@ -2,27 +2,24 @@ use anyhow::{Context, Result, anyhow};
 use fips_core::config::{
     IdentityConfig, NostrDiscoveryPolicy, RoutingMode, TcpConfig, TransportInstances, UdpConfig,
 };
+use fips_core::host_firewall::{HostFirewallConfig, HostFirewallGuard};
 use fips_core::upper::tun::TunState;
 use fips_core::{Config, Identity, Node};
 use nostr_vpn_core::config::AppConfig;
 use std::fs;
-#[cfg(target_os = "linux")]
-use std::io::Write;
 use std::net::Ipv6Addr;
 use std::path::Path;
 #[cfg(target_os = "linux")]
-use std::process::{Command as ProcessCommand, Stdio};
+use std::process::Command as ProcessCommand;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-#[cfg(any(test, target_os = "linux"))]
-pub(crate) const FIPS_HOST_ROUTE_TARGET: &str = "fd00::/8";
 const FIPS_HOST_IFACE: &str = "nvpnfips0";
 const FIPS_HOST_MTU: u16 = 1280;
 const FIPS_HOST_DNS_BIND_ADDR: &str = "::1";
 const FIPS_HOST_DNS_PORT: u16 = 5354;
-#[cfg(any(test, target_os = "linux"))]
-const NFT_TABLE_NAME: &str = "nvpn_fips_host";
+const HOST_FIREWALL_LINUX_TABLE_NAME: &str = "nvpn_fips_host";
+const HOST_FIREWALL_MACOS_ANCHOR_NAME: &str = "com.apple/to.nostrvpn/fips-host";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FipsHostTunnelConfig {
@@ -39,6 +36,10 @@ pub(crate) struct FipsHostTunnelConfig {
 impl FipsHostTunnelConfig {
     pub(crate) fn from_app(app: &AppConfig) -> Result<Option<Self>> {
         if !app.fips_host_tunnel_enabled {
+            return Ok(None);
+        }
+        if !HostFirewallGuard::platform_available() {
+            eprintln!("fips-host: disabled because no FIPS host firewall is available");
             return Ok(None);
         }
 
@@ -103,7 +104,7 @@ pub(crate) struct FipsHostTunnelRuntime {
     shutdown_tx: Option<oneshot::Sender<()>>,
     node_task: JoinHandle<Result<()>>,
     resolver: Option<SystemResolverGuard>,
-    firewall: Option<LinuxFirewallGuard>,
+    firewall: Option<HostFirewallGuard>,
 }
 
 impl FipsHostTunnelRuntime {
@@ -117,6 +118,15 @@ impl FipsHostTunnelRuntime {
         }
         let iface = node.tun_name().unwrap_or(FIPS_HOST_IFACE).to_string();
 
+        let firewall_config = host_firewall_config(&iface, &config.inbound_tcp_ports);
+        let firewall = match HostFirewallGuard::install(&firewall_config) {
+            Ok(guard) => Some(guard),
+            Err(error) => {
+                let _ = node.stop().await;
+                return Err(error).context("failed to install .fips host firewall");
+            }
+        };
+
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let node_task = spawn_fips_node_task(node, shutdown_rx);
 
@@ -124,13 +134,6 @@ impl FipsHostTunnelRuntime {
             Ok(guard) => guard,
             Err(error) => {
                 eprintln!("fips-host: failed to install .fips resolver: {error}");
-                None
-            }
-        };
-        let firewall = match LinuxFirewallGuard::install(&iface, &config.inbound_tcp_ports) {
-            Ok(guard) => guard,
-            Err(error) => {
-                eprintln!("fips-host: failed to install .fips firewall: {error}");
                 None
             }
         };
@@ -162,8 +165,15 @@ impl FipsHostTunnelRuntime {
 
     pub(crate) fn cleanup_disabled_artifacts() {
         SystemResolverGuard::cleanup_disabled_artifacts();
-        LinuxFirewallGuard::cleanup_disabled_artifacts();
+        HostFirewallGuard::cleanup_disabled_artifacts(&host_firewall_config(FIPS_HOST_IFACE, &[]));
     }
+}
+
+fn host_firewall_config(iface: &str, inbound_tcp_ports: &[u16]) -> HostFirewallConfig {
+    HostFirewallConfig::new(iface)
+        .with_inbound_tcp_ports(inbound_tcp_ports.iter().copied())
+        .with_linux_table_name(HOST_FIREWALL_LINUX_TABLE_NAME)
+        .with_macos_anchor_name(HOST_FIREWALL_MACOS_ANCHOR_NAME)
 }
 
 fn spawn_fips_node_task(
@@ -374,172 +384,21 @@ fn reload_service(service: &str) {
         .status();
 }
 
-struct LinuxFirewallGuard {
-    #[allow(dead_code)]
-    table_name: String,
-}
-
-impl LinuxFirewallGuard {
-    fn install(iface: &str, inbound_tcp_ports: &[u16]) -> Result<Option<Self>> {
-        #[cfg(target_os = "linux")]
-        {
-            if !command_exists("nft") {
-                return Ok(None);
-            }
-            let rules = render_nft_firewall_rules(iface, inbound_tcp_ports);
-            apply_nft_rules(&rules)?;
-            return Ok(Some(Self {
-                table_name: NFT_TABLE_NAME.to_string(),
-            }));
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = (iface, inbound_tcp_ports);
-            Ok(None)
-        }
-    }
-
-    fn cleanup_disabled_artifacts() {
-        #[cfg(target_os = "linux")]
-        {
-            remove_nft_table(NFT_TABLE_NAME);
-        }
-    }
-}
-
-impl Drop for LinuxFirewallGuard {
-    fn drop(&mut self) {
-        #[cfg(target_os = "linux")]
-        {
-            remove_nft_table(&self.table_name);
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn remove_nft_table(table_name: &str) {
-    if !command_exists("nft") {
-        return;
-    }
-    let _ = ProcessCommand::new("nft")
-        .arg("delete")
-        .arg("table")
-        .arg("inet")
-        .arg(table_name)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-#[cfg(any(test, target_os = "linux"))]
-pub(crate) fn render_nft_firewall_rules(iface: &str, inbound_tcp_ports: &[u16]) -> String {
-    let mut ports = inbound_tcp_ports.to_vec();
-    ports.sort_unstable();
-    ports.dedup();
-    let inbound_tcp_rule = match ports.as_slice() {
-        [] => String::new(),
-        [port] => format!("    tcp dport {port} accept\n"),
-        ports => {
-            let joined = ports
-                .iter()
-                .map(u16::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("    tcp dport {{ {joined} }} accept\n")
-        }
-    };
-
-    format!(
-        "table inet {NFT_TABLE_NAME} {{\n\
-           chain input {{\n\
-             type filter hook input priority 0; policy accept;\n\
-             iifname != \"{iface}\" return\n\
-             meta nfproto != ipv6 return\n\
-             ip6 saddr != {FIPS_HOST_ROUTE_TARGET} return\n\
-             ct state established,related accept\n\
-         {inbound_tcp_rule}\
-             counter drop\n\
-           }}\n\
-           chain output {{\n\
-             type filter hook output priority 0; policy accept;\n\
-             oifname != \"{iface}\" return\n\
-             meta nfproto != ipv6 return\n\
-             ip6 daddr != {FIPS_HOST_ROUTE_TARGET} return\n\
-             ct state established,related accept\n\
-             meta l4proto tcp accept\n\
-             counter drop\n\
-           }}\n\
-         }}\n"
-    )
-}
-
-#[cfg(target_os = "linux")]
-fn apply_nft_rules(rules: &str) -> Result<()> {
-    let _ = ProcessCommand::new("nft")
-        .arg("delete")
-        .arg("table")
-        .arg("inet")
-        .arg(NFT_TABLE_NAME)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    let mut child = ProcessCommand::new("nft")
-        .arg("-f")
-        .arg("-")
-        .stdin(Stdio::piped())
-        .spawn()
-        .context("failed to start nft")?;
-    let mut stdin = child.stdin.take().context("failed to open nft stdin")?;
-    stdin
-        .write_all(rules.as_bytes())
-        .context("failed to write nft rules")?;
-    drop(stdin);
-    let status = child.wait().context("failed to wait for nft")?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(anyhow!("nft exited with {status}"))
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn command_exists(command: &str) -> bool {
-    ProcessCommand::new("sh")
-        .arg("-c")
-        .arg(format!("command -v {command} >/dev/null 2>&1"))
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn nft_rules_default_to_outbound_tcp_only() {
-        let rules = render_nft_firewall_rules("nvpn0", &[]);
-        assert!(rules.contains("iifname != \"nvpn0\" return"));
-        assert!(rules.contains("oifname != \"nvpn0\" return"));
-        assert!(rules.contains("ip6 saddr != fd00::/8 return"));
-        assert!(rules.contains("ip6 daddr != fd00::/8 return"));
-        assert!(rules.contains("meta l4proto tcp accept"));
-        assert!(!rules.contains("tcp dport"));
-    }
-
-    #[test]
-    fn nft_rules_allow_configured_inbound_tcp_ports() {
-        let rules = render_nft_firewall_rules("nvpn0", &[443, 22, 22]);
-        assert!(rules.contains("tcp dport { 22, 443 } accept"));
-    }
 
     #[test]
     fn app_config_builds_outbound_only_embedded_node() {
         let mut app = AppConfig::generated();
         app.fips_host_inbound_tcp_ports = vec![443, 22, 22];
 
-        let config = FipsHostTunnelConfig::from_app(&app)
-            .expect("valid fips host config")
-            .expect("enabled by default");
+        let maybe_config = FipsHostTunnelConfig::from_app(&app).expect("valid fips host config");
+        if !HostFirewallGuard::platform_available() {
+            assert!(maybe_config.is_none());
+            return;
+        }
+        let config = maybe_config.expect("enabled when host firewall is available");
         assert_eq!(config.inbound_tcp_ports, vec![22, 443]);
         assert_eq!(
             config.fips_address,
@@ -586,5 +445,15 @@ mod tests {
                 .expect("valid disabled config")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn host_firewall_config_uses_nvpn_artifact_names() {
+        let config = host_firewall_config("utun8", &[443, 22, 22]);
+
+        assert_eq!(config.interface(), "utun8");
+        assert_eq!(config.inbound_tcp_ports(), &[22, 443]);
+        assert_eq!(config.linux_table_name(), HOST_FIREWALL_LINUX_TABLE_NAME);
+        assert_eq!(config.macos_anchor_name(), HOST_FIREWALL_MACOS_ANCHOR_NAME);
     }
 }

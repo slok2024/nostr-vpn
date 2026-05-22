@@ -24,7 +24,10 @@ fn generated_config_auto_populates_keys() {
     assert!(!config.nat.stun_servers.is_empty());
     assert!(config.exit_node.is_empty());
     assert!(config.exit_node_leak_protection);
-    assert!(config.fips_host_tunnel_enabled);
+    assert_eq!(
+        config.fips_host_tunnel_enabled,
+        cfg!(any(target_os = "linux", target_os = "macos"))
+    );
     assert!(config.fips_host_inbound_tcp_ports.is_empty());
     assert!(!config.node.advertise_exit_node);
     assert!(config.node.advertised_routes.is_empty());
