@@ -11,8 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var trayController: TrayController?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
-        singleInstance.onOpen = { [weak self] urls in
-            self?.route(urls: urls, activate: true)
+        singleInstance.onOpen = { [weak self] urls, activate in
+            self?.route(urls: urls, activate: activate)
         }
         if !singleInstance.claimOrNotifyCurrentLaunch() {
             NSApp.terminate(nil)
@@ -123,7 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 final class SingleInstanceCoordinator: NSObject {
     private let notificationName = Notification.Name("to.iris.nvpn.macos.open")
     private var lockFds: [Int32] = []
-    var onOpen: (([URL]) -> Void)?
+    var onOpen: (([URL], Bool) -> Void)?
 
     func claimOrNotifyCurrentLaunch() -> Bool {
         var acquiredFds: [Int32] = []
@@ -144,7 +144,7 @@ final class SingleInstanceCoordinator: NSObject {
         }
 
         if acquiredFds.isEmpty {
-            if Self.activateRunningCopy() {
+            if Self.activateRunningCopy(activate: Self.shouldActivateCurrentLaunch) {
                 notifyCurrentLaunch()
                 return false
             }
@@ -169,14 +169,18 @@ final class SingleInstanceCoordinator: NSObject {
     @objc private func receiveOpenNotification(_ notification: Notification) {
         let urls = (notification.userInfo?["urls"] as? [String] ?? [])
             .compactMap(URL.init(string:))
-        onOpen?(urls)
+        let activate = notification.userInfo?["activate"] as? Bool ?? true
+        onOpen?(urls, activate)
     }
 
     private func notifyCurrentLaunch() {
         DistributedNotificationCenter.default().postNotificationName(
             notificationName,
             object: nil,
-            userInfo: ["urls": Self.startupUrls().map(\.absoluteString)],
+            userInfo: [
+                "urls": Self.startupUrls().map(\.absoluteString),
+                "activate": Self.shouldActivateCurrentLaunch,
+            ],
             deliverImmediately: true
         )
     }
@@ -200,7 +204,7 @@ final class SingleInstanceCoordinator: NSObject {
         }
     }
 
-    private static func activateRunningCopy() -> Bool {
+    private static func activateRunningCopy(activate: Bool) -> Bool {
         let currentPid = getpid()
         guard let app = NSWorkspace.shared.runningApplications.first(where: { app in
             app.processIdentifier != currentPid
@@ -209,7 +213,9 @@ final class SingleInstanceCoordinator: NSObject {
         }) else {
             return false
         }
-        app.activate(options: [.activateAllWindows])
+        if activate {
+            app.activate(options: [.activateAllWindows])
+        }
         return true
     }
 
@@ -220,5 +226,12 @@ final class SingleInstanceCoordinator: NSObject {
             }
             return URL(string: argument)
         }
+    }
+
+    private static var shouldActivateCurrentLaunch: Bool {
+        if !startupUrls().isEmpty {
+            return true
+        }
+        return !CommandLine.arguments.contains("--hidden")
     }
 }

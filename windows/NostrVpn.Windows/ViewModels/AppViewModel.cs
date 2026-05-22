@@ -78,6 +78,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         _core = new AppCoreClient(dataDir, version);
         _autoInstallUpdates = LoadAutoInstallUpdates();
         ApplyState(_core.State(), syncDrafts: true);
+        SyncLaunchOnStartupRegistration();
 
         ShowDevicesCommand = new RelayCommand(_ => Page = AppPage.Devices);
         ShowAddNetworkCommand = new RelayCommand(_ => Page = AppPage.AddNetwork);
@@ -733,6 +734,18 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         return DispatchAsync(
             NativeActions.UpdateSettings(new SettingsPatch { LaunchOnStartup = enabled }),
             "Saving startup");
+    }
+
+    private void SyncLaunchOnStartupRegistration()
+    {
+        try
+        {
+            StartupService.SyncLaunchOnStartup(State.StartupSettingsSupported && State.LaunchOnStartup);
+        }
+        catch (Exception error)
+        {
+            Notice = error.Message;
+        }
     }
 
     public Task SetCloseToTrayAsync(bool enabled)

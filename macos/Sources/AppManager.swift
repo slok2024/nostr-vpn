@@ -144,6 +144,7 @@ final class AppManager: ObservableObject {
         guard !fixtureMode else {
             return
         }
+        syncLaunchAgentWithSettings()
         startAutomaticUpdateChecks()
         guard refreshTask == nil else {
             return
@@ -500,7 +501,7 @@ final class AppManager: ObservableObject {
 
     func setLaunchOnStartup(_ enabled: Bool) {
         do {
-            try configureLaunchAgent(enabled: enabled)
+            try configureLaunchAgent(enabled: enabled, loadCurrentSession: true)
             dispatch(.updateSettings(patch: settingsPatch(launchOnStartup: enabled)), status: "Saving startup option")
         } catch {
             actionStatus = error.localizedDescription
@@ -848,7 +849,18 @@ final class AppManager: ObservableObject {
         }
     }
 
-    private func configureLaunchAgent(enabled: Bool) throws {
+    private func syncLaunchAgentWithSettings() {
+        do {
+            try configureLaunchAgent(
+                enabled: state.startupSettingsSupported && state.launchOnStartup,
+                loadCurrentSession: false
+            )
+        } catch {
+            actionStatus = error.localizedDescription
+        }
+    }
+
+    private func configureLaunchAgent(enabled: Bool, loadCurrentSession: Bool) throws {
         let manager = FileManager.default
         let agentsDir = manager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
@@ -859,9 +871,13 @@ final class AppManager: ObservableObject {
             }
             try manager.createDirectory(at: agentsDir, withIntermediateDirectories: true)
             try launchAgentPlist(executable: executable).write(to: plistUrl, atomically: true, encoding: .utf8)
-            _ = runLaunchctl(["bootstrap", "gui/\(getuid())", plistUrl.path])
+            if loadCurrentSession {
+                _ = runLaunchctl(["bootstrap", "gui/\(getuid())", plistUrl.path])
+            }
         } else {
-            _ = runLaunchctl(["bootout", "gui/\(getuid())", plistUrl.path])
+            if loadCurrentSession {
+                _ = runLaunchctl(["bootout", "gui/\(getuid())", plistUrl.path])
+            }
             if manager.fileExists(atPath: plistUrl.path) {
                 try manager.removeItem(at: plistUrl)
             }
@@ -1543,6 +1559,7 @@ private func launchAgentPlist(executable: String) -> String {
         <key>ProgramArguments</key>
         <array>
             <string>\(xmlEscaped(executable))</string>
+            <string>--hidden</string>
         </array>
         <key>RunAtLoad</key>
         <true/>

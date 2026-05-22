@@ -429,6 +429,7 @@ fn build_ui(app: &adw::Application, runtime: &AppRuntime, present: bool) {
     if model.borrow().tray_available {
         update_tray_application_hold(true, window.application());
     }
+    sync_launch_on_startup_setting(&model);
 
     {
         let model = model.clone();
@@ -538,6 +539,16 @@ fn dispatch(app: &AppRef, action: NativeAppAction) -> NativeAppState {
         start_service_settlement_polling(app);
     }
     result
+}
+
+fn sync_launch_on_startup_setting(app: &AppRef) {
+    let enabled = {
+        let model = app.borrow();
+        model.state.startup_settings_supported && model.state.launch_on_startup
+    };
+    if let Err(error) = configure_launch_on_startup(enabled) {
+        set_notice(app, error);
+    }
 }
 
 fn set_state(app: &AppRef, state: NativeAppState) {
@@ -4131,6 +4142,13 @@ mod tests {
     }
 
     #[test]
+    fn autostart_desktop_entry_launches_gui_hidden() {
+        let entry = autostart_desktop_entry(std::path::Path::new("/opt/Nostr VPN/nostr-vpn"));
+
+        assert!(entry.contains("Exec=/opt/Nostr\\ VPN/nostr-vpn --hidden\n"));
+    }
+
+    #[test]
     fn state_needs_render_ignores_revision_only_refreshes() {
         let previous = NativeAppState {
             rev: 40,
@@ -4643,7 +4661,7 @@ fn autostart_desktop_path() -> Option<PathBuf> {
 
 fn autostart_desktop_entry(executable: &std::path::Path) -> String {
     format!(
-        "[Desktop Entry]\nType=Application\nName=Nostr VPN\nExec={}\nIcon=nostr-vpn\nTerminal=false\nCategories=Network;Security;\nX-GNOME-Autostart-enabled=true\n",
+        "[Desktop Entry]\nType=Application\nName=Nostr VPN\nExec={} --hidden\nIcon=nostr-vpn\nTerminal=false\nCategories=Network;Security;\nX-GNOME-Autostart-enabled=true\n",
         desktop_exec_escape(&executable.to_string_lossy())
     )
 }

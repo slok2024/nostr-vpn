@@ -13,12 +13,17 @@ public static class StartupService
         using var key = Registry.CurrentUser.CreateSubKey(RunKeyPath);
         if (enabled)
         {
-            key.SetValue(AppName, $"\"{Environment.ProcessPath}\"");
+            key.SetValue(AppName, StartupCommand());
         }
         else
         {
             key.DeleteValue(AppName, throwOnMissingValue: false);
         }
+    }
+
+    public static void SyncLaunchOnStartup(bool enabled)
+    {
+        SetLaunchOnStartup(enabled);
     }
 
     public static void RegisterDeepLinkProtocol()
@@ -35,5 +40,15 @@ public static class StartupService
 
         using var command = Registry.CurrentUser.CreateSubKey($@"{ProtocolKeyPath}\shell\open\command");
         command.SetValue("", $"\"{exe}\" \"%1\"");
+    }
+
+    private static string StartupCommand()
+    {
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(exe))
+        {
+            throw new InvalidOperationException("App executable was not found.");
+        }
+        return $"\"{exe}\" --hidden";
     }
 }
