@@ -143,7 +143,7 @@ fn macos_service_activation_enables_before_bootstrap() {
 }
 
 #[test]
-fn service_config_guard_leaves_existing_config_contents_unchanged() {
+fn service_config_guard_preserves_existing_config_identity() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock is after epoch")
@@ -151,18 +151,22 @@ fn service_config_guard_leaves_existing_config_contents_unchanged() {
     let dir = std::env::temp_dir().join(format!("nvpn-service-config-guard-{nonce}"));
     fs::create_dir_all(&dir).expect("create test dir");
     let config_path = dir.join("config.toml");
-    let config = AppConfig {
+    let mut config = AppConfig {
         node_name: "existing-config".to_string(),
         ..AppConfig::default()
     };
+    config.node.endpoint = "8.8.8.8:51820".to_string();
     config.save(&config_path).expect("save config");
-    let before = fs::read_to_string(&config_path).expect("read config before guard");
+    let before = AppConfig::load(&config_path).expect("load config before guard");
 
     crate::service_management::ensure_service_config_exists(&config_path)
         .expect("existing config should validate");
 
-    let after = fs::read_to_string(&config_path).expect("read config after guard");
-    assert_eq!(after, before);
+    let after = AppConfig::load(&config_path).expect("load config after guard");
+    assert_eq!(after.node_name, before.node_name);
+    assert_eq!(after.nostr.public_key, before.nostr.public_key);
+    assert_eq!(after.node.endpoint, before.node.endpoint);
+    assert_eq!(after.networks.len(), before.networks.len());
 
     let _ = fs::remove_dir_all(&dir);
 }

@@ -42,6 +42,9 @@ use crate::config_magic_dns::{
     default_peer_aliases, detected_hostname, normalize_network_entry_id, uniquify_magic_dns_label,
     uniquify_network_entry_id, uses_default_node_name,
 };
+use crate::config_secrets::{
+    SecretPersistence, hydrate_config_secrets, prepare_config_secrets_for_save,
+};
 use crate::fips_control::{PeerEndpointHint, peer_endpoint_hint_addr};
 use crate::network_roster::{
     canonical_npub_key, canonicalize_inbound_join_requests, canonicalize_outbound_join_request,
@@ -892,11 +895,24 @@ impl AppConfig {
         let mut config: AppConfig =
             toml::from_str(&raw).with_context(|| "failed to parse config TOML")?;
         config.apply_load_migrations();
+        hydrate_config_secrets(path, &mut config)?;
         config.ensure_defaults();
         Ok(config)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
+        self.save_with_secret_persistence(path, SecretPersistence::Platform)
+    }
+
+    pub fn save_plaintext(&self, path: &Path) -> Result<()> {
+        self.save_with_secret_persistence(path, SecretPersistence::Plaintext)
+    }
+
+    fn save_with_secret_persistence(
+        &self,
+        path: &Path,
+        persistence: SecretPersistence,
+    ) -> Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
@@ -905,6 +921,7 @@ impl AppConfig {
         let mut to_write = self.clone();
         to_write.ensure_defaults();
         to_write.canonicalize_user_facing_pubkeys();
+        prepare_config_secrets_for_save(path, &mut to_write, persistence)?;
 
         let raw = toml::to_string_pretty(&to_write).with_context(|| "failed to encode TOML")?;
         write_config_file(path, raw.as_bytes())
@@ -1155,12 +1172,7 @@ impl AppConfig {
     }
 
     pub fn active_network_opt(&self) -> Option<&NetworkConfig> {
-        let index = self
-            .networks
-            .iter()
-            .position(|network| network.enabled)
-            .unwrap_or(0);
-        self.networks.get(index)
+        self.networks.iter().find(|network| network.enabled)
     }
 
     pub fn active_network_mut(&mut self) -> &mut NetworkConfig {
@@ -1169,12 +1181,7 @@ impl AppConfig {
     }
 
     pub fn active_network_mut_opt(&mut self) -> Option<&mut NetworkConfig> {
-        let index = self
-            .networks
-            .iter()
-            .position(|network| network.enabled)
-            .unwrap_or(0);
-        self.networks.get_mut(index)
+        self.networks.iter_mut().find(|network| network.enabled)
     }
 
     pub fn network_by_id(&self, network_id: &str) -> Option<&NetworkConfig> {
@@ -1258,12 +1265,6 @@ impl AppConfig {
             return Err(anyhow::anyhow!("network not found"));
         }
 
-        if !self.networks.iter().any(|network| network.enabled)
-            && let Some(first_network) = self.networks.first_mut()
-        {
-            first_network.enabled = true;
-        }
-
         self.normalize_selected_exit_node();
         self.normalize_peer_aliases();
         Ok(())
@@ -1281,12 +1282,6 @@ impl AppConfig {
                 network.enabled = candidate_index == index;
             }
             return Ok(());
-        }
-
-        if self.networks[index].enabled {
-            return Err(anyhow::anyhow!(
-                "activate another network before disabling this one"
-            ));
         }
 
         self.networks[index].enabled = false;
@@ -1690,14 +1685,7 @@ impl AppConfig {
         });
 
         if own_pubkey.is_some() && own_in_previous_roster && !own_in_shared_roster {
-            let was_enabled = self.networks[network_index].enabled;
             self.networks.remove(network_index);
-            if was_enabled
-                && !self.networks.iter().any(|network| network.enabled)
-                && let Some(first) = self.networks.first_mut()
-            {
-                first.enabled = true;
-            }
             self.normalize_selected_exit_node();
             self.normalize_peer_aliases();
             return Ok(true);
@@ -1926,12 +1914,6 @@ impl AppConfig {
             } else {
                 network.enabled = false;
             }
-        }
-
-        if first_active_index.is_none()
-            && let Some(first_network) = self.networks.first_mut()
-        {
-            first_network.enabled = true;
         }
     }
 
@@ -2391,6 +2373,29 @@ mod tests {
     const TEST_WG_PRIVATE_KEY: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
     const TEST_WG_PUBLIC_KEY: &str = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=";
     const TEST_WG_PRESHARED_KEY: &str = "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=";
+
+    #[test]
+    fn save_plaintext_preserves_config_secrets() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "nvpn-save-plaintext-{}-{nonce}.toml",
+            std::process::id()
+        ));
+        let mut config = AppConfig::generated();
+        config.wireguard_exit.private_key = TEST_WG_PRIVATE_KEY.to_string();
+        config.wireguard_exit.peer_public_key = TEST_WG_PUBLIC_KEY.to_string();
+        config.wireguard_exit.peer_preshared_key = TEST_WG_PRESHARED_KEY.to_string();
+
+        config.save_plaintext(&path).expect("save plaintext config");
+        let raw = std::fs::read_to_string(&path).expect("read plaintext config");
+        let _ = std::fs::remove_file(&path);
+
+        assert!(raw.contains(&config.nostr.secret_key));
+        assert!(raw.contains(TEST_WG_PRIVATE_KEY));
+        assert!(raw.contains(TEST_WG_PRESHARED_KEY));
+    }
 
     #[test]
     fn ensure_defaults_keeps_existing_public_identity_without_parsing_secret_key() {

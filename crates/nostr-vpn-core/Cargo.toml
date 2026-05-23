@@ -31,4 +31,7 @@ hostname.workspace = true
 netdev.workspace = true
 socket2.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "2"
+
 [dev-dependencies]

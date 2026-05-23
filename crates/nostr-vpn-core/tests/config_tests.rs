@@ -10,9 +10,19 @@ use nostr_vpn_core::config::{
 
 fn set_default_network_participants(config: &mut AppConfig, participants: Vec<String>) {
     config.ensure_defaults();
+    activate_first_network(config);
     if let Some(network) = config.networks.first_mut() {
         network.participants = participants;
     }
+}
+
+fn activate_first_network(config: &mut AppConfig) {
+    let Some(network_id) = config.networks.first().map(|network| network.id.clone()) else {
+        return;
+    };
+    config
+        .set_network_enabled(&network_id, true)
+        .expect("activate first network");
 }
 
 fn keep_endpoint_autoconfig_off(config: &mut AppConfig) {

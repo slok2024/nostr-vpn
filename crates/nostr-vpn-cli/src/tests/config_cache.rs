@@ -4,6 +4,13 @@ use crate::*;
 use nostr_sdk::prelude::{Keys, ToBech32};
 use nostr_vpn_core::config::{NetworkConfig, PendingOutboundJoinRequest};
 
+fn activate_first_network(config: &mut AppConfig) {
+    let network_id = config.networks[0].id.clone();
+    config
+        .set_network_enabled(&network_id, true)
+        .expect("activate first network");
+}
+
 #[test]
 fn participants_override_targets_the_active_network() {
     let alice = Keys::generate().public_key().to_hex();
@@ -144,6 +151,7 @@ fn shared_roster_publish_allowed_only_for_current_signer() {
 
     let mut config = AppConfig::generated();
     let own_pubkey = config.own_nostr_pubkey_hex().expect("own nostr pubkey");
+    activate_first_network(&mut config);
     let network_id = config.active_network().id.clone();
     config.networks[0].admins = vec![own_pubkey.clone(), other_admin.clone()];
 
@@ -180,6 +188,7 @@ fn active_network_invite_code_roundtrips_current_roster() {
     let admin_hex = Keys::generate().public_key().to_hex();
 
     let mut config = AppConfig::generated();
+    activate_first_network(&mut config);
     config.networks[0].name = "Work".to_string();
     config.networks[0].network_id = "8d4f34f5425bc50e".to_string();
     config.networks[0].participants = vec![participant_hex];
@@ -206,6 +215,7 @@ fn active_network_invite_omits_non_transport_inviter_endpoint() {
     let inviter_hex = Keys::generate().public_key().to_hex();
 
     let mut config = AppConfig::generated();
+    activate_first_network(&mut config);
     config.networks[0].network_id = "8d4f34f5425bc50e".to_string();
     config.networks[0].admins = vec![inviter_hex.clone()];
     config.networks[0].invite_inviter = inviter_hex;

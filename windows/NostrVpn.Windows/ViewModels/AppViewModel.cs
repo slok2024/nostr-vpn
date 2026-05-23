@@ -87,7 +87,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         ShowExitNodesCommand = new RelayCommand(_ => Page = AppPage.ExitNodes);
         ShowSettingsCommand = new RelayCommand(_ => Page = AppPage.Settings);
         RefreshCommand = new AsyncRelayCommand(_ => RefreshAsync(), _ => !ActionInFlight);
-        ToggleVpnCommand = new AsyncRelayCommand(_ => ToggleVpnAsync(), _ => !ActionInFlight && State.VpnControlSupported && HasActiveNetwork);
+        ToggleVpnCommand = new AsyncRelayCommand(_ => ToggleVpnAsync(), _ => !ActionInFlight && State.VpnControlSupported && RuntimeActiveNetwork is not null);
         CopyInviteCommand = new RelayCommand(_ => CopyText(State.ActiveNetworkInvite));
         ResetInviteCommand = new AsyncRelayCommand(_ => ResetInviteAsync(), _ => !ActionInFlight && ActiveNetwork?.LocalIsAdmin == true);
         CopyThisDeviceCommand = new RelayCommand(_ => CopyText(ThisDeviceCopyValue), _ => !string.IsNullOrWhiteSpace(ThisDeviceCopyValue));
@@ -446,10 +446,11 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         private set => SetField(ref _inviteQr, value);
     }
 
-    private NativeNetworkState? RuntimeActiveNetwork => State.Networks.FirstOrDefault(network => network.Enabled) ?? State.Networks.FirstOrDefault();
+    private NativeNetworkState? RuntimeActiveNetwork => State.Networks.FirstOrDefault(network => network.Enabled);
     public NativeNetworkState? ActiveNetwork =>
         State.Networks.FirstOrDefault(network => network.Id == _shownNetworkId)
-        ?? RuntimeActiveNetwork;
+        ?? RuntimeActiveNetwork
+        ?? State.Networks.FirstOrDefault();
     public bool HasActiveNetwork => ActiveNetwork is not null;
     public string OfferExitNodeLabel
     {

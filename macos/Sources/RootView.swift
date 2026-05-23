@@ -51,7 +51,7 @@ struct RootView: View {
            let network = state.networks.first(where: { $0.id == shownNetworkId }) {
             return network
         }
-        return activeNetwork
+        return activeNetwork ?? state.networks.first
     }
 
     private var incomingJoinRequestCount: Int {

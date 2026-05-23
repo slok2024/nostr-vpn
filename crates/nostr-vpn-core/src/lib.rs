@@ -1,6 +1,7 @@
 pub mod config;
 mod config_defaults;
 mod config_magic_dns;
+mod config_secrets;
 pub mod control;
 pub mod data_plane;
 pub mod diagnostics;

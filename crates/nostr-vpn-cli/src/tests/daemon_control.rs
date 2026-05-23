@@ -6,6 +6,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use super::control_daemon_request_for_test;
 use crate::*;
 
+fn activate_first_network(config: &mut AppConfig) {
+    let network_id = config.networks[0].id.clone();
+    config
+        .set_network_enabled(&network_id, true)
+        .expect("activate first network");
+}
+
 #[test]
 fn daemon_runtime_state_requires_advertised_routes() {
     let raw = r#"{
@@ -299,6 +306,7 @@ fn persist_daemon_runtime_state_marks_vpn_on_as_active() {
 #[test]
 fn fips_runtime_state_is_ready_without_waiting_for_every_peer() {
     let mut config = AppConfig::generated();
+    activate_first_network(&mut config);
     config.networks[0].participants = vec!["11".repeat(32), "22".repeat(32)];
     let tunnel_runtime = crate::CliTunnelRuntime::new("utun100");
 
@@ -325,6 +333,7 @@ fn fips_runtime_state_is_ready_without_waiting_for_every_peer() {
 #[test]
 fn fips_runtime_state_counts_direct_roster_and_other_peers() {
     let mut config = AppConfig::generated();
+    activate_first_network(&mut config);
     let roster_peer = "11".repeat(32);
     let routed_roster_peer = "22".repeat(32);
     let other_peer = "33".repeat(32);
@@ -402,6 +411,7 @@ fn fips_runtime_state_counts_direct_roster_and_other_peers() {
 #[test]
 fn daemon_runtime_state_marks_peers_unreachable_when_vpn_is_off() {
     let mut config = AppConfig::generated();
+    activate_first_network(&mut config);
     let peer_pubkey = "11".repeat(32);
     config.networks[0].participants = vec![peer_pubkey.clone()];
     let tunnel_runtime = crate::CliTunnelRuntime::new("utun100");
@@ -806,6 +816,7 @@ fn visible_daemon_state_for_status_hides_state_when_stopped() {
 #[test]
 fn daemon_reload_config_uses_reloaded_network_id() {
     let mut app = AppConfig::generated();
+    activate_first_network(&mut app);
     app.set_active_network_id("mesh-home")
         .expect("set initial network id");
     app.networks[0].participants = vec!["11".repeat(32)];
@@ -917,6 +928,7 @@ fn apply_config_file_writes_target_config() {
     let source = dir.join("source.toml");
     let target = dir.join("target.toml");
     let mut config = AppConfig::generated();
+    activate_first_network(&mut config);
     config.node_name = "windows-box".to_string();
     config.networks[0].participants = vec!["ab".repeat(32)];
     config.save(&source).expect("save source config");

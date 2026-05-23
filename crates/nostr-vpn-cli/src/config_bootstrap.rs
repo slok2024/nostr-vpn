@@ -316,6 +316,14 @@ pub(crate) fn apply_participants_override(
     normalized.dedup();
     let pending_exit_node = normalize_nostr_pubkey(&config.exit_node).ok();
     config.ensure_defaults();
+    if config.active_network_opt().is_none() {
+        let network_id = config
+            .networks
+            .first()
+            .map(|network| network.id.clone())
+            .unwrap_or_else(|| config.add_network(""));
+        config.set_network_enabled(&network_id, true)?;
+    }
     config.active_network_mut().participants = normalized.clone();
     if let Some(exit_node) = pending_exit_node
         && normalized

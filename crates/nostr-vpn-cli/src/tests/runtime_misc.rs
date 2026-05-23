@@ -27,6 +27,21 @@ fn daemon_vpn_idle_status_distinguishes_waiting_from_paused() {
     assert_eq!(daemon_vpn_idle_status(true, 2, false), "Paused");
 }
 
+#[test]
+fn fips_private_runtime_active_tolerates_no_active_network() {
+    let mut app = AppConfig::generated();
+    app.fips_host_tunnel_enabled = false;
+    for network in &mut app.networks {
+        network.listen_for_join_requests = false;
+    }
+
+    assert!(app.active_network_opt().is_none());
+    assert!(!fips_private_runtime_active(&app, true, 0));
+
+    app.networks[0].listen_for_join_requests = true;
+    assert!(fips_private_runtime_active(&app, false, 0));
+}
+
 #[cfg(feature = "embedded-fips")]
 #[test]
 fn fips_roster_publish_attempts_disconnected_recipients() {
@@ -160,6 +175,9 @@ fn endpoint_hint_recipients_are_active_participants_only() {
     let peer_pubkey = peer.public_key().to_hex();
     let admin_pubkey = admin.public_key().to_hex();
     let mut app = AppConfig::generated();
+    let network_id = app.networks[0].id.clone();
+    app.set_network_enabled(&network_id, true)
+        .expect("activate first network");
     app.nostr.secret_key = own.secret_key().to_bech32().expect("own nsec");
     app.nostr.public_key = own_pubkey.clone();
     app.networks[0].participants = vec![own_pubkey.clone(), peer_pubkey.clone()];

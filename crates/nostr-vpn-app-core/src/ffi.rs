@@ -1719,10 +1719,114 @@ impl NativeAppRuntime {
         Ok(())
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn save_config(&mut self) -> Result<()> {
         self.config.ensure_defaults();
         maybe_autoconfigure_node(&mut self.config);
         self.config.save(&self.config_path)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn save_config(&mut self) -> Result<()> {
+        self.config.ensure_defaults();
+        maybe_autoconfigure_node(&mut self.config);
+
+        if self.service_installed || self.service_running || self.daemon_running {
+            return self.save_config_via_macos_service();
+        }
+
+        self.config.save(&self.config_path)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn save_config_via_macos_service(&mut self) -> Result<()> {
+        let source_path = self.write_plaintext_config_apply_source()?;
+        let result = self.apply_macos_config_source(&source_path);
+        let remove_result = fs::remove_file(&source_path)
+            .with_context(|| format!("failed to remove {}", source_path.display()));
+
+        match (result, remove_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Ok(()), Err(error)) | (Err(error), _) => Err(error),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn apply_macos_config_source(&mut self, source_path: &Path) -> Result<()> {
+        let source_arg = source_path
+            .to_str()
+            .ok_or_else(|| anyhow!("config apply source path is not valid UTF-8"))?;
+        let config_arg = self.config_path_str()?;
+        let daemon_result = self
+            .run_nvpn([
+                "apply-config-daemon",
+                "--source",
+                source_arg,
+                "--config",
+                config_arg,
+            ])
+            .and_then(|output| ensure_success("nvpn apply-config-daemon", &output));
+
+        if daemon_result.is_ok() {
+            return Ok(());
+        }
+
+        if self.service_installed || self.service_running {
+            let daemon_error = daemon_result.err().map_or_else(
+                || "daemon apply failed".to_string(),
+                |error| format!("{error:#}"),
+            );
+            let output = self.run_nvpn_service_action_with_macos_admin([
+                "apply-config",
+                "--source",
+                source_arg,
+                "--config",
+                config_arg,
+            ])?;
+            ensure_success("nvpn apply-config", &output)
+                .with_context(|| format!("daemon config apply failed first: {daemon_error}"))?;
+            return Ok(());
+        }
+
+        self.config.save(&self.config_path)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn write_plaintext_config_apply_source(&self) -> Result<PathBuf> {
+        let parent = self
+            .config_path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+
+        let file_name = self
+            .config_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("config.toml");
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+
+        for attempt in 0..128u32 {
+            let candidate = parent.join(format!(
+                ".{file_name}.apply-{}-{nonce}-{attempt}.toml",
+                std::process::id()
+            ));
+            if candidate.exists() {
+                continue;
+            }
+            self.config
+                .save_plaintext(&candidate)
+                .with_context(|| format!("failed to write {}", candidate.display()))?;
+            return Ok(candidate);
+        }
+
+        Err(anyhow!(
+            "failed to allocate a unique config apply source file"
+        ))
     }
 
     fn reload_config_from_disk(&mut self) -> Result<()> {
@@ -2371,11 +2475,7 @@ fn active_network_fips_peer_stats(
     networks: &[NativeNetworkState],
     own_pubkey_hex: &str,
 ) -> FipsPeerStats {
-    let Some(network) = networks
-        .iter()
-        .find(|network| network.enabled)
-        .or_else(|| networks.first())
-    else {
+    let Some(network) = networks.iter().find(|network| network.enabled) else {
         return FipsPeerStats::default();
     };
 

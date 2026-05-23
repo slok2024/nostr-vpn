@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn legacy_prefixed_network_ids_are_normalized_at_runtime() {
     let mut config = AppConfig::generated();
+    activate_first_network(&mut config);
     config.networks[0].network_id = "nostr-vpn:1234abcd5678ef90".to_string();
 
     config.ensure_defaults();
@@ -119,9 +120,9 @@ fn generated_network_id_is_random_not_legacy_placeholder() {
 
     maybe_autoconfigure_node(&mut config);
 
-    assert_generated_network_id(&config.effective_network_id());
-    assert_generated_network_id(&second.effective_network_id());
-    assert_ne!(config.effective_network_id(), second.effective_network_id());
+    assert_generated_network_id(&config.networks[0].network_id);
+    assert_generated_network_id(&second.networks[0].network_id);
+    assert_ne!(config.networks[0].network_id, second.networks[0].network_id);
 }
 
 #[test]
@@ -592,22 +593,18 @@ fn removing_the_last_network_leaves_setup_empty() {
 }
 
 #[test]
-fn cannot_disable_the_last_active_network() {
+fn can_disable_the_last_active_network() {
     let mut config = AppConfig::generated();
+    activate_first_network(&mut config);
     let active_id = config.networks[0].id.clone();
 
-    let error = config
+    config
         .set_network_enabled(&active_id, false)
-        .expect_err("last active network should stay active");
+        .expect("last active network can be disabled");
 
-    assert!(error.to_string().contains("activate another network"));
-    assert_eq!(config.enabled_network_count(), 1);
-    assert!(
-        config
-            .network_by_id(&active_id)
-            .expect("active network")
-            .enabled
-    );
+    assert_eq!(config.enabled_network_count(), 0);
+    assert!(config.active_network_opt().is_none());
+    assert!(!config.network_by_id(&active_id).expect("network").enabled);
 }
 
 #[test]
@@ -622,11 +619,11 @@ fn added_networks_start_inactive_with_their_own_mesh_slot() {
 
     let added_id = config.add_network("Work");
 
-    assert_eq!(config.enabled_network_count(), 1);
+    assert_eq!(config.enabled_network_count(), 0);
     assert!(
-        config
+        !config
             .network_by_id(&original_active_id)
-            .expect("original active network")
+            .expect("original network")
             .enabled
     );
 
@@ -634,6 +631,22 @@ fn added_networks_start_inactive_with_their_own_mesh_slot() {
     assert!(!added.enabled);
     assert_generated_network_id(&added.network_id);
     assert_ne!(added.network_id, original_network_id);
+}
+
+#[test]
+fn adding_first_network_to_empty_config_makes_it_active() {
+    let mut config = AppConfig::generated_without_networks();
+
+    let added_id = config.add_network("Home");
+
+    assert_eq!(config.enabled_network_count(), 1);
+    assert!(
+        config
+            .network_by_id(&added_id)
+            .expect("added network")
+            .enabled
+    );
+    assert_eq!(config.active_network().id, added_id);
 }
 
 #[test]
@@ -656,6 +669,7 @@ fn explicit_network_id_is_preserved() {
 #[test]
 fn set_network_mesh_id_updates_the_selected_network() {
     let mut config = AppConfig::generated();
+    activate_first_network(&mut config);
     let original_active_id = config.networks[0].id.clone();
     let original_network_id = config
         .network_by_id(&original_active_id)
@@ -716,6 +730,7 @@ fn switching_active_network_swaps_participant_roster() {
     let work_peer_npub = work_peer_keys.public_key().to_bech32().expect("npub");
 
     let mut config = AppConfig::generated();
+    activate_first_network(&mut config);
     let home_id = config.networks[0].id.clone();
     config
         .add_participant_to_network(&home_id, &home_peer_npub)
@@ -726,7 +741,7 @@ fn switching_active_network_swaps_participant_roster() {
         .add_participant_to_network(&work_id, &work_peer_npub)
         .expect("work peer added");
 
-    // Home is active by default.
+    // Home is active after explicit activation.
     assert!(
         config.participant_pubkeys_hex().contains(&home_peer_hex),
         "active roster should expose the home peer while home is active"
@@ -767,6 +782,7 @@ fn switching_active_network_swaps_admin_roster_and_mesh_id() {
     let admin1 = Keys::generate();
     let admin2 = Keys::generate();
     let mut config = AppConfig::generated();
+    activate_first_network(&mut config);
     let home_id = config.networks[0].id.clone();
     config.networks[0].network_id = "mesh-home".to_string();
     config

@@ -132,7 +132,7 @@ The config contains:
 - Nostr settings used by [FIPS] discovery, including relay URLs and identity keys
 - NAT settings including STUN servers and discovery timeout
 - node settings including endpoint, tunnel IP, listen port, and advertised routes
-- a `[[networks]]` list of named participant sets with one active network at a time
+- a `[[networks]]` list of named participant sets with at most one active network at a time
 
 Each `[[networks]]` entry carries its own `network_id`, which is the mesh identity used for roster scope and auto-derived tunnel addressing. If an older config still only has the legacy top-level default, `nostr-vpn` promotes it into per-network stable IDs and then stops recomputing them on participant changes.
 

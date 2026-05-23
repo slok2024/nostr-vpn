@@ -4219,6 +4219,7 @@ mod tests {
 
         let mut app = AppConfig::default();
         app.nostr.secret_key = alice_nsec;
+        app.networks[0].enabled = true;
         app.networks[0].network_id = network_id.to_string();
         app.networks[0].participants = vec![
             alice_pubkey.clone(),
@@ -4873,6 +4874,7 @@ mod tests {
 
         let mut app = AppConfig::default();
         app.nostr.secret_key = alice_nsec;
+        app.networks[0].enabled = true;
         app.networks[0].network_id = network_id.to_string();
         app.networks[0].participants = vec![alice_pubkey.clone(), bob_pubkey.clone()];
         app.networks[0].admins = vec![admin_pubkey.clone()];
@@ -4927,6 +4929,7 @@ mod tests {
 
         let mut app = AppConfig::default();
         app.nostr.secret_key = alice_nsec;
+        app.networks[0].enabled = true;
         app.networks[0].network_id = network_id.to_string();
         app.networks[0].participants = Vec::new();
         app.networks[0].admins = vec![admin_pubkey.clone()];
@@ -4975,6 +4978,7 @@ mod tests {
 
         let mut app = AppConfig::default();
         app.nostr.secret_key = alice_nsec;
+        app.networks[0].enabled = true;
         app.networks[0].network_id = network_id.to_string();
         app.networks[0].participants = vec![alice_pubkey.clone(), bob_pubkey.clone()];
 
@@ -5026,6 +5030,7 @@ mod tests {
 
         let mut app = AppConfig::default();
         app.nostr.secret_key = alice_nsec;
+        app.networks[0].enabled = true;
         app.networks[0].network_id = network_id.to_string();
         app.networks[0].participants = vec![alice_pubkey.clone(), bob_pubkey.clone()];
         app.fips_peer_endpoints.insert(

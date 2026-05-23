@@ -100,7 +100,7 @@ pub(crate) fn default_close_to_tray_on_close() -> bool {
 }
 
 pub(crate) fn default_network_enabled() -> bool {
-    true
+    false
 }
 
 pub(crate) fn default_listen_for_join_requests() -> bool {

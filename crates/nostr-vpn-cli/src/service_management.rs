@@ -98,7 +98,10 @@ pub(crate) fn ensure_service_config_exists(config_path: &Path) -> Result<()> {
         .try_exists()
         .with_context(|| format!("failed to inspect config {}", config_path.display()))?
     {
-        AppConfig::load(config_path)?;
+        let mut config = AppConfig::load(config_path)?;
+        config.ensure_defaults();
+        maybe_autoconfigure_node(&mut config);
+        config.save(config_path)?;
         repair_service_config_ownership(config_path)?;
         return Ok(());
     }

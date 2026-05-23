@@ -62,7 +62,7 @@ struct AppState: Decodable {
     var health: [HealthIssue] = []
 
     var activeNetwork: NetworkState? {
-        networks.first(where: { $0.enabled }) ?? networks.first
+        networks.first(where: { $0.enabled })
     }
 
     enum CodingKeys: String, CodingKey {

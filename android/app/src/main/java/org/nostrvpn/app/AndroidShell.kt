@@ -112,7 +112,9 @@ internal fun NostrVpnApp(
     var pendingNetworkRemoval by remember { mutableStateOf<NetworkState?>(null) }
     var shownNetworkId by remember { mutableStateOf<String?>(null) }
     val activeNetwork = state.activeNetwork
-    val network = state.networks.firstOrNull { it.id == shownNetworkId } ?: activeNetwork
+    val network = state.networks.firstOrNull { it.id == shownNetworkId }
+        ?: activeNetwork
+        ?: state.networks.firstOrNull()
     val hasIncomingJoinRequests = state.networks.any { it.inboundJoinRequests.isNotEmpty() }
     LaunchedEffect(showAddDevice, network?.enabled) {
         if (showAddDevice && network?.enabled != true) {
@@ -125,6 +127,7 @@ internal fun NostrVpnApp(
             MobileTopBar(
                 state = state,
                 network = network,
+                activeNetwork = activeNetwork,
                 dispatch = dispatch,
                 onSelectNetwork = { shownNetworkId = it },
                 onAddNetwork = { showAddNetwork = true },
@@ -231,6 +234,7 @@ internal fun NostrVpnApp(
 private fun MobileTopBar(
     state: AppState,
     network: NetworkState?,
+    activeNetwork: NetworkState?,
     dispatch: (JSONObject) -> Unit,
     onSelectNetwork: (String) -> Unit,
     onAddNetwork: () -> Unit,
@@ -297,7 +301,7 @@ private fun MobileTopBar(
         }
         Switch(
             checked = state.vpnEnabled,
-            enabled = state.vpnControlSupported && network != null,
+            enabled = state.vpnControlSupported && activeNetwork != null,
             onCheckedChange = { enabled ->
                 dispatch(
                     if (enabled) {

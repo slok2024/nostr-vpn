@@ -99,9 +99,9 @@
     return peers;
   }
 
-  $: activeNetwork = state ? state.networks.find((network) => network.enabled) ?? state.networks[0] ?? null : null;
+  $: activeNetwork = state ? state.networks.find((network) => network.enabled) ?? null : null;
   $: shownNetwork = state
-    ? state.networks.find((network) => network.id === shownNetworkId) ?? activeNetwork
+    ? state.networks.find((network) => network.id === shownNetworkId) ?? activeNetwork ?? state.networks[0] ?? null
     : null;
   $: incomingJoinRequestCount = state
     ? state.networks.reduce((count, network) => count + network.inboundJoinRequests.length, 0)

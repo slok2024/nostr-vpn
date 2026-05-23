@@ -1130,7 +1130,11 @@ async fn run_command(command: Command) -> Result<()> {
                 app.autoconnect = value;
             }
             if let Some(value) = args.join_requests_enabled {
-                let network_id = app.active_network().id.clone();
+                let network_id = app
+                    .active_network_opt()
+                    .ok_or_else(|| anyhow!("activate a network before changing join requests"))?
+                    .id
+                    .clone();
                 app.set_network_join_requests_enabled(&network_id, value)?;
             }
             if let Some(value) = args.fips_advertise_endpoint {
@@ -2502,9 +2506,8 @@ fn fips_private_runtime_active(app: &AppConfig, vpn_enabled: bool, expected_peer
         || fips_host_runtime_active(app, vpn_enabled)
         || app.join_requests_enabled()
         || app
-            .active_network()
-            .outbound_join_request
-            .as_ref()
+            .active_network_opt()
+            .and_then(|network| network.outbound_join_request.as_ref())
             .is_some()
         || app.has_fips_static_peer_endpoints()
 }
@@ -2826,7 +2829,9 @@ async fn send_pending_fips_join_requests(
     sent_cache: &mut HashMap<String, u64>,
     now: u64,
 ) -> Result<usize> {
-    let network = app.active_network();
+    let Some(network) = app.active_network_opt() else {
+        return Ok(0);
+    };
     let Some(pending) = network.outbound_join_request.as_ref() else {
         return Ok(0);
     };
@@ -2862,7 +2867,9 @@ async fn send_pending_fips_join_requests(
 }
 
 fn pending_fips_join_request_recipients(app: &AppConfig) -> Vec<String> {
-    let network = app.active_network();
+    let Some(network) = app.active_network_opt() else {
+        return Vec::new();
+    };
     let Some(pending) = network.outbound_join_request.as_ref() else {
         return Vec::new();
     };
@@ -2896,7 +2903,9 @@ async fn broadcast_local_fips_capabilities(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
 ) -> Result<usize> {
-    let network = app.active_network();
+    let Some(network) = app.active_network_opt() else {
+        return Ok(0);
+    };
     let advertised_routes = runtime_effective_advertised_routes(app);
     let local_ipv4_candidates =
         runtime_signal_ipv4_candidates(detect_runtime_primary_ipv4(), &app.node.tunnel_ip);
@@ -3085,7 +3094,9 @@ async fn publish_fips_active_network_roster_to(
     extra_recipients: &[String],
     pending_recipients: &mut HashSet<String>,
 ) -> Result<usize> {
-    let network = app.active_network();
+    let Some(network) = app.active_network_opt() else {
+        return Ok(0);
+    };
     let own_pubkey = match app.own_nostr_pubkey_hex() {
         Ok(pubkey) => pubkey,
         Err(_) => return Ok(0),

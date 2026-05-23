@@ -33,6 +33,9 @@ fn generated_config_auto_populates_keys() {
     assert!(!config.node.advertise_exit_node);
     assert!(config.node.advertised_routes.is_empty());
     assert!(config.effective_advertised_routes().is_empty());
+    assert_eq!(config.enabled_network_count(), 0);
+    assert!(!config.networks[0].enabled);
+    assert!(config.effective_network_id().is_empty());
     assert_eq!(config.networks[0].network_id.len(), 8);
     assert!(
         config.networks[0]
@@ -333,7 +336,8 @@ fn join_requests_enabled_is_true_when_any_network_listens() {
 
 #[test]
 fn generated_network_defaults_local_identity_to_admin() {
-    let config = AppConfig::generated();
+    let mut config = AppConfig::generated();
+    activate_first_network(&mut config);
     let own_pubkey = config.own_nostr_pubkey_hex().expect("own pubkey");
 
     assert_eq!(config.active_network_admin_pubkeys_hex(), vec![own_pubkey]);

@@ -15,7 +15,7 @@ struct RootView: View {
            let network = model.state.networks.first(where: { $0.id == shownNetworkId }) {
             return network
         }
-        return model.activeNetwork
+        return model.activeNetwork ?? model.state.networks.first
     }
 
     private var incomingJoinRequestCount: Int {
@@ -26,7 +26,7 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if model.activeNetwork == nil {
+            if model.state.networks.isEmpty {
                 NavigationStack {
                     AddNetworkPage(
                         model: model,

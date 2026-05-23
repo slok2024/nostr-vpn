@@ -130,7 +130,7 @@ data class HealthIssue(
 )
 
 val AppState.activeNetwork: NetworkState?
-    get() = networks.firstOrNull { it.enabled } ?: networks.firstOrNull()
+    get() = networks.firstOrNull { it.enabled }
 
 fun parseAppState(jsonText: String): AppState {
     val json = JSONObject(jsonText.ifBlank { "{}" })

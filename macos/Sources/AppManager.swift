@@ -96,7 +96,7 @@ final class AppManager: ObservableObject {
     }
 
     var activeNetwork: NativeNetworkState? {
-        state.networks.first(where: { $0.enabled }) ?? state.networks.first
+        state.networks.first(where: { $0.enabled })
     }
 
     var inactiveNetworks: [NativeNetworkState] {
