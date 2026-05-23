@@ -15,7 +15,7 @@ All notable changes to this project are documented in this file.
   and every platform has a "Use bootstrap servers" master toggle (default on).
 - Embedded `.fips` host tunnel: `.fips` hosts now route through a fips-core TUN
   with the fips-core host firewall instead of the legacy path.
-- Import WireGuard configuration files directly from the web and Android apps.
+- Import WireGuard configuration files directly from the apps on every platform.
 - Manual network join in the web UI for joining a network by id without an
   invite, with full device id and grouped network id display.
 - Outbound TCP transport so bootstrap/transit peers advertised on `tcp:443` can
