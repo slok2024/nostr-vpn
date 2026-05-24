@@ -1256,13 +1256,7 @@ impl FipsPrivateMeshRuntime {
                 addresses: peer
                     .addresses
                     .iter()
-                    .map(|hint| {
-                        let mut addr = PeerAddress::new("udp", hint.addr.clone());
-                        if let Some(seen_at_ms) = hint.seen_at_ms {
-                            addr = addr.with_seen_at_ms(seen_at_ms);
-                        }
-                        addr
-                    })
+                    .map(fips_peer_address_from_hint)
                     .collect(),
                 connect_policy: ConnectPolicy::AutoConnect,
                 auto_reconnect: true,
@@ -1333,6 +1327,15 @@ pub(crate) struct FipsEndpointPeerTransportConfig {
     pub(crate) npub: String,
     pub(crate) addresses: Vec<FipsPeerAddressHint>,
     pub(crate) discovery_fallback_transit: bool,
+}
+
+fn fips_peer_address_from_hint(hint: &FipsPeerAddressHint) -> PeerAddress {
+    let (transport, addr) = split_peer_transport_addr(&hint.addr);
+    let mut peer_address = PeerAddress::new(transport, addr);
+    if let Some(seen_at_ms) = hint.seen_at_ms {
+        peer_address = peer_address.with_seen_at_ms(seen_at_ms);
+    }
+    peer_address
 }
 
 fn fips_endpoint_config(
@@ -1445,14 +1448,7 @@ fn fips_endpoint_config(
             addresses: peer
                 .addresses
                 .iter()
-                .map(|hint| {
-                    let (transport, addr) = split_peer_transport_addr(&hint.addr);
-                    let mut addr = PeerAddress::new(transport, addr);
-                    if let Some(seen_at_ms) = hint.seen_at_ms {
-                        addr = addr.with_seen_at_ms(seen_at_ms);
-                    }
-                    addr
-                })
+                .map(fips_peer_address_from_hint)
                 .collect(),
             connect_policy: ConnectPolicy::AutoConnect,
             auto_reconnect: true,
@@ -3703,12 +3699,13 @@ mod tests {
         FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS, FIPS_LAN_DISCOVERY_SCOPE_PREFIX,
         FIPS_MESH_EVENT_DRAIN_LIMIT, FIPS_NOSTR_DISCOVERY_APP, FIPS_NOSTR_FAILURE_STREAK_THRESHOLD,
         FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING, FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS,
-        FipsEndpointTransportConfig, FipsPrivateMeshEvent, FipsPrivateMeshRuntime,
-        FipsPrivateTunnelConfig, control_frame_destination_npub, control_frame_source_pubkey,
-        drain_event_batch, fips_endpoint_config, fips_endpoint_peers_from_mesh,
-        fips_lan_discovery_scope, linux_cap_eff_has_net_admin, linux_tun_setup_error,
-        other_endpoint_peer_statuses, parse_fips_nostr_discovery_policy, strip_cidr,
-        tag_authenticated_transport_addr, unix_timestamp,
+        FipsEndpointTransportConfig, FipsPeerAddressHint, FipsPrivateMeshEvent,
+        FipsPrivateMeshRuntime, FipsPrivateTunnelConfig, control_frame_destination_npub,
+        control_frame_source_pubkey, drain_event_batch, fips_endpoint_config,
+        fips_endpoint_peers_from_mesh, fips_lan_discovery_scope, fips_peer_address_from_hint,
+        linux_cap_eff_has_net_admin, linux_tun_setup_error, other_endpoint_peer_statuses,
+        parse_fips_nostr_discovery_policy, strip_cidr, tag_authenticated_transport_addr,
+        unix_timestamp,
     };
     use fips_endpoint::{
         Config, ConnectPolicy, FipsEndpointPeer, NostrDiscoveryPolicy,
@@ -3768,6 +3765,24 @@ mod tests {
             tag_authenticated_transport_addr(Some("tcp:203.0.113.20:443".to_string()), None),
             Some("tcp:203.0.113.20:443".to_string())
         );
+    }
+
+    #[test]
+    fn fips_peer_address_hint_splits_transport_tags_for_live_updates() {
+        let tcp = fips_peer_address_from_hint(&FipsPeerAddressHint {
+            addr: "tcp:203.0.113.20:443".to_string(),
+            seen_at_ms: Some(123_000),
+        });
+        assert_eq!(tcp.transport, "tcp");
+        assert_eq!(tcp.addr, "203.0.113.20:443");
+        assert_eq!(tcp.seen_at_ms, Some(123_000));
+
+        let udp = fips_peer_address_from_hint(&FipsPeerAddressHint {
+            addr: "udp:203.0.113.21:2121".to_string(),
+            seen_at_ms: None,
+        });
+        assert_eq!(udp.transport, "udp");
+        assert_eq!(udp.addr, "203.0.113.21:2121");
     }
 
     #[test]
