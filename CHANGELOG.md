@@ -25,6 +25,12 @@ All notable changes to this project are documented in this file.
 - App update checks on macOS, Linux, Windows, Android, and the CLI now check
   the htree release manifest before falling back to GitHub, keeping htree-first
   releases discoverable without waiting on GitHub.
+- FIPS endpoint state now restarts or refreshes after sleep/wake, network
+  changes, endpoint changes, and macOS underlay route repairs so peers
+  reconnect cleanly after a machine wakes.
+- macOS desktop refreshes now avoid overlapping background service status
+  checks and fall back to the live daemon version while the service is running,
+  reducing UI churn around service-update prompts.
 - macOS config secrets now use private per-config sidecar files instead of the
   System Keychain, avoiding repeated administrator prompts.
 - Mobile tunnel launch configs redact persisted secret markers before crossing
