@@ -2457,18 +2457,41 @@ mod tests {
         config.save_plaintext(&path).expect("save plaintext config");
         let raw = std::fs::read_to_string(&path).expect("read plaintext config");
         let loaded = AppConfig::load(&path).expect("load protected config");
-        AppConfig::delete_persisted_secrets_for_path(&path).expect("delete persisted secrets");
-        let _ = std::fs::remove_file(&path);
 
         assert!(!raw.contains(&config.nostr.secret_key));
         assert!(!raw.contains(TEST_WG_PRIVATE_KEY));
         assert!(!raw.contains(TEST_WG_PRESHARED_KEY));
+        #[cfg(target_os = "macos")]
+        {
+            assert!(raw.contains("stored-in-private-secret-file"));
+            let file_name = path.file_name().and_then(|value| value.to_str()).unwrap();
+            let parent = path.parent().unwrap();
+            assert!(
+                parent
+                    .join(format!(".{file_name}.nostr-secret-key.secret"))
+                    .exists()
+            );
+            assert!(
+                parent
+                    .join(format!(".{file_name}.wireguard-exit-private-key.secret"))
+                    .exists()
+            );
+            assert!(
+                parent
+                    .join(format!(
+                        ".{file_name}.wireguard-exit-peer-preshared-key.secret"
+                    ))
+                    .exists()
+            );
+        }
         assert_eq!(loaded.nostr.secret_key, config.nostr.secret_key);
         assert_eq!(loaded.wireguard_exit.private_key, TEST_WG_PRIVATE_KEY);
         assert_eq!(
             loaded.wireguard_exit.peer_preshared_key,
             TEST_WG_PRESHARED_KEY
         );
+        AppConfig::delete_persisted_secrets_for_path(&path).expect("delete persisted secrets");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
@@ -2510,6 +2533,28 @@ mod tests {
             loaded.wireguard_exit.peer_preshared_key,
             TEST_WG_PRESHARED_KEY
         );
+    }
+
+    #[test]
+    fn save_rejects_unsupported_secret_markers() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "nvpn-unsupported-secret-marker-{}-{nonce}.toml",
+            std::process::id()
+        ));
+        let mut config = AppConfig::generated();
+        config.nostr.secret_key = "stored-in-macos-keychain".to_string();
+
+        let error = config.save(&path).expect_err("unsupported marker fails");
+
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported secret storage marker")
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

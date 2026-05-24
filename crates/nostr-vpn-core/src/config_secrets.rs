@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 use sha2::{Digest as _, Sha256};
 
 use crate::config::{AppConfig, normalize_nostr_pubkey};
@@ -96,14 +96,12 @@ impl ConfigSecret {
 }
 
 const REDACTED_SECRET_MARKERS: &[&str] = &[
-    "stored-in-macos-keychain",
-    "stored-in-system-keychain",
     "stored-in-ios-keychain",
     "stored-in-android-keystore",
     "stored-in-windows-dpapi",
     "stored-in-private-secret-file",
 ];
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 const SERVICE: &str = "to.nostrvpn.nvpn.config-secrets";
 
 fn hydrate_config_secret_fields(path: &Path, config: &mut AppConfig) -> Result<()> {
@@ -145,6 +143,12 @@ fn persist_field(path: &Path, kind: ConfigSecret, value: &mut String) -> Result<
     }
     if is_redacted_secret(trimmed) {
         return Ok(());
+    }
+    if trimmed.starts_with("stored-in-") {
+        return Err(anyhow!(
+            "{} uses unsupported secret storage marker {trimmed:?}",
+            kind.display_name()
+        ));
     }
 
     let secret = trimmed.to_string();
@@ -190,12 +194,12 @@ fn read_required_secret(path: &Path, kind: ConfigSecret) -> Result<String> {
     })
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 fn account_name(path: &Path, kind: ConfigSecret) -> String {
     format!("{}:{}", config_scope(path), kind.account_suffix())
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 fn config_scope(path: &Path) -> String {
     let canonical = canonical_config_path(path);
     let mut hasher = Sha256::new();
@@ -203,7 +207,7 @@ fn config_scope(path: &Path) -> String {
     hex::encode(hasher.finalize())
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 fn canonical_config_path(path: &Path) -> std::path::PathBuf {
     if let Ok(canonical) = fs::canonicalize(path) {
         return canonical;
@@ -216,20 +220,14 @@ fn canonical_config_path(path: &Path) -> std::path::PathBuf {
     path.to_path_buf()
 }
 
-#[cfg(all(
-    unix,
-    any(target_os = "macos", target_os = "ios", target_os = "android")
-))]
+#[cfg(all(unix, any(target_os = "ios", target_os = "android")))]
 fn config_path_bytes(path: &Path) -> Vec<u8> {
     use std::os::unix::ffi::OsStrExt;
 
     path.as_os_str().as_bytes().to_vec()
 }
 
-#[cfg(all(
-    windows,
-    any(target_os = "macos", target_os = "ios", target_os = "android")
-))]
+#[cfg(all(windows, any(target_os = "ios", target_os = "android")))]
 fn config_path_bytes(path: &Path) -> Vec<u8> {
     use std::os::windows::ffi::OsStrExt;
 
@@ -239,10 +237,7 @@ fn config_path_bytes(path: &Path) -> Vec<u8> {
         .collect()
 }
 
-#[cfg(all(
-    not(any(unix, windows)),
-    any(target_os = "macos", target_os = "ios", target_os = "android")
-))]
+#[cfg(all(not(any(unix, windows)), any(target_os = "ios", target_os = "android")))]
 fn config_path_bytes(path: &Path) -> Vec<u8> {
     path.to_string_lossy().as_bytes().to_vec()
 }
@@ -285,23 +280,21 @@ fn plaintext_secret_field(value: &toml::Value, table: &str, field: &str) -> bool
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use std::path::Path;
+    use std::ffi::CString;
+    use std::fs::{self, OpenOptions};
+    use std::io::Write;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    use std::path::{Path, PathBuf};
 
-    use anyhow::{Context, Result, anyhow};
-    use security_framework::os::macos::{
-        keychain::SecKeychain,
-        keychain_item::SecKeychainItem,
-        passwords::{SecKeychainItemPassword, find_generic_password},
-    };
+    use anyhow::{Context, Result};
 
-    use super::{ConfigSecret, SERVICE, account_name, hydrate_config_secret_fields};
+    use super::{ConfigSecret, hydrate_config_secret_fields};
 
-    pub(super) const REDACTED_SECRET_MARKER: &str = "stored-in-macos-keychain";
-    const SYSTEM_KEYCHAIN: &str = "/Library/Keychains/System.keychain";
-    const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+    pub(super) const REDACTED_SECRET_MARKER: &str = "stored-in-private-secret-file";
 
     pub(super) fn store_name() -> &'static str {
-        "the macOS Keychain"
+        "a private macOS secret sidecar"
     }
 
     pub(super) fn allows_plaintext_fallback() -> bool {
@@ -316,95 +309,109 @@ mod platform {
     }
 
     pub(super) fn read_secret(path: &Path, kind: ConfigSecret) -> Result<Option<String>> {
-        let account = account_name(path, kind);
-        match find_macos_password(&account) {
-            Ok((password, _item)) => {
-                let bytes = password.as_ref().to_vec();
-                let value = String::from_utf8(bytes).with_context(|| {
-                    format!(
-                        "{} in the macOS Keychain is not valid UTF-8",
-                        kind.display_name()
-                    )
-                })?;
-                Ok(Some(value))
+        let secret_path = secret_path(path, kind);
+        match fs::read_to_string(&secret_path) {
+            Ok(value) => return Ok(Some(value)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to read {}", secret_path.display()));
             }
-            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
-            Err(error) => Err(anyhow!(error)).with_context(|| {
-                format!(
-                    "failed to read {} from the macOS Keychain",
-                    kind.display_name()
-                )
-            }),
         }
+
+        Ok(None)
     }
 
     pub(super) fn delete_secret(path: &Path, kind: ConfigSecret) -> Result<()> {
-        let account = account_name(path, kind);
-        let mut result = Ok(());
-        for keychain in candidate_keychains() {
-            match keychain.find_generic_password(SERVICE, &account) {
-                Ok((_password, item)) => {
-                    item.delete();
-                }
-                Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => {}
-                Err(error) => {
-                    result = Err(anyhow!(error)).with_context(|| {
-                        format!(
-                            "failed to delete {} from the macOS Keychain",
-                            kind.display_name()
-                        )
-                    });
-                }
+        let secret_path = secret_path(path, kind);
+        match fs::remove_file(&secret_path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => {
+                Err(error).with_context(|| format!("failed to delete {}", secret_path.display()))
             }
         }
-        result
     }
 
     pub(super) fn write_secret(path: &Path, kind: ConfigSecret, value: &str) -> Result<()> {
-        let account = account_name(path, kind);
-        let mut last_error = None;
-        for keychain in candidate_keychains() {
-            match keychain.set_generic_password(SERVICE, &account, value.as_bytes()) {
-                Ok(()) => return Ok(()),
-                Err(error) => last_error = Some(error),
-            }
+        let secret_path = secret_path(path, kind);
+        if let Some(parent) = secret_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
         }
-        Err(anyhow!(last_error.map(anyhow::Error::from).unwrap_or_else(
-            || anyhow!("no macOS Keychain is available")
-        )))
-        .with_context(|| {
-            format!(
-                "failed to write {} to the macOS Keychain",
-                kind.display_name()
-            )
-        })
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&secret_path)
+            .with_context(|| format!("failed to open {}", secret_path.display()))?;
+        file.write_all(value.as_bytes())
+            .with_context(|| format!("failed to write {}", secret_path.display()))?;
+        set_secret_file_owner(path, &secret_path)?;
+        Ok(())
     }
 
-    fn find_macos_password(
-        account: &str,
-    ) -> security_framework::base::Result<(SecKeychainItemPassword, SecKeychainItem)> {
-        let keychains = candidate_keychains();
-        if keychains.is_empty() {
-            return find_generic_password(None, SERVICE, account);
-        }
-        find_generic_password(Some(&keychains), SERVICE, account)
+    fn secret_path(path: &Path, kind: ConfigSecret) -> PathBuf {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let file_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("config.toml");
+        parent.join(format!(".{file_name}.{}.secret", kind.account_suffix()))
     }
 
-    fn candidate_keychains() -> Vec<SecKeychain> {
-        let mut keychains = Vec::new();
-        if let Ok(keychain) = system_keychain() {
-            keychains.push(keychain);
+    fn set_secret_file_owner(config_path: &Path, secret_path: &Path) -> Result<()> {
+        if current_euid() != 0 {
+            return Ok(());
         }
-        if let Ok(keychain) = SecKeychain::default() {
-            keychains.push(keychain);
-        }
-        keychains
+
+        let Some((uid, gid)) = preferred_secret_owner(config_path, secret_path) else {
+            return Ok(());
+        };
+        chown_path(secret_path, uid, gid)
     }
 
-    fn system_keychain() -> Result<SecKeychain> {
-        SecKeychain::open(SYSTEM_KEYCHAIN)
-            .map_err(anyhow::Error::from)
-            .with_context(|| format!("failed to open {SYSTEM_KEYCHAIN}"))
+    fn preferred_secret_owner(config_path: &Path, secret_path: &Path) -> Option<(u32, u32)> {
+        owner(config_path)
+            .filter(|(uid, _)| *uid != 0)
+            .or_else(|| {
+                config_path
+                    .parent()
+                    .and_then(owner)
+                    .filter(|(uid, _)| *uid != 0)
+            })
+            .or_else(|| owner(secret_path))
+    }
+
+    fn owner(path: &Path) -> Option<(u32, u32)> {
+        fs::metadata(path)
+            .ok()
+            .map(|metadata| (metadata.uid(), metadata.gid()))
+    }
+
+    fn chown_path(path: &Path, uid: u32, gid: u32) -> Result<()> {
+        let raw = CString::new(path.as_os_str().as_bytes())
+            .with_context(|| format!("path contains an interior NUL: {}", path.display()))?;
+        let rc = unsafe { chown(raw.as_ptr(), uid, gid) };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+                .with_context(|| format!("failed to chown {}", path.display()))
+        }
+    }
+
+    fn current_euid() -> u32 {
+        unsafe { geteuid() }
+    }
+
+    unsafe extern "C" {
+        fn chown(path: *const std::ffi::c_char, owner: u32, group: u32) -> i32;
+        fn geteuid() -> u32;
     }
 }
 
@@ -832,8 +839,6 @@ mod tests {
     #[test]
     fn recognizes_all_secret_markers() {
         for marker in [
-            "stored-in-macos-keychain",
-            "stored-in-system-keychain",
             "stored-in-ios-keychain",
             "stored-in-android-keystore",
             "stored-in-windows-dpapi",
