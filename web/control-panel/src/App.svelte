@@ -1810,7 +1810,6 @@
               <label>
                 <span>Open inbound TCP ports</span>
                 <input
-                  placeholder="22, 443"
                   bind:value={settingsDraft.fipsHostInboundTcpPorts}
                   disabled={!settingsDraft.fipsHostTunnelEnabled}
                   on:input={() => (settingsDirty = true)}

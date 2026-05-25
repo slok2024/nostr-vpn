@@ -690,7 +690,7 @@
                       <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="Open inbound TCP ports" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
-                    <TextBox Grid.Column="1" Text="{Binding FipsHostInboundTcpPorts, UpdateSourceTrigger=PropertyChanged}" ToolTip="Comma-separated ports, e.g. 22, 443" />
+                    <TextBox Grid.Column="1" Text="{Binding FipsHostInboundTcpPorts, UpdateSourceTrigger=PropertyChanged}" ToolTip="Comma-separated port numbers" />
                   </Grid>
                   <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Connect to non-roster FIPS peers" IsChecked="{Binding State.ConnectToNonRosterFipsPeers, Mode=OneWay}" Click="ConnectToNonRosterFipsPeers_Click" />
                   <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Find peers over relays" IsChecked="{Binding State.FipsNostrDiscoveryEnabled, Mode=OneWay}" Click="FipsNostrDiscoveryEnabled_Click" />

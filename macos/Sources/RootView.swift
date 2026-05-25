@@ -1269,6 +1269,8 @@ struct RootView: View {
     private var settingsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             deviceSettings
+            generalSettings
+            fipsSettings
             relaySettings
             networkSettings
             systemSettings
@@ -1345,8 +1347,24 @@ struct RootView: View {
                     TextField("Tunnel IP", text: $tunnelIp)
                 }
             }
+            Button {
+                manager.saveDeviceSettings(
+                    nodeName: nodeName,
+                    endpoint: endpoint,
+                    tunnelIp: tunnelIp,
+                    listenPort: listenPort
+                )
+            } label: {
+                Label("Save", systemImage: "checkmark")
+            }
+            .disabled(manager.actionInFlight)
+        }
+    }
+
+    private var generalSettings: some View {
+        surface {
+            sectionHeader("General", systemImage: "gearshape.fill")
             VStack(alignment: .leading, spacing: 8) {
-                settingsToggleGroupLabel("General")
                 settingsToggleRow("Start VPN automatically", isOn: Binding(
                     get: { state.autoconnect },
                     set: { manager.setAutoconnect($0) }
@@ -1363,8 +1381,15 @@ struct RootView: View {
                     get: { state.exitNodeLeakProtection },
                     set: { manager.setExitNodeLeakProtection($0) }
                 ), disabled: manager.actionInFlight)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 
-                settingsToggleGroupLabel("FIPS")
+    private var fipsSettings: some View {
+        surface {
+            sectionHeader("FIPS", systemImage: "shield.fill")
+            VStack(alignment: .leading, spacing: 8) {
                 settingsToggleRow("Route to npub.fips addresses outside VPN", isOn: Binding(
                     get: { state.fipsHostTunnelEnabled },
                     set: { manager.setFipsHostTunnel($0) }
@@ -1372,7 +1397,7 @@ struct RootView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Open inbound TCP ports")
                         .foregroundStyle(.secondary)
-                    TextField("22, 443", text: $fipsHostInboundTcpPorts)
+                    TextField("", text: $fipsHostInboundTcpPorts)
                         .disabled(!state.fipsHostTunnelEnabled)
                 }
                 settingsToggleRow("Connect to non-roster FIPS peers", isOn: Binding(
@@ -1390,25 +1415,12 @@ struct RootView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Button {
-                manager.saveNodeSettings(
-                    nodeName: nodeName,
-                    endpoint: endpoint,
-                    tunnelIp: tunnelIp,
-                    listenPort: listenPort,
-                    fipsHostInboundTcpPorts: fipsHostInboundTcpPorts
-                )
+                manager.saveFipsHostInboundTcpPorts(fipsHostInboundTcpPorts)
             } label: {
                 Label("Save", systemImage: "checkmark")
             }
             .disabled(manager.actionInFlight)
         }
-    }
-
-    private func settingsToggleGroupLabel(_ title: String) -> some View {
-        Text(title)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .padding(.top, 4)
     }
 
     private func settingsToggleRow(_ title: String, isOn: Binding<Bool>, disabled: Bool = false) -> some View {

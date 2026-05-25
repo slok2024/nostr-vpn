@@ -376,21 +376,26 @@ final class AppManager: ObservableObject {
         }
     }
 
-    func saveNodeSettings(
+    func saveDeviceSettings(
         nodeName: String,
         endpoint: String,
         tunnelIp: String,
-        listenPort: String,
-        fipsHostInboundTcpPorts: String
+        listenPort: String
     ) {
         let parsedPort = UInt16(listenPort.trimmingCharacters(in: .whitespacesAndNewlines))
         dispatch(.updateSettings(patch: settingsPatch(
             nodeName: nodeName,
             endpoint: endpoint,
             tunnelIp: tunnelIp,
-            listenPort: parsedPort,
-            fipsHostInboundTcpPorts: fipsHostInboundTcpPorts
+            listenPort: parsedPort
         )), status: "Saving device settings")
+    }
+
+    func saveFipsHostInboundTcpPorts(_ value: String) {
+        dispatch(
+            .updateSettings(patch: settingsPatch(fipsHostInboundTcpPorts: value)),
+            status: "Saving FIPS option"
+        )
     }
 
     @discardableResult

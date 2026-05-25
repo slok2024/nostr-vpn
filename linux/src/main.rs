@@ -3127,7 +3127,7 @@ fn setting_entry_enabled(
         }
     };
     let placeholder = if key == "fips_host_inbound_tcp_ports" {
-        "22, 443"
+        ""
     } else {
         title
     };
