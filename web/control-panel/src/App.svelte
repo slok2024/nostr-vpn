@@ -1819,52 +1819,6 @@
             <div class="panel wide">
               <div class="section-heading">
                 <div>
-                  <h3>Public FIPS routing</h3>
-                </div>
-              </div>
-
-              <label class="switch-row">
-                <span>Route npub.fips outside VPN</span>
-                <input
-                  type="checkbox"
-                  bind:checked={settingsDraft.fipsHostTunnelEnabled}
-                  on:change={() => (settingsDirty = true)}
-                />
-              </label>
-
-              <div class="dependent-settings" class:disabled={!settingsDraft.fipsHostTunnelEnabled}>
-                <div class="readonly-value-row">
-                  <span>Your public FIPS address</span>
-                  <div class="value-with-action">
-                    <input
-                      aria-label="Your public FIPS address"
-                      value={publicFipsAddress}
-                      disabled={!settingsDraft.fipsHostTunnelEnabled}
-                      readonly
-                    />
-                    <CopyButton
-                      value={publicFipsAddress}
-                      label="Public FIPS address"
-                      disabled={!settingsDraft.fipsHostTunnelEnabled}
-                      on:copied={handleCopied}
-                    />
-                  </div>
-                </div>
-
-                <label>
-                  <span>Public .fips inbound TCP ports</span>
-                  <input
-                    bind:value={settingsDraft.fipsHostInboundTcpPorts}
-                    disabled={!settingsDraft.fipsHostTunnelEnabled}
-                    on:input={() => (settingsDirty = true)}
-                  />
-                </label>
-              </div>
-            </div>
-
-            <div class="panel wide">
-              <div class="section-heading">
-                <div>
                   <h3>FIPS</h3>
                 </div>
               </div>
@@ -1909,6 +1863,58 @@
                   Reset to defaults
                 </button>
               {/if}
+            </div>
+
+            <div class="panel wide">
+              <div class="section-heading">
+                <div>
+                  <h3>Public FIPS routing</h3>
+                </div>
+              </div>
+
+              <p class="settings-panel-help">
+                FIPS gives .fips addresses end-to-end encryption and identity-based routing. Hosts can reach each other
+                without static IPs, domain names, TLS certificates, or NAT port forwarding.
+                <a href="https://learn.fips.network/" target="_blank" rel="noreferrer">Learn FIPS</a>.
+              </p>
+
+              <label class="switch-row">
+                <span>Route npub.fips outside VPN</span>
+                <input
+                  type="checkbox"
+                  bind:checked={settingsDraft.fipsHostTunnelEnabled}
+                  on:change={() => (settingsDirty = true)}
+                />
+              </label>
+
+              <div class="dependent-settings" class:disabled={!settingsDraft.fipsHostTunnelEnabled}>
+                <div class="readonly-value-row">
+                  <span>Your public FIPS address</span>
+                  <div class="value-with-action">
+                    <input
+                      aria-label="Your public FIPS address"
+                      value={publicFipsAddress}
+                      disabled={!settingsDraft.fipsHostTunnelEnabled}
+                      readonly
+                    />
+                    <CopyButton
+                      value={publicFipsAddress}
+                      label="Public FIPS address"
+                      disabled={!settingsDraft.fipsHostTunnelEnabled}
+                      on:copied={handleCopied}
+                    />
+                  </div>
+                </div>
+
+                <label>
+                  <span>Public .fips inbound TCP ports</span>
+                  <input
+                    bind:value={settingsDraft.fipsHostInboundTcpPorts}
+                    disabled={!settingsDraft.fipsHostTunnelEnabled}
+                    on:input={() => (settingsDirty = true)}
+                  />
+                </label>
+              </div>
             </div>
 
             <div class="settings-actions">

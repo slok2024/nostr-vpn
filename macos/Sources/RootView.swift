@@ -1270,8 +1270,8 @@ struct RootView: View {
         VStack(alignment: .leading, spacing: 14) {
             deviceSettings
             generalSettings
-            publicFipsSettings
             fipsSettings
+            publicFipsSettings
             relaySettings
             networkSettings
             systemSettings
@@ -1391,6 +1391,14 @@ struct RootView: View {
         surface {
             sectionHeader("Public FIPS routing", systemImage: "network")
             VStack(alignment: .leading, spacing: 8) {
+                Text("FIPS gives .fips addresses end-to-end encryption and identity-based routing. Hosts can reach each other without static IPs, domain names, TLS certificates, or NAT port forwarding.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let url = URL(string: "https://learn.fips.network/") {
+                    Link("Learn FIPS", destination: url)
+                        .font(.caption)
+                }
                 settingsToggleRow("Route npub.fips outside VPN", isOn: Binding(
                     get: { state.fipsHostTunnelEnabled },
                     set: { manager.setFipsHostTunnel($0) }

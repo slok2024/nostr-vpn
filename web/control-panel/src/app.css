@@ -1004,6 +1004,17 @@ input.invalid {
   white-space: nowrap;
 }
 
+.settings-panel-help {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
+.settings-panel-help a {
+  color: var(--accent);
+}
+
 .switch-row {
   display: flex;
   align-items: center;

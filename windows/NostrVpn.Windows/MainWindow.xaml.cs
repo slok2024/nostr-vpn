@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Navigation;
 using NostrVpn.Windows.Core;
 using NostrVpn.Windows.ViewModels;
 
@@ -18,6 +20,12 @@ public partial class MainWindow : Window
     }
 
     private AppViewModel ViewModel => (AppViewModel)DataContext;
+
+    private void OpenHyperlink_RequestNavigate(object sender, RequestNavigateEventArgs e)
+    {
+        Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
+        e.Handled = true;
+    }
 
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {

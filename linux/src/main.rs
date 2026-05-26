@@ -2543,47 +2543,6 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     }
     page.append(&general);
 
-    let public_fips = card();
-    section_header(&public_fips, "Public FIPS routing", "");
-    switch_row(
-        app,
-        &public_fips,
-        "Route npub.fips outside VPN",
-        state.fips_host_tunnel_enabled,
-        |enabled| NativeAppAction::UpdateSettings {
-            patch: SettingsPatch {
-                fips_host_tunnel_enabled: Some(enabled),
-                ..SettingsPatch::default()
-            },
-        },
-    );
-    let public_fips_details = gtk::Box::new(gtk::Orientation::Vertical, 10);
-    public_fips_details.set_sensitive(state.fips_host_tunnel_enabled);
-    let public_fips_address = public_fips_address(&state.own_npub);
-    detail_row(
-        &public_fips_details,
-        "Your public FIPS address",
-        &public_fips_address,
-    );
-    setting_entry_enabled(
-        app,
-        &public_fips_details,
-        "Public .fips inbound TCP ports",
-        "fips_host_inbound_tcp_ports",
-        true,
-    );
-    let save = icon_text_button("Save", "");
-    save.add_css_class("suggested-action");
-    save.set_halign(gtk::Align::Start);
-    save.set_sensitive(state.fips_host_tunnel_enabled);
-    {
-        let app = app.clone();
-        save.connect_clicked(move |_| save_device_settings(&app));
-    }
-    public_fips_details.append(&save);
-    public_fips.append(&public_fips_details);
-    page.append(&public_fips);
-
     let fips = card();
     section_header(&fips, "FIPS", "");
     switch_row(
@@ -2623,6 +2582,58 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         },
     );
     page.append(&fips);
+
+    let public_fips = card();
+    section_header(&public_fips, "Public FIPS routing", "");
+    let public_fips_help = gtk::Label::new(Some(
+        "FIPS gives .fips addresses end-to-end encryption and identity-based routing. Hosts can reach each other without static IPs, domain names, TLS certificates, or NAT port forwarding.",
+    ));
+    public_fips_help.add_css_class("caption");
+    public_fips_help.add_css_class("dim-label");
+    public_fips_help.set_wrap(true);
+    public_fips_help.set_xalign(0.0);
+    public_fips.append(&public_fips_help);
+    let learn_fips = gtk::LinkButton::with_label("https://learn.fips.network/", "Learn FIPS");
+    learn_fips.set_halign(gtk::Align::Start);
+    public_fips.append(&learn_fips);
+    switch_row(
+        app,
+        &public_fips,
+        "Route npub.fips outside VPN",
+        state.fips_host_tunnel_enabled,
+        |enabled| NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                fips_host_tunnel_enabled: Some(enabled),
+                ..SettingsPatch::default()
+            },
+        },
+    );
+    let public_fips_details = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    public_fips_details.set_sensitive(state.fips_host_tunnel_enabled);
+    let public_fips_address = public_fips_address(&state.own_npub);
+    detail_row(
+        &public_fips_details,
+        "Your public FIPS address",
+        &public_fips_address,
+    );
+    setting_entry_enabled(
+        app,
+        &public_fips_details,
+        "Public .fips inbound TCP ports",
+        "fips_host_inbound_tcp_ports",
+        true,
+    );
+    let save = icon_text_button("Save", "");
+    save.add_css_class("suggested-action");
+    save.set_halign(gtk::Align::Start);
+    save.set_sensitive(state.fips_host_tunnel_enabled);
+    {
+        let app = app.clone();
+        save.connect_clicked(move |_| save_device_settings(&app));
+    }
+    public_fips_details.append(&save);
+    public_fips.append(&public_fips_details);
+    page.append(&public_fips);
 
     let relays = card();
     section_header(&relays, "Relays", "");
