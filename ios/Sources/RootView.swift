@@ -1544,6 +1544,7 @@ private struct RelaySettingsCard: View {
 private struct WireGuardSettingsCard: View {
     @ObservedObject var model: AppModel
     @State private var config = ""
+    @State private var lastSyncedConfig: String?
     @State private var importingConfig = false
 
     var body: some View {
@@ -1588,14 +1589,21 @@ private struct WireGuardSettingsCard: View {
             allowsMultipleSelection: false,
             onCompletion: importConfigFile
         )
-        .onAppear(perform: sync)
+        .onAppear {
+            syncSavedConfigIfNeeded(force: true)
+        }
         .onChange(of: model.state.rev) { _, _ in
-            sync()
+            syncSavedConfigIfNeeded()
         }
     }
 
-    private func sync() {
-        config = model.state.wireguardExitConfig
+    private func syncSavedConfigIfNeeded(force: Bool = false) {
+        let savedConfig = model.state.wireguardExitConfig
+        guard force || savedConfig != lastSyncedConfig else {
+            return
+        }
+        config = savedConfig
+        lastSyncedConfig = savedConfig
     }
 
     private func importConfigFile(_ result: Result<[URL], Error>) {
