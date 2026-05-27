@@ -44,26 +44,31 @@ fn generated_config_auto_populates_keys() {
     assert!(!config.networks[0].invite_secret.is_empty());
 }
 
+const LNVPS_BOOTSTRAP_NPUB: &str =
+    "npub1ekr70wv2592r52qx06tyz0xjwygveyr4cut486a4pggjc6cvdn7sm0pk2z";
+const LNVPS_BOOTSTRAP_ADDRS: &[&str] = &[
+    "udp:185.18.221.242:2121",
+    "udp:[2a13:2c0::4f44:f2b1:22dc:c62e]:2121",
+    "tcp:185.18.221.242:8443",
+    "tcp:[2a13:2c0::4f44:f2b1:22dc:c62e]:8443",
+];
+
 #[test]
-fn fips_discovery_defaults_on_bootstrap_defaults_off() {
+fn fips_discovery_and_bootstrap_default_on() {
     let config = AppConfig::generated();
 
     assert!(config.fips_nostr_discovery_enabled);
-    assert!(!config.fips_bootstrap_enabled);
-
-    assert!(config.fips_bootstrap_peer_endpoints().is_empty());
-
-    let config = AppConfig {
-        fips_bootstrap_enabled: true,
-        ..config
-    };
+    assert!(config.fips_bootstrap_enabled);
 
     let bootstrap = config.fips_bootstrap_peer_endpoints();
-    assert_eq!(bootstrap.len(), DEFAULT_FIPS_BOOTSTRAP_PEERS.len());
-    assert!(
-        bootstrap
+    assert_eq!(bootstrap.len(), 1);
+    assert_eq!(bootstrap[0].0, LNVPS_BOOTSTRAP_NPUB);
+    assert_eq!(
+        bootstrap[0].1,
+        LNVPS_BOOTSTRAP_ADDRS
             .iter()
-            .all(|(npub, addrs)| npub.starts_with("npub1") && addrs.iter().all(|a| a.contains(':')))
+            .map(|addr| (*addr).to_string())
+            .collect::<Vec<_>>()
     );
 }
 
@@ -89,9 +94,6 @@ fn fips_bootstrap_peers_are_seeded_editable_and_resettable() {
     );
     config.set_fips_bootstrap_peers(custom);
     assert_eq!(config.fips_bootstrap_peers.len(), 1);
-    assert!(config.fips_bootstrap_peer_endpoints().is_empty());
-
-    config.fips_bootstrap_enabled = true;
     let addrs = config.fips_bootstrap_peer_endpoints();
     assert_eq!(addrs.len(), 1);
     assert_eq!(addrs[0].1, vec!["tcp:45.79.10.10:443".to_string()]);
@@ -137,11 +139,11 @@ fn fips_discovery_off_and_bootstrap_opt_in_round_trip() {
 }
 
 #[test]
-fn fips_discovery_defaults_on_bootstrap_defaults_off_when_missing() {
+fn fips_discovery_and_bootstrap_default_on_when_missing() {
     let config: AppConfig = toml::from_str("").expect("parse empty config");
 
     assert!(config.fips_nostr_discovery_enabled);
-    assert!(!config.fips_bootstrap_enabled);
+    assert!(config.fips_bootstrap_enabled);
 }
 
 #[test]

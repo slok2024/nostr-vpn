@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.46 - 2026-05-27
+
+### Changed
+
+- FIPS bootstrap routing now defaults on and uses the `lnvps` public bootstrap
+  node as the sole built-in peer, with IPv4 and IPv6 UDP plus TCP fallback
+  hints.
+- FIPS now uses `fips-core` 0.3.22, which fixes connected UDP `POLLERR` drain
+  spins and adds fair encrypted-send admission for saturated bootstrap/server
+  nodes.
+
 ## 4.0.45 - 2026-05-27
 
 ### Fixed

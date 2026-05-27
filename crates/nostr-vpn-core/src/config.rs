@@ -60,44 +60,19 @@ pub const DEFAULT_RELAYS: &[&str] = &[];
 /// Built-in public FIPS bootstrap nodes, used to seed the editable peer list
 /// (`fips_bootstrap_peers`). Dialed as fallback transit so peers can reach each
 /// other when direct NAT traversal and relays fail. Addresses are transport
-/// tagged (`udp:` / `tcp:`); the `tcp:443` entries let clients on networks that
+/// tagged (`udp:` / `tcp:`); the TCP entries let clients on networks that
 /// block UDP outright still reach the overlay. (`tor:` endpoints are omitted —
 /// no Tor transport.) Keyed by npub.
 pub const DEFAULT_FIPS_BOOTSTRAP_PEERS: &[(&str, &[&str])] = &[
-    // test-de01
+    // fips1 / lnvps
     (
-        "npub1260n42s06vzc7796w0fh3ny7zcpw6tlk4gq3940gmfrzl5c9pv2s3657q8",
-        &["udp:217.160.76.169:2121"],
-    ),
-    // test-es01
-    (
-        "npub17lpmzulpc98d8ff727k6e98atxn3phzupzsqqwe54ytduym747ws4tw5zm",
-        &["udp:82.223.139.182:2121"],
-    ),
-    // test-uk01
-    (
-        "npub1u0z26dc4qeneu5rvwvmpfhtwh3522ed6rlgxr9jarrfnjrc6ew4qxjysrs",
-        &["udp:88.208.241.33:2121"],
-    ),
-    // test-us01
-    (
-        "npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98",
-        &["udp:217.77.8.91:2121", "tcp:217.77.8.91:443"],
-    ),
-    // test-us02
-    (
-        "npub10yffd020a4ag8zcy75f9pruq3rnghvvhd5hphl9s62zgp35s560qrksp9u",
-        &["udp:23.182.128.74:2121", "tcp:23.182.128.74:443"],
-    ),
-    // test-us03
-    (
-        "npub136yqae6na688fs75g95ppps3lxe07fvxefj77938zf47uhm6074sxw8ctm",
-        &["udp:54.183.70.180:2121", "tcp:54.183.70.180:443"],
-    ),
-    // test-us04
-    (
-        "npub1gd7ye2qp2lphhzx75fynnjzaxx4dqanddecet0wtt5ss5ek8h9ps62wdkf",
-        &["udp:74.208.245.160:2121"],
+        "npub1ekr70wv2592r52qx06tyz0xjwygveyr4cut486a4pggjc6cvdn7sm0pk2z",
+        &[
+            "udp:185.18.221.242:2121",
+            "udp:[2a13:2c0::4f44:f2b1:22dc:c62e]:2121",
+            "tcp:185.18.221.242:8443",
+            "tcp:[2a13:2c0::4f44:f2b1:22dc:c62e]:8443",
+        ],
     ),
 ];
 

@@ -69,7 +69,7 @@
     fipsHostTunnelEnabled: false,
     connectToNonRosterFipsPeers: true,
     fipsNostrDiscoveryEnabled: true,
-    fipsBootstrapEnabled: false,
+    fipsBootstrapEnabled: true,
     fipsBootstrapPeers: '',
     fipsHostInboundTcpPorts: '',
     autoconnect: false,

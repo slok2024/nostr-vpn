@@ -48,7 +48,7 @@ struct AppState: Decodable {
     var wireguardExitConfig = ""
     var connectToNonRosterFipsPeers = true
     var fipsNostrDiscoveryEnabled = true
-    var fipsBootstrapEnabled = false
+    var fipsBootstrapEnabled = true
     var magicDnsSuffix = ""
     var magicDnsStatus = ""
     var autoconnect = false
@@ -137,7 +137,7 @@ struct AppState: Decodable {
         wireguardExitConfig = container.string(.wireguardExitConfig)
         connectToNonRosterFipsPeers = container.bool(.connectToNonRosterFipsPeers, default: true)
         fipsNostrDiscoveryEnabled = container.bool(.fipsNostrDiscoveryEnabled, default: true)
-        fipsBootstrapEnabled = container.bool(.fipsBootstrapEnabled, default: false)
+        fipsBootstrapEnabled = container.bool(.fipsBootstrapEnabled, default: true)
         magicDnsSuffix = container.string(.magicDnsSuffix)
         magicDnsStatus = container.string(.magicDnsStatus)
         autoconnect = container.bool(.autoconnect)
