@@ -19,7 +19,9 @@ use jni::sys::{jboolean, jint, jlong, jstring};
 use qrcode::QrCode;
 use serde::Serialize;
 
-use crate::mobile_tunnel::{MobileTunnel, mobile_debug_log, tunnel_config_json};
+use crate::mobile_tunnel::{
+    MobileTunnel, mobile_debug_log, tunnel_config_json, tunnel_provider_options_config_json,
+};
 use crate::{FfiApp, NativeAppAction, NativeAppState};
 
 pub struct NvpnAppHandle {
@@ -139,6 +141,14 @@ pub extern "C" fn nostr_vpn_decode_qr_image_json(path: *const c_char) -> *mut c_
 #[unsafe(no_mangle)]
 pub extern "C" fn nostr_vpn_mobile_tunnel_config_json(data_dir: *const c_char) -> *mut c_char {
     let config_json = tunnel_config_json(&c_string_lossy(data_dir));
+    json_raw_string(&config_json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn nostr_vpn_mobile_tunnel_provider_options_config_json(
+    data_dir: *const c_char,
+) -> *mut c_char {
+    let config_json = tunnel_provider_options_config_json(&c_string_lossy(data_dir));
     json_raw_string(&config_json)
 }
 

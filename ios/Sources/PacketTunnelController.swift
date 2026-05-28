@@ -19,7 +19,12 @@ final class PacketTunnelController {
     private let providerBundleIdentifier = "to.iris.nvpn.PacketTunnel"
     private var activeManager: NETunnelProviderManager?
 
-    func start(state: AppState, network: NetworkState?, tunnelConfigJson: String) async throws {
+    func start(
+        state: AppState,
+        network: NetworkState?,
+        tunnelConfigJson: String,
+        providerOptionsConfigJson: String
+    ) async throws {
         debugLog("PacketTunnelController.start begin")
         let manager = try await loadOrCreateManager()
         activeManager = manager
@@ -48,7 +53,12 @@ final class PacketTunnelController {
         debugLog("reloading preferences")
         try await reload(manager)
         debugLog("calling startVPNTunnel status=\(manager.connection.status.rawValue)")
-        try manager.connection.startVPNTunnel(options: [:])
+        // Keep providerConfiguration redacted in VPN preferences; the full
+        // config is delivered only to this start attempt.
+        let options: [String: NSObject] = [
+            "mobileTunnelConfigJson": providerOptionsConfigJson as NSString,
+        ]
+        try manager.connection.startVPNTunnel(options: options)
         debugLog("startVPNTunnel returned status=\(manager.connection.status.rawValue)")
     }
 

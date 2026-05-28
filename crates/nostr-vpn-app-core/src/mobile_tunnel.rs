@@ -368,6 +368,10 @@ impl MobileTunnelConfig {
             wireguard_exit.peer_preshared_key.clear();
         }
     }
+
+    fn detach_from_persisted_config_path(&mut self) {
+        self.config_path.clear();
+    }
 }
 
 /// Pull just the IP literal out of an `Endpoint = host:port` string.
@@ -417,6 +421,21 @@ pub(crate) fn tunnel_config_json(data_dir: &str) -> String {
             ..empty_config()
         });
     config.redact_for_launch_configuration();
+    serde_json::to_string(&config).unwrap_or_else(|error| {
+        format!(
+            r#"{{"error":"{}"}}"#,
+            error.to_string().replace(['\\', '"'], "")
+        )
+    })
+}
+
+pub(crate) fn tunnel_provider_options_config_json(data_dir: &str) -> String {
+    let mut config =
+        MobileTunnelConfig::from_data_dir(data_dir).unwrap_or_else(|error| MobileTunnelConfig {
+            error: error.to_string(),
+            ..empty_config()
+        });
+    config.detach_from_persisted_config_path();
     serde_json::to_string(&config).unwrap_or_else(|error| {
         format!(
             r#"{{"error":"{}"}}"#,
@@ -3801,6 +3820,36 @@ mod tests {
                 .private_key,
             "client-private-key"
         );
+
+        let provider_json =
+            tunnel_provider_options_config_json(dir.to_str().expect("utf8 temp dir"));
+        assert!(provider_json.contains(&secret_key));
+        assert!(provider_json.contains("join-secret"));
+        assert!(provider_json.contains("client-private-key"));
+        assert!(provider_json.contains("client-peer-psk"));
+
+        let provider_config: MobileTunnelConfig =
+            serde_json::from_str(&provider_json).expect("provider options config");
+        assert!(
+            provider_config.config_path.is_empty(),
+            "packet tunnel extension must not read the containing app's private config path"
+        );
+
+        let provider_loaded =
+            mobile_app_config(&provider_config).expect("load app config from embedded toml");
+        let provider_runtime =
+            MobileTunnelConfig::from_app_with_config_path(&provider_loaded, Path::new(""))
+                .expect("provider runtime config");
+        assert_eq!(provider_runtime.identity_nsec, secret_key);
+        assert_eq!(
+            provider_runtime
+                .wireguard_exit
+                .as_ref()
+                .expect("provider runtime wireguard")
+                .private_key,
+            "client-private-key"
+        );
+        assert!(provider_runtime.config_path.is_empty());
 
         let _ = fs::remove_dir_all(&dir);
     }

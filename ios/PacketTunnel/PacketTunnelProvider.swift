@@ -21,7 +21,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         packetDebugLog("startTunnel entered options=\(options.map { Array($0.keys).sorted() } ?? [])")
         let configuration = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration ?? [:]
         packetDebugLog("providerConfiguration keys=\(Array(configuration.keys).sorted())")
-        let configJson = configuration["mobileTunnelConfigJson"] as? String ?? ""
+        let optionConfigJson = options?["mobileTunnelConfigJson"] as? String
+        let configJson = optionConfigJson ?? configuration["mobileTunnelConfigJson"] as? String ?? ""
         let parsedConfig = MobileTunnelConfig(json: configJson)
         if let error = parsedConfig.errorText {
             NSLog("nvpn-pkt: config parse failed: \(error)")

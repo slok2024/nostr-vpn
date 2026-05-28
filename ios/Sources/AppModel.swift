@@ -154,6 +154,7 @@ final class AppModel: ObservableObject {
                     return
                 }
                 let tunnelConfigJson = core.mobileTunnelConfigJson()
+                let providerOptionsConfigJson = core.mobileTunnelProviderOptionsConfigJson()
                 debugLog("mobileTunnelConfigJson len=\(tunnelConfigJson.count)")
                 if state.vpnEnabled {
                     statusMessage = "Turning VPN on"
@@ -165,7 +166,8 @@ final class AppModel: ObservableObject {
                     try await vpnController.start(
                         state: state,
                         network: activeNetwork,
-                        tunnelConfigJson: tunnelConfigJson
+                        tunnelConfigJson: tunnelConfigJson,
+                        providerOptionsConfigJson: providerOptionsConfigJson
                     )
                     debugLog("PacketTunnel start returned success")
                 } catch {
@@ -217,6 +219,7 @@ final class AppModel: ObservableObject {
             return
         }
         let tunnelConfigJson = core.mobileTunnelConfigJson()
+        let providerOptionsConfigJson = core.mobileTunnelProviderOptionsConfigJson()
         debugLog(
             "PacketTunnel config sync begin reason=\(reason) configLen=\(tunnelConfigJson.count) network=\(activeNetwork?.id ?? "nil")"
         )
@@ -232,7 +235,8 @@ final class AppModel: ObservableObject {
             try await vpnController.start(
                 state: state,
                 network: activeNetwork,
-                tunnelConfigJson: tunnelConfigJson
+                tunnelConfigJson: tunnelConfigJson,
+                providerOptionsConfigJson: providerOptionsConfigJson
             )
             debugLog("PacketTunnel config sync start returned")
             refresh()
@@ -397,6 +401,7 @@ final class AppModel: ObservableObject {
             return "Native core unavailable"
         }
         let tunnelConfigJson = core.mobileTunnelConfigJson()
+        let providerOptionsConfigJson = core.mobileTunnelProviderOptionsConfigJson()
         if !state.vpnEnabled {
             dispatch(NativeActions.connectVpn())
         }
@@ -404,7 +409,8 @@ final class AppModel: ObservableObject {
             try await vpnController.start(
                 state: state,
                 network: activeNetwork,
-                tunnelConfigJson: tunnelConfigJson
+                tunnelConfigJson: tunnelConfigJson,
+                providerOptionsConfigJson: providerOptionsConfigJson
             )
             return nil
         } catch {

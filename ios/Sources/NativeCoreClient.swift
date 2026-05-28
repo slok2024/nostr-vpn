@@ -80,6 +80,12 @@ final class NativeCoreClient {
         }
     }
 
+    func mobileTunnelProviderOptionsConfigJson() -> String {
+        dataDir.withCString { dataDirPointer in
+            consume(nostr_vpn_mobile_tunnel_provider_options_config_json(dataDirPointer))
+        }
+    }
+
     private func parseState(_ json: String) -> AppState {
         guard let data = json.data(using: .utf8),
               let state = try? JSONDecoder().decode(AppState.self, from: data)

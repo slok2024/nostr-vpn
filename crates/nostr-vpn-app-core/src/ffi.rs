@@ -996,6 +996,13 @@ impl NativeAppRuntime {
             .map_err(|err| anyhow!("failed to encode manual invite: {err}"))?;
         let parsed = parse_network_invite(&encoded)?;
         apply_network_invite_to_active_network(&mut self.config, &parsed)?;
+        let network_id = self
+            .config
+            .active_network_opt()
+            .ok_or_else(|| anyhow!("network not found"))?
+            .id
+            .clone();
+        self.config.add_participant_to_network(&network_id, admin)?;
         self.save_reload_and_refresh()
     }
 
@@ -4044,7 +4051,7 @@ mod tests {
     }
 
     #[test]
-    fn manual_add_network_does_not_queue_join_request() {
+    fn manual_add_network_seeds_admin_without_join_request() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -4072,7 +4079,7 @@ mod tests {
         let network = runtime.config.active_network();
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
         assert_eq!(network.network_id, "8d4f34f5425bc50e");
-        assert!(network.participants.is_empty());
+        assert_eq!(network.participants, vec![admin_hex.clone()]);
         assert_eq!(network.admins, vec![admin_hex]);
         assert!(network.outbound_join_request.is_none());
 

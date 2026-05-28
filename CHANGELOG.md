@@ -4,6 +4,36 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.48 - 2026-05-28
+
+### Changed
+
+- Android now restores the VPN from OS Always-on VPN and boot/startup restore
+  paths using the persisted tunnel config, so a previously requested tunnel can
+  come back without an interactive app launch.
+- Android VPN startup now refreshes the active underlying network and DNS
+  forwarders before handing config to the mobile tunnel, and the app surfaces
+  current always-on/lockdown state more directly.
+- The CLI and desktop updater path now uses the secure hashtree/Nostr/Blossom
+  update source by default, with improved check/download output and Windows
+  update handling.
+- Android and macOS launcher icons have more padding so they render less
+  tightly cropped across launchers and system surfaces.
+
+### Fixed
+
+- Mobile route exports now preserve stable peer identifiers and names through
+  the app-core FFI, fixing route and participant display in native shells.
+- Android join-request and lockdown status messages now stay accurate across UI
+  refreshes and service state changes.
+- Mobile tunnels now build MagicDNS and peer routing state more reliably,
+  including DNS forwarder selection from Android's active underlying network.
+- iOS now passes the packet tunnel its full launch config through per-start
+  provider options instead of making the extension read the app container,
+  fixing scanned-invite join requests on physical iPhones.
+- Manual mobile network entry now seeds the admin as the peer to contact without
+  creating a join request.
+
 ## 4.0.47 - 2026-05-27
 
 ### Changed
