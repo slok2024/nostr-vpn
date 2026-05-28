@@ -57,7 +57,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             var state by remember { mutableStateOf(core.state()) }
             var androidError by remember { mutableStateOf("") }
-            var vpnLockdownActive by remember { mutableStateOf(VpnStartState.lockdownActive(this)) }
+            var vpnLockdownActive by remember { mutableStateOf(VpnStartState.refreshLockdownActive(this)) }
             var pendingVpnStart by remember { mutableStateOf(false) }
             var pendingLocalNetworkAction by remember { mutableStateOf<JSONObject?>(null) }
             var showQrScanner by remember { mutableStateOf(false) }
@@ -251,7 +251,7 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(core) {
                 while (true) {
                     delay(2_000)
-                    vpnLockdownActive = VpnStartState.lockdownActive(this@MainActivity)
+                    vpnLockdownActive = VpnStartState.refreshLockdownActive(this@MainActivity)
                     state = try {
                         val nextState = core.refresh()
                         if (nextState.error.isNotBlank()) {
@@ -352,7 +352,7 @@ class MainActivity : ComponentActivity() {
             exitNode.isNotBlank() || (wireguardExitEnabled && wireguardExitConfigured)
         if (vpnEnabled && vpnLockdownActive && !fullTunnelConfigured) {
             return copy(
-                error = "Android VPN lockdown is on. Select an exit node or turn off Block connections without VPN.",
+                error = "Android VPN lockdown is on. Split tunnel cannot provide regular internet until lockdown is fully disabled or an exit node is selected.",
             )
         }
         return this
