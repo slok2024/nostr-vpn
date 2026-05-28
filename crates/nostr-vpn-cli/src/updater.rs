@@ -153,13 +153,15 @@ fn run_legacy_update(args: UpdateArgs) -> Result<()> {
 
     if args.download_only || mode == UpdateMode::App {
         print_downloaded(
-            selection.update_available,
-            &selection.manifest.tag,
-            &selection.asset.name,
-            selection.source_name,
-            false,
-            Some(&selection.asset_url),
-            &archive_path,
+            DownloadedUpdate {
+                available: selection.update_available,
+                tag: &selection.manifest.tag,
+                asset: &selection.asset.name,
+                source: selection.source_name,
+                verified: false,
+                url: Some(&selection.asset_url),
+                path: &archive_path,
+            },
             args.json,
         )?;
         return Ok(());
@@ -285,13 +287,15 @@ async fn run_secure_update(args: UpdateArgs) -> Result<()> {
 
     if args.download_only || mode == UpdateMode::App {
         print_downloaded(
-            available,
-            &tag,
-            &asset.name,
-            SECURE_SOURCE_NAME,
-            true,
-            None,
-            &destination,
+            DownloadedUpdate {
+                available,
+                tag: &tag,
+                asset: &asset.name,
+                source: SECURE_SOURCE_NAME,
+                verified: true,
+                url: None,
+                path: &destination,
+            },
             args.json,
         )?;
         return Ok(());
@@ -700,35 +704,36 @@ fn print_update_check(
     Ok(())
 }
 
-fn print_downloaded(
+struct DownloadedUpdate<'a> {
     available: bool,
-    tag: &str,
-    asset: &str,
+    tag: &'a str,
+    asset: &'a str,
     source: &'static str,
     verified: bool,
-    url: Option<&str>,
-    path: &Path,
-    json: bool,
-) -> Result<()> {
+    url: Option<&'a str>,
+    path: &'a Path,
+}
+
+fn print_downloaded(download: DownloadedUpdate<'_>, json: bool) -> Result<()> {
     if json {
         print_update_json(UpdateJson {
-            available,
+            available: download.available,
             current_version: PRODUCT_VERSION,
-            latest_version: tag.trim_start_matches('v').to_string(),
-            tag: tag.to_string(),
-            asset: asset.to_string(),
-            source,
-            verified,
-            url: url.map(ToOwned::to_owned),
-            path: Some(path.display().to_string()),
+            latest_version: download.tag.trim_start_matches('v').to_string(),
+            tag: download.tag.to_string(),
+            asset: download.asset.to_string(),
+            source: download.source,
+            verified: download.verified,
+            url: download.url.map(ToOwned::to_owned),
+            path: Some(download.path.display().to_string()),
         })?;
         return Ok(());
     }
-    println!("downloaded {asset}");
-    println!("path={}", path.display());
-    println!("source={source}");
-    println!("verified={verified}");
-    if let Some(url) = url {
+    println!("downloaded {}", download.asset);
+    println!("path={}", download.path.display());
+    println!("source={}", download.source);
+    println!("verified={}", download.verified);
+    if let Some(url) = download.url {
         println!("url={url}");
     }
     Ok(())

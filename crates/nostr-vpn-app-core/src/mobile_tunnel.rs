@@ -148,7 +148,7 @@ pub(crate) struct MobileTunnelConfig {
     /// silently fails even though TCP transits the tunnel.
     #[serde(default)]
     pub(crate) dns_servers: Vec<String>,
-    /// Resolvers the in-tunnel MagicDNS responder uses for non-.nvpn
+    /// Resolvers the in-tunnel `MagicDNS` responder uses for non-.nvpn
     /// queries. Android injects the active network DNS before starting
     /// the native tunnel; other mobile hosts use public fallback DNS.
     #[serde(default)]
@@ -2476,7 +2476,7 @@ async fn mobile_magic_dns_response_packet(
         Some(response) => response,
         None => forward_mobile_dns_query(query.payload, forwarders).await?,
     };
-    Some(build_mobile_dns_response_packet(&query, &response))
+    build_mobile_dns_response_packet(&query, &response)
 }
 
 fn parse_mobile_magic_dns_query(packet: &[u8]) -> Option<MobileDnsQuery<'_>> {
@@ -2519,12 +2519,17 @@ fn parse_mobile_magic_dns_query(packet: &[u8]) -> Option<MobileDnsQuery<'_>> {
     })
 }
 
-fn build_mobile_dns_response_packet(query: &MobileDnsQuery<'_>, dns_response: &[u8]) -> Vec<u8> {
-    let udp_len = 8 + dns_response.len();
-    let total_len = 20 + udp_len;
+fn build_mobile_dns_response_packet(
+    query: &MobileDnsQuery<'_>,
+    dns_response: &[u8],
+) -> Option<Vec<u8>> {
+    let udp_len = 8_usize.checked_add(dns_response.len())?;
+    let total_len = 20_usize.checked_add(udp_len)?;
+    let udp_len_u16 = u16::try_from(udp_len).ok()?;
+    let total_len_u16 = u16::try_from(total_len).ok()?;
     let mut packet = vec![0_u8; total_len];
     packet[0] = 0x45;
-    packet[2..4].copy_from_slice(&(total_len as u16).to_be_bytes());
+    packet[2..4].copy_from_slice(&total_len_u16.to_be_bytes());
     packet[8] = 64;
     packet[9] = 17;
     packet[12..16].copy_from_slice(&query.destination.octets());
@@ -2534,9 +2539,9 @@ fn build_mobile_dns_response_packet(query: &MobileDnsQuery<'_>, dns_response: &[
 
     packet[20..22].copy_from_slice(&query.destination_port.to_be_bytes());
     packet[22..24].copy_from_slice(&query.source_port.to_be_bytes());
-    packet[24..26].copy_from_slice(&(udp_len as u16).to_be_bytes());
+    packet[24..26].copy_from_slice(&udp_len_u16.to_be_bytes());
     packet[28..].copy_from_slice(dns_response);
-    packet
+    Some(packet)
 }
 
 fn ipv4_header_checksum(header: &[u8]) -> u16 {
@@ -2552,7 +2557,7 @@ fn ipv4_header_checksum(header: &[u8]) -> u16 {
     while (sum >> 16) != 0 {
         sum = (sum & 0xffff) + (sum >> 16);
     }
-    !(sum as u16)
+    !u16::try_from(sum).expect("folded IPv4 checksum fits in u16")
 }
 
 async fn forward_mobile_dns_query(query: &[u8], forwarders: &[SocketAddr]) -> Option<Vec<u8>> {
@@ -2754,7 +2759,7 @@ mod tests {
             destination_port: source_port,
             payload,
         };
-        build_mobile_dns_response_packet(&query, payload)
+        build_mobile_dns_response_packet(&query, payload).expect("test packet length fits")
     }
 
     #[test]
