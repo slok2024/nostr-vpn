@@ -28,6 +28,10 @@ dirs = "6"
 fips-endpoint = "0.3.16"
 fips-core = "0.3.22"
 futures = "0.3"
+hashtree-blossom = { version = "0.2.55", default-features = false, features = ["store"] }
+hashtree-core = "0.2.55"
+hashtree-resolver = { version = "0.2.56", features = ["nostr"] }
+hashtree-updater = "0.2.56"
 hex = "0.4"
 hickory-proto = "0.26"
 hostname = "0.4"
@@ -45,6 +49,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
+nostr = { version = "0.35", features = ["nip44"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip44"] }
 nostr-vpn-core = { version = "4.0.40", path = "crates/nostr-vpn-core" }
 nostr-vpn-wintun = { version = "4.0.40", path = "crates/nostr-vpn-wintun" }

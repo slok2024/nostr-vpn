@@ -248,9 +248,9 @@ enum Command {
     Status(StatusArgs),
     /// Update persisted node/network settings.
     Set(SetArgs),
-    /// Emit an `nvpn://invite/...` code for the active network.
+    /// Emit a full `nvpn://invite/...` code for the active network.
     CreateInvite(CreateInviteArgs),
-    /// Import an `nvpn://invite/...` code into the active network config.
+    /// Import a full `nvpn://invite/...` code into the active network config.
     ImportInvite(ImportInviteArgs),
     /// Broadcast the active network's invite over LAN multicast so nearby
     /// devices running `nvpn discover` can pair without copy/pasting a code.
@@ -366,6 +366,18 @@ struct UpdateArgs {
     /// Only check whether an update is available.
     #[arg(long)]
     check: bool,
+    /// Select the native desktop app artifact instead of the nvpn CLI archive.
+    #[arg(long)]
+    app: bool,
+    /// Download the selected artifact and print/save it, without installing it.
+    #[arg(long)]
+    download_only: bool,
+    /// Directory for --download-only artifacts.
+    #[arg(long)]
+    download_dir: Option<PathBuf>,
+    /// Emit machine-readable JSON for GUI update helpers.
+    #[arg(long)]
+    json: bool,
     /// Destination binary to update (defaults to the currently running executable).
     #[arg(long)]
     path: Option<PathBuf>,
@@ -810,7 +822,7 @@ async fn run_command(command: Command) -> Result<()> {
             print_version(args)?;
         }
         Command::Update(args) => {
-            updater::run_update(args)?;
+            updater::run_update(args).await?;
         }
         Command::InstallCli(args) => {
             install_cli(args)?;
@@ -2668,6 +2680,10 @@ fn daemon_vpn_active(vpn_enabled: bool, expected_peers: usize) -> bool {
     vpn_enabled && expected_peers > 0
 }
 
+fn daemon_start_vpn_enabled(app: &AppConfig, paused: bool) -> bool {
+    app.autoconnect && !paused
+}
+
 fn fips_host_runtime_active(app: &AppConfig, vpn_enabled: bool) -> bool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
@@ -3423,6 +3439,11 @@ async fn start_session(args: StartArgs) -> Result<()> {
         args.network_id.clone(),
         args.participants.clone(),
     )?;
+    if args.connect {
+        persist_desired_daemon_vpn_enabled(&config_path, true)?;
+    } else if args.no_connect {
+        persist_desired_daemon_vpn_enabled(&config_path, false)?;
+    }
 
     let should_connect = if args.connect {
         true
@@ -3711,6 +3732,7 @@ fn control_daemon(args: ControlArgs, request: DaemonControlRequest) -> Result<()
     let config_path = args.config.unwrap_or_else(default_config_path);
     let status = daemon_status(&config_path)?;
     if !status.running {
+        persist_desired_daemon_vpn_enabled_for_request(&config_path, request)?;
         println!("daemon: not running");
         return Ok(());
     }

@@ -3,17 +3,41 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
+use hashtree_blossom::{BlossomClient, BlossomStore};
+use hashtree_core::{HashTree, HashTreeConfig};
+use hashtree_resolver::nostr::{NostrResolverConfig, NostrRootResolver};
+use hashtree_updater::{
+    DownloadOptions, HashtreeUpdater, UpdateAsset, UpdateCheckOptions, UpdateManifest, UpdateRef,
+    UpdateTarget,
+};
 use serde::Deserialize;
 
 const GITHUB_LATEST_RELEASE_URL: &str =
     "https://api.github.com/repos/mmalmi/nostr-vpn/releases/latest";
 const HTREE_MANIFEST_URL: &str = "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json";
+const HTREE_UPDATE_REF: &str = "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest";
 const UPDATE_CONNECT_TIMEOUT_SECS: &str = "4";
 const UPDATE_TOTAL_TIMEOUT_SECS: &str = "8";
 const UPDATE_DOWNLOAD_TIMEOUT_SECS: &str = "180";
 const UPDATE_USER_AGENT: &str = "nvpn-updater";
+const SECURE_SOURCE_URL: &str = "hashtree://signed-nostr-release";
+const DEFAULT_UPDATE_RELAYS: &[&str] = &[
+    "wss://temp.iris.to",
+    "wss://relay.damus.io",
+    "wss://relay.snort.social",
+    "wss://relay.primal.net",
+    "wss://upload.iris.to/nostr",
+];
+const DEFAULT_BLOSSOM_READ_SERVERS: &[&str] = &[
+    "https://cdn.iris.to",
+    "https://hashtree.iris.to",
+    "https://upload.iris.to",
+    "https://blossom.primal.net",
+];
 
 #[derive(Clone, Debug, Default)]
 pub struct UpdateState {
@@ -30,6 +54,7 @@ pub struct UpdateState {
 pub struct ReleaseAsset {
     pub name: String,
     pub url: String,
+    pub verified: bool,
 }
 
 #[derive(Debug)]
@@ -77,6 +102,10 @@ pub fn download(asset: ReleaseAsset, sender: Sender<UpdateEvent>) {
 }
 
 pub fn check_blocking(current_version: &str) -> Result<UpdateCheck, String> {
+    if should_use_secure_hashtree() {
+        return check_secure_blocking(current_version);
+    }
+
     let manifest_urls = manifest_urls();
     let mut last_error = None;
     for manifest_url in manifest_urls {
@@ -98,7 +127,108 @@ pub fn check_blocking(current_version: &str) -> Result<UpdateCheck, String> {
 }
 
 pub fn download_blocking(asset: &ReleaseAsset) -> Result<PathBuf, String> {
+    if asset.verified {
+        return download_secure_blocking(asset);
+    }
     download_asset(asset)
+}
+
+fn should_use_secure_hashtree() -> bool {
+    std::env::var("NVPN_UPDATE_MANIFEST_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .is_none()
+}
+
+fn check_secure_blocking(current_version: &str) -> Result<UpdateCheck, String> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("Could not start update runtime: {error}"))?;
+    runtime.block_on(check_secure(current_version))
+}
+
+fn download_secure_blocking(asset: &ReleaseAsset) -> Result<PathBuf, String> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("Could not start update runtime: {error}"))?;
+    runtime.block_on(download_secure(asset))
+}
+
+async fn build_secure_updater() -> Result<HashtreeUpdater<NostrRootResolver, BlossomStore>, String>
+{
+    let resolver = NostrRootResolver::new(NostrResolverConfig {
+        relays: update_relays(),
+        resolve_timeout: Duration::from_secs(UPDATE_TOTAL_TIMEOUT_SECS.parse::<u64>().unwrap_or(8)),
+        secret_key: None,
+    })
+    .await
+    .map_err(|error| format!("Could not connect to Nostr release relays: {error}"))?;
+    let blossom = BlossomClient::new_empty(nostr::Keys::generate())
+        .with_read_servers(blossom_read_servers())
+        .with_timeout(Duration::from_secs(
+            UPDATE_DOWNLOAD_TIMEOUT_SECS.parse::<u64>().unwrap_or(180),
+        ));
+    let store = Arc::new(BlossomStore::new(blossom));
+    let tree = HashTree::new(HashTreeConfig::new(store).public());
+    Ok(HashtreeUpdater::new(resolver, tree))
+}
+
+async fn check_secure(current_version: &str) -> Result<UpdateCheck, String> {
+    let updater = build_secure_updater().await?;
+    let mut check = updater
+        .check(UpdateCheckOptions {
+            reference: secure_update_ref()?,
+            current_version: current_version.to_string(),
+            target: UpdateTarget::new(current_target()),
+            ..UpdateCheckOptions::default()
+        })
+        .await
+        .map_err(|error| format!("Could not resolve signed hashtree release: {error}"))?;
+    let asset = preferred_secure_linux_asset(&check.manifest)
+        .ok_or_else(|| "Signed release has no Linux desktop asset".to_string())?;
+    check.asset = Some(asset.clone());
+    let tag = display_manifest_tag(&check.manifest);
+    Ok(UpdateCheck {
+        tag,
+        asset: Some(ReleaseAsset {
+            name: asset.name,
+            url: SECURE_SOURCE_URL.to_string(),
+            verified: true,
+        }),
+        newer: check.update_available,
+    })
+}
+
+async fn download_secure(asset: &ReleaseAsset) -> Result<PathBuf, String> {
+    let updater = build_secure_updater().await?;
+    let mut check = updater
+        .check(UpdateCheckOptions {
+            reference: secure_update_ref()?,
+            current_version: "0.0.0".to_string(),
+            target: UpdateTarget::new(current_target()),
+            ..UpdateCheckOptions::default()
+        })
+        .await
+        .map_err(|error| format!("Could not resolve signed hashtree release: {error}"))?;
+    let selected = preferred_secure_linux_asset(&check.manifest)
+        .ok_or_else(|| "Signed release has no Linux desktop asset".to_string())?;
+    if selected.name != asset.name {
+        return Err(format!(
+            "Signed latest release changed from {} to {}; please check again",
+            asset.name, selected.name
+        ));
+    }
+    check.asset = Some(selected.clone());
+    let downloaded = updater
+        .download(&check, DownloadOptions::default(), None)
+        .await
+        .map_err(|error| format!("Could not download verified update: {error}"))?;
+    let destination = update_download_dir().join(&selected.name);
+    write_downloaded_asset(&destination, &downloaded.bytes)?;
+    maybe_make_executable_and_open(&destination, &selected.name)?;
+    Ok(destination)
 }
 
 fn manifest_urls() -> Vec<String> {
@@ -117,6 +247,43 @@ fn manifest_urls_for(override_url: Option<String>) -> Vec<String> {
         HTREE_MANIFEST_URL.to_string(),
         GITHUB_LATEST_RELEASE_URL.to_string(),
     ]
+}
+
+fn secure_update_ref() -> Result<UpdateRef, String> {
+    let raw = std::env::var("NVPN_UPDATE_HTREE_REF")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| HTREE_UPDATE_REF.to_string());
+    UpdateRef::parse(&raw).map_err(|error| format!("Invalid update hashtree ref: {error}"))
+}
+
+fn update_relays() -> Vec<String> {
+    split_env_csv("NVPN_UPDATE_RELAYS").unwrap_or_else(|| {
+        DEFAULT_UPDATE_RELAYS
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect()
+    })
+}
+
+fn blossom_read_servers() -> Vec<String> {
+    split_env_csv("NVPN_UPDATE_BLOSSOM_SERVERS").unwrap_or_else(|| {
+        DEFAULT_BLOSSOM_READ_SERVERS
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect()
+    })
+}
+
+fn split_env_csv(name: &str) -> Option<Vec<String>> {
+    let values = std::env::var(name)
+        .ok()?
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    (!values.is_empty()).then_some(values)
 }
 
 fn fetch_manifest(manifest_url: &str) -> Result<ReleaseManifest, String> {
@@ -164,7 +331,49 @@ fn preferred_linux_asset(manifest: &ReleaseManifest, manifest_url: &str) -> Opti
         .map(|asset| ReleaseAsset {
             name: asset.name.clone(),
             url: manifest_asset_url(manifest_url, &asset.path),
+            verified: false,
         })
+}
+
+fn preferred_secure_linux_asset(manifest: &UpdateManifest) -> Option<UpdateAsset> {
+    preferred_asset_patterns()
+        .iter()
+        .find_map(|pattern| {
+            manifest
+                .assets
+                .iter()
+                .find(|asset| asset.name.ends_with(pattern))
+        })
+        .or_else(|| {
+            manifest.assets.iter().find(|asset| {
+                asset.name.contains("-linux-")
+                    && (asset.name.ends_with(".AppImage") || asset.name.ends_with(".deb"))
+            })
+        })
+        .cloned()
+}
+
+fn current_target() -> &'static str {
+    #[cfg(target_arch = "x86_64")]
+    {
+        "x86_64-unknown-linux-gnu"
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        "aarch64-unknown-linux-gnu"
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        "unknown-linux"
+    }
+}
+
+fn display_manifest_tag(manifest: &UpdateManifest) -> String {
+    manifest
+        .tag
+        .clone()
+        .filter(|tag| !tag.trim().is_empty())
+        .unwrap_or_else(|| format!("v{}", manifest.effective_version()))
 }
 
 fn preferred_asset_patterns() -> &'static [&'static str] {
@@ -223,19 +432,37 @@ fn download_asset(asset: &ReleaseAsset) -> Result<PathBuf, String> {
         return Err(command_error("Update download failed", &output));
     }
 
-    if asset.name.ends_with(".AppImage") {
-        let mut permissions = fs::metadata(&destination)
+    maybe_make_executable_and_open(&destination, &asset.name)?;
+    Ok(destination)
+}
+
+fn write_downloaded_asset(destination: &PathBuf, bytes: &[u8]) -> Result<(), String> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "Download folder unavailable".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not create download folder: {error}"))?;
+    if destination.exists() {
+        fs::remove_file(destination)
+            .map_err(|error| format!("Could not replace old download: {error}"))?;
+    }
+    fs::write(destination, bytes).map_err(|error| format!("Could not write update: {error}"))
+}
+
+fn maybe_make_executable_and_open(destination: &PathBuf, asset_name: &str) -> Result<(), String> {
+    if asset_name.ends_with(".AppImage") {
+        let mut permissions = fs::metadata(destination)
             .map_err(|error| format!("Downloaded update unavailable: {error}"))?
             .permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&destination, permissions)
+        fs::set_permissions(destination, permissions)
             .map_err(|error| format!("Could not make AppImage executable: {error}"))?;
     }
 
     if std::env::var("NVPN_UPDATE_SKIP_OPEN").ok().as_deref() != Some("1") {
-        let _ = Command::new("xdg-open").arg(&destination).spawn();
+        let _ = Command::new("xdg-open").arg(destination).spawn();
     }
-    Ok(destination)
+    Ok(())
 }
 
 fn update_download_dir() -> PathBuf {
@@ -310,6 +537,7 @@ mod tests {
         let asset = preferred_linux_asset(&manifest, HTREE_MANIFEST_URL).expect("asset");
         assert_eq!(asset.name, preferred_test_asset_name());
         assert!(asset.url.ends_with("/assets/app"));
+        assert!(!asset.verified);
     }
 
     #[test]
@@ -340,6 +568,25 @@ mod tests {
 
         assert_eq!(manifest.tag, "v4.0.12");
         assert_eq!(manifest.assets[0].path, "https://example.invalid/app.deb");
+    }
+
+    #[test]
+    fn secure_linux_asset_selection_ignores_cli_archives() {
+        let manifest: UpdateManifest = serde_json::from_str(&format!(
+            r#"{{
+                "tag": "v4.0.48",
+                "assets": [
+                    {{ "name": "nvpn-v4.0.48-{target}.tar.gz", "path": "assets/cli.tgz" }},
+                    {{ "name": "{app}", "path": "assets/app" }}
+                ]
+            }}"#,
+            target = current_target(),
+            app = preferred_test_asset_name(),
+        ))
+        .expect("manifest");
+
+        let asset = preferred_secure_linux_asset(&manifest).expect("linux app asset");
+        assert_eq!(asset.path, "assets/app");
     }
 
     #[cfg(target_arch = "x86_64")]

@@ -20,11 +20,21 @@ Release artifacts currently cover native Apple Silicon macOS, Linux x64, Windows
 ## Quick Start
 
 ```bash
-cargo install nvpn
+cargo install nvpn --force
 nvpn init
+MY_NPUB='<paste nostr_pubkey from nvpn init>'
+nvpn set --participant "$MY_NPUB"
 nvpn create-invite
-nvpn import-invite 'nvpn://invite/...'
-nvpn start --connect
+nvpn start --daemon --connect
+```
+
+Use the printed invite on another device; do not paste the example placeholder:
+
+```bash
+INVITE='<paste invite copied from nvpn create-invite>'
+nvpn init
+nvpn import-invite "$INVITE"
+nvpn start --daemon --connect
 ```
 
 For the background daemon flow used by desktop apps:

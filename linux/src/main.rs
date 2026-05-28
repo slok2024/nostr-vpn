@@ -3968,6 +3968,7 @@ fn detail_row(parent: &gtk::Box, title: &str, value: &str) {
         return;
     }
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    row.set_hexpand(true);
     let title_label = gtk::Label::new(Some(title));
     title_label.add_css_class("caption");
     title_label.add_css_class("dim-label");
@@ -3978,7 +3979,9 @@ fn detail_row(parent: &gtk::Box, title: &str, value: &str) {
     let value_label = gtk::Label::new(Some(value));
     value_label.set_xalign(0.0);
     value_label.set_selectable(true);
-    value_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    value_label.set_hexpand(true);
+    value_label.set_wrap(true);
+    value_label.set_wrap_mode(gtk::pango::WrapMode::Char);
     row.append(&value_label);
     parent.append(&row);
 }

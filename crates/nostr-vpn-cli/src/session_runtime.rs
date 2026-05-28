@@ -603,7 +603,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let timeout = network_probe_timeout(&app);
     let mut captive_portal = detect_captive_portal(timeout).await;
     let mut port_mapping_runtime = PortMappingRuntime::default();
-    let mut vpn_enabled = !args.paused;
+    let mut vpn_enabled = daemon_start_vpn_enabled(&app, args.paused);
     if daemon_vpn_active(vpn_enabled, expected_peers) {
         refresh_port_mapping(
             &app,
@@ -1101,6 +1101,12 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         DaemonControlRequest::Stop => break,
                         DaemonControlRequest::Pause => {
                             vpn_enabled = false;
+                            let persist_result =
+                                persist_desired_daemon_vpn_enabled_in_config(
+                                    &mut app,
+                                    &config_path,
+                                    vpn_enabled,
+                                );
                             let join_requests_active = app.join_requests_enabled();
                             port_mapping_runtime.stop().await;
                             vpn_status = daemon_vpn_idle_status(
@@ -1109,34 +1115,38 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                 join_requests_active,
                             )
                             .to_string();
-                            Ok(())
+                            persist_result.map(|_| ())
                         }
                         DaemonControlRequest::Resume => {
-                            if !vpn_enabled {
-                                vpn_enabled = true;
-                                if daemon_vpn_active(vpn_enabled, expected_peers) {
-                                    let runtime_listen_port = tunnel_runtime
-                                        .active_listen_port
-                                        .unwrap_or(app.node.listen_port);
-                                    refresh_port_mapping(
-                                        &app,
-                                        &network_snapshot,
-                                        runtime_listen_port,
-                                        &mut port_mapping_runtime,
-                                    )
-                                    .await;
-                                    vpn_status = "VPN on".to_string();
-                                } else {
-                                    port_mapping_runtime.stop().await;
-                                    vpn_status = daemon_vpn_idle_status(
-                                        vpn_enabled,
-                                        expected_peers,
-                                        app.join_requests_enabled(),
-                                    )
-                                    .to_string();
-                                }
+                            vpn_enabled = true;
+                            let persist_result =
+                                persist_desired_daemon_vpn_enabled_in_config(
+                                    &mut app,
+                                    &config_path,
+                                    vpn_enabled,
+                                );
+                            if daemon_vpn_active(vpn_enabled, expected_peers) {
+                                let runtime_listen_port = tunnel_runtime
+                                    .active_listen_port
+                                    .unwrap_or(app.node.listen_port);
+                                refresh_port_mapping(
+                                    &app,
+                                    &network_snapshot,
+                                    runtime_listen_port,
+                                    &mut port_mapping_runtime,
+                                )
+                                .await;
+                                vpn_status = "VPN on".to_string();
+                            } else {
+                                port_mapping_runtime.stop().await;
+                                vpn_status = daemon_vpn_idle_status(
+                                    vpn_enabled,
+                                    expected_peers,
+                                    app.join_requests_enabled(),
+                                )
+                                .to_string();
                             }
-                            Ok(())
+                            persist_result.map(|_| ())
                         }
                         DaemonControlRequest::Reload => {
                             match update_daemon_config_from_staged_request(&config_path) {

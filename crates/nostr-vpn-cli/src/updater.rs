@@ -1,19 +1,45 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
-use serde::Deserialize;
+use hashtree_blossom::{BlossomClient, BlossomStore};
+use hashtree_core::{HashTree, HashTreeConfig};
+use hashtree_resolver::nostr::{NostrResolverConfig, NostrRootResolver};
+use hashtree_updater::{
+    DownloadOptions, HashtreeUpdater, UpdateAsset, UpdateCheckOptions, UpdateManifest, UpdateRef,
+    UpdateTarget,
+};
+use serde::{Deserialize, Serialize};
 
 use super::{PRODUCT_VERSION, UpdateArgs, UpdateSource};
 
 const GITHUB_LATEST_RELEASE_URL: &str =
     "https://api.github.com/repos/mmalmi/nostr-vpn/releases/latest";
 const HTREE_MANIFEST_URL: &str = "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json";
+const HTREE_UPDATE_REF: &str = "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest";
 const UPDATE_CONNECT_TIMEOUT_SECS: &str = "4";
 const UPDATE_MANIFEST_TIMEOUT_SECS: &str = "8";
 const UPDATE_DOWNLOAD_TIMEOUT_SECS: &str = "180";
 const UPDATE_USER_AGENT: &str = "nvpn-updater";
+const DEFAULT_UPDATE_RELAYS: &[&str] = &[
+    "wss://temp.iris.to",
+    "wss://relay.damus.io",
+    "wss://relay.snort.social",
+    "wss://relay.primal.net",
+    "wss://upload.iris.to/nostr",
+];
+const DEFAULT_BLOSSOM_READ_SERVERS: &[&str] = &[
+    "https://cdn.iris.to",
+    "https://hashtree.iris.to",
+    "https://upload.iris.to",
+    "https://blossom.primal.net",
+];
+const SECURE_SOURCE_NAME: &str = "hashtree-nostr-blossom";
+const LEGACY_HTREE_SOURCE_NAME: &str = "legacy-htree-url";
+const GITHUB_SOURCE_NAME: &str = "github";
 
 #[derive(Debug, Deserialize)]
 struct ReleaseManifest {
@@ -29,51 +55,256 @@ struct ReleaseAsset {
     path: String,
 }
 
-pub(crate) fn run_update(args: UpdateArgs) -> Result<()> {
-    let (manifest_url, manifest) = fetch_first_manifest(args.source)?;
-    let newer = version_is_newer(&manifest.tag, PRODUCT_VERSION);
-    let asset = preferred_cli_asset(&manifest).ok_or_else(|| {
-        anyhow!(
-            "release {} has no nvpn CLI asset for {}",
-            manifest.tag,
-            current_target()
-        )
-    })?;
-    let asset_url = manifest_asset_url(&manifest_url, &asset.path);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UpdateMode {
+    Cli,
+    App,
+}
+
+impl UpdateMode {
+    fn from_args(args: &UpdateArgs) -> Self {
+        if args.app { Self::App } else { Self::Cli }
+    }
+
+    fn noun(self) -> &'static str {
+        match self {
+            Self::Cli => "nvpn CLI",
+            Self::App => "Nostr VPN app",
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct UpdateJson<'a> {
+    available: bool,
+    current_version: &'a str,
+    latest_version: String,
+    tag: String,
+    asset: String,
+    source: &'a str,
+    verified: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+}
+
+struct LegacySelection {
+    manifest: ReleaseManifest,
+    asset: ReleaseAsset,
+    asset_url: String,
+    source_name: &'static str,
+    update_available: bool,
+}
+
+pub(crate) async fn run_update(args: UpdateArgs) -> Result<()> {
+    if should_use_secure_hashtree(args.source) {
+        return run_secure_update(args).await;
+    }
+
+    run_legacy_update(args)
+}
+
+fn should_use_secure_hashtree(source: UpdateSource) -> bool {
+    std::env::var("NVPN_UPDATE_MANIFEST_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .is_none()
+        && !matches!(source, UpdateSource::Github)
+}
+
+fn run_legacy_update(args: UpdateArgs) -> Result<()> {
+    let mode = UpdateMode::from_args(&args);
+    let selection = legacy_selection(args.source, mode)?;
 
     if args.check {
-        if newer {
-            println!("update available: {PRODUCT_VERSION} -> {}", manifest.tag);
-        } else {
-            println!("nvpn {PRODUCT_VERSION} is up to date");
-        }
-        println!("asset={}", asset.name);
-        println!("url={asset_url}");
+        print_update_check(
+            mode,
+            selection.update_available,
+            &selection.manifest.tag,
+            &selection.asset.name,
+            selection.source_name,
+            false,
+            Some(&selection.asset_url),
+            args.json,
+            None,
+        )?;
         return Ok(());
     }
 
-    if !newer && !args.force {
-        println!("nvpn {PRODUCT_VERSION} is up to date");
+    if !selection.update_available && !args.force {
+        print_up_to_date(
+            mode,
+            &selection.manifest.tag,
+            selection.source_name,
+            false,
+            args.json,
+        )?;
         return Ok(());
     }
 
-    let destination = args.path.map(Ok).unwrap_or_else(|| {
-        std::env::current_exe().context("failed to resolve current executable")
-    })?;
     let temp_dir = create_temp_dir("nvpn-update")?;
-    let archive_path = temp_dir.join(safe_file_name(&asset.name));
-    download_asset(&asset_url, &archive_path)?;
-    extract_archive(&archive_path, &temp_dir)?;
-    let binary = find_nvpn_binary(&temp_dir)?;
-    install_parent(&destination)?;
-    install_bundled_helpers(&binary, &destination)?;
-    install_binary(&binary, &destination)?;
+    let archive_path = selected_download_path(
+        args.download_dir.as_deref(),
+        &selection.asset.name,
+        &temp_dir,
+    )?;
+    download_asset(&selection.asset_url, &archive_path)?;
+
+    if args.download_only || mode == UpdateMode::App {
+        print_downloaded(
+            selection.update_available,
+            &selection.manifest.tag,
+            &selection.asset.name,
+            selection.source_name,
+            false,
+            Some(&selection.asset_url),
+            &archive_path,
+            args.json,
+        )?;
+        return Ok(());
+    }
+
+    install_cli_archive(&archive_path, &temp_dir, args.path.as_deref())?;
     let _ = fs::remove_dir_all(&temp_dir);
 
     println!(
         "updated nvpn at {} from {PRODUCT_VERSION} to {}",
-        destination.display(),
-        manifest.tag
+        args.path
+            .as_deref()
+            .map_or_else(current_exe_display, |path| path.display().to_string()),
+        selection.manifest.tag
+    );
+    Ok(())
+}
+
+fn legacy_selection(source: UpdateSource, mode: UpdateMode) -> Result<LegacySelection> {
+    let (manifest_url, manifest) = fetch_first_manifest(source)?;
+    let newer = version_is_newer(&manifest.tag, PRODUCT_VERSION);
+    let asset = preferred_asset(&manifest, mode).ok_or_else(|| {
+        anyhow!(
+            "release {} has no {} asset for {}",
+            manifest.tag,
+            mode.noun(),
+            current_target()
+        )
+    })?;
+    let asset_url = manifest_asset_url(&manifest_url, &asset.path);
+    let source_name = if manifest_url.contains("api.github.com") {
+        GITHUB_SOURCE_NAME
+    } else {
+        LEGACY_HTREE_SOURCE_NAME
+    };
+
+    Ok(LegacySelection {
+        manifest,
+        asset,
+        asset_url,
+        source_name,
+        update_available: newer,
+    })
+}
+
+async fn run_secure_update(args: UpdateArgs) -> Result<()> {
+    let mode = UpdateMode::from_args(&args);
+    let reference = secure_update_ref()?;
+    let relays = update_relays();
+    let blossom_servers = blossom_read_servers();
+    let resolver = NostrRootResolver::new(NostrResolverConfig {
+        relays,
+        resolve_timeout: Duration::from_secs(
+            UPDATE_MANIFEST_TIMEOUT_SECS.parse::<u64>().unwrap_or(8),
+        ),
+        secret_key: None,
+    })
+    .await
+    .context("failed to connect to Nostr release relays")?;
+    let blossom = BlossomClient::new_empty(nostr::Keys::generate())
+        .with_read_servers(blossom_servers)
+        .with_timeout(Duration::from_secs(
+            UPDATE_DOWNLOAD_TIMEOUT_SECS.parse::<u64>().unwrap_or(180),
+        ));
+    let store = Arc::new(BlossomStore::new(blossom));
+    let tree = HashTree::new(HashTreeConfig::new(store).public());
+    let updater = HashtreeUpdater::new(resolver, tree);
+    let mut check = updater
+        .check(UpdateCheckOptions {
+            reference,
+            current_version: PRODUCT_VERSION.to_string(),
+            target: UpdateTarget::new(current_target()),
+            ..UpdateCheckOptions::default()
+        })
+        .await
+        .context("failed to resolve signed hashtree release")?;
+    let asset = preferred_secure_asset(&check.manifest, mode).ok_or_else(|| {
+        anyhow!(
+            "release {} has no {} asset for {}",
+            check.manifest.effective_version(),
+            mode.noun(),
+            current_target()
+        )
+    })?;
+    check.asset = Some(asset.clone());
+    let tag = display_manifest_tag(&check.manifest);
+    let available = check.update_available;
+
+    if args.check {
+        print_update_check(
+            mode,
+            available,
+            &tag,
+            &asset.name,
+            SECURE_SOURCE_NAME,
+            true,
+            None,
+            args.json,
+            None,
+        )?;
+        return Ok(());
+    }
+
+    if !available && !args.force {
+        print_up_to_date(mode, &tag, SECURE_SOURCE_NAME, true, args.json)?;
+        return Ok(());
+    }
+
+    let temp_dir = create_temp_dir("nvpn-update")?;
+    let destination = selected_download_path(args.download_dir.as_deref(), &asset.name, &temp_dir)?;
+    let downloaded = updater
+        .download(
+            &check,
+            DownloadOptions {
+                max_size: None,
+                ..DownloadOptions::default()
+            },
+            None,
+        )
+        .await
+        .with_context(|| format!("failed to download verified hashtree asset {}", asset.name))?;
+    write_downloaded_asset(&destination, &downloaded.bytes)?;
+
+    if args.download_only || mode == UpdateMode::App {
+        print_downloaded(
+            available,
+            &tag,
+            &asset.name,
+            SECURE_SOURCE_NAME,
+            true,
+            None,
+            &destination,
+            args.json,
+        )?;
+        return Ok(());
+    }
+
+    install_cli_archive(&destination, &temp_dir, args.path.as_deref())?;
+    let _ = fs::remove_dir_all(&temp_dir);
+
+    println!(
+        "updated nvpn at {} from {PRODUCT_VERSION} to {tag}",
+        args.path
+            .as_deref()
+            .map_or_else(current_exe_display, |path| path.display().to_string())
     );
     Ok(())
 }
@@ -87,6 +318,43 @@ fn fetch_first_manifest(source: UpdateSource) -> Result<(String, ReleaseManifest
         }
     }
     Err(last_error.unwrap_or_else(|| anyhow!("no update manifest URL configured")))
+}
+
+fn secure_update_ref() -> Result<UpdateRef> {
+    let raw = std::env::var("NVPN_UPDATE_HTREE_REF")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| HTREE_UPDATE_REF.to_string());
+    UpdateRef::parse(&raw).with_context(|| format!("invalid update hashtree ref: {raw}"))
+}
+
+fn update_relays() -> Vec<String> {
+    split_env_csv("NVPN_UPDATE_RELAYS").unwrap_or_else(|| {
+        DEFAULT_UPDATE_RELAYS
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect()
+    })
+}
+
+fn blossom_read_servers() -> Vec<String> {
+    split_env_csv("NVPN_UPDATE_BLOSSOM_SERVERS").unwrap_or_else(|| {
+        DEFAULT_BLOSSOM_READ_SERVERS
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect()
+    })
+}
+
+fn split_env_csv(name: &str) -> Option<Vec<String>> {
+    let values = std::env::var(name)
+        .ok()?
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    (!values.is_empty()).then_some(values)
 }
 
 fn manifest_urls(source: UpdateSource) -> Vec<String> {
@@ -169,6 +437,107 @@ fn preferred_cli_asset(manifest: &ReleaseManifest) -> Option<ReleaseAsset> {
         .cloned()
 }
 
+fn preferred_asset(manifest: &ReleaseManifest, mode: UpdateMode) -> Option<ReleaseAsset> {
+    match mode {
+        UpdateMode::Cli => preferred_cli_asset(manifest),
+        UpdateMode::App => preferred_legacy_app_asset(manifest),
+    }
+}
+
+fn preferred_legacy_app_asset(manifest: &ReleaseManifest) -> Option<ReleaseAsset> {
+    manifest
+        .assets
+        .iter()
+        .find(|asset| app_asset_name_matches_current_target(&asset.name))
+        .cloned()
+}
+
+fn preferred_secure_asset(manifest: &UpdateManifest, mode: UpdateMode) -> Option<UpdateAsset> {
+    match mode {
+        UpdateMode::Cli => preferred_secure_cli_asset(manifest),
+        UpdateMode::App => preferred_secure_app_asset(manifest),
+    }
+}
+
+fn preferred_secure_cli_asset(manifest: &UpdateManifest) -> Option<UpdateAsset> {
+    let tag = display_manifest_tag(manifest);
+    let target = current_target();
+    let archive_ext = if cfg!(target_os = "windows") {
+        ".zip"
+    } else {
+        ".tar.gz"
+    };
+    let exact = format!("nvpn-{tag}-{target}{archive_ext}");
+    let unversioned = format!("nvpn-{target}{archive_ext}");
+
+    manifest
+        .assets
+        .iter()
+        .find(|asset| asset.name == exact)
+        .or_else(|| {
+            manifest
+                .assets
+                .iter()
+                .find(|asset| asset.name == unversioned)
+        })
+        .or_else(|| {
+            manifest.assets.iter().find(|asset| {
+                asset.name.starts_with("nvpn-")
+                    && asset.name.contains(target)
+                    && asset.name.ends_with(archive_ext)
+            })
+        })
+        .cloned()
+}
+
+fn preferred_secure_app_asset(manifest: &UpdateManifest) -> Option<UpdateAsset> {
+    manifest
+        .assets
+        .iter()
+        .find(|asset| app_asset_name_matches_current_target(&asset.name))
+        .cloned()
+}
+
+fn app_asset_name_matches_current_target(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        lower.ends_with("-macos-arm64.app.tar.gz")
+            || lower.ends_with("-macos-arm64.dmg")
+            || lower.ends_with("-macos-arm64.zip")
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        lower.ends_with("-linux-x64.deb") || lower.ends_with("-linux-x64.appimage")
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        lower.ends_with("-linux-arm64.deb") || lower.ends_with("-linux-arm64.appimage")
+    }
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        lower.ends_with("-windows-x64-setup.exe")
+    }
+    #[cfg(not(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "linux", target_arch = "aarch64"),
+        all(target_os = "windows", target_arch = "x86_64"),
+    )))]
+    {
+        let _ = lower;
+        false
+    }
+}
+
+fn display_manifest_tag(manifest: &UpdateManifest) -> String {
+    manifest
+        .tag
+        .clone()
+        .filter(|tag| !tag.trim().is_empty())
+        .unwrap_or_else(|| format!("v{}", manifest.effective_version()))
+}
+
 fn current_target() -> &'static str {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
@@ -235,6 +604,163 @@ fn download_asset(url: &str, destination: &Path) -> Result<()> {
             command_error("update download failed", &output)
         ));
     }
+    Ok(())
+}
+
+fn selected_download_path(
+    download_dir: Option<&Path>,
+    asset_name: &str,
+    temp_dir: &Path,
+) -> Result<PathBuf> {
+    let file_name = safe_file_name(asset_name);
+    let parent = download_dir.unwrap_or(temp_dir);
+    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
+    Ok(parent.join(file_name))
+}
+
+fn write_downloaded_asset(destination: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    fs::write(destination, bytes).with_context(|| {
+        format!(
+            "failed to write verified update to {}",
+            destination.display()
+        )
+    })
+}
+
+fn install_cli_archive(
+    archive_path: &Path,
+    temp_dir: &Path,
+    destination: Option<&Path>,
+) -> Result<()> {
+    extract_archive(archive_path, temp_dir)?;
+    let binary = find_nvpn_binary(temp_dir)?;
+    let destination = destination
+        .map(Path::to_path_buf)
+        .map(Ok)
+        .unwrap_or_else(|| {
+            std::env::current_exe().context("failed to resolve current executable")
+        })?;
+    install_parent(&destination)?;
+    install_bundled_helpers(&binary, &destination)?;
+    install_binary(&binary, &destination)
+}
+
+fn current_exe_display() -> String {
+    std::env::current_exe().map_or_else(
+        |_| "<current executable>".to_string(),
+        |path| path.display().to_string(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn print_update_check(
+    mode: UpdateMode,
+    available: bool,
+    tag: &str,
+    asset: &str,
+    source: &'static str,
+    verified: bool,
+    url: Option<&str>,
+    json: bool,
+    path: Option<&Path>,
+) -> Result<()> {
+    if json {
+        print_update_json(UpdateJson {
+            available,
+            current_version: PRODUCT_VERSION,
+            latest_version: tag.trim_start_matches('v').to_string(),
+            tag: tag.to_string(),
+            asset: asset.to_string(),
+            source,
+            verified,
+            url: url.map(ToOwned::to_owned),
+            path: path.map(|value| value.display().to_string()),
+        })?;
+        return Ok(());
+    }
+
+    if available {
+        println!("update available: {PRODUCT_VERSION} -> {tag}");
+    } else {
+        println!("{} {PRODUCT_VERSION} is up to date", mode.noun());
+    }
+    println!("asset={asset}");
+    println!("source={source}");
+    println!("verified={verified}");
+    if let Some(url) = url {
+        println!("url={url}");
+    }
+    if let Some(path) = path {
+        println!("path={}", path.display());
+    }
+    Ok(())
+}
+
+fn print_downloaded(
+    available: bool,
+    tag: &str,
+    asset: &str,
+    source: &'static str,
+    verified: bool,
+    url: Option<&str>,
+    path: &Path,
+    json: bool,
+) -> Result<()> {
+    if json {
+        print_update_json(UpdateJson {
+            available,
+            current_version: PRODUCT_VERSION,
+            latest_version: tag.trim_start_matches('v').to_string(),
+            tag: tag.to_string(),
+            asset: asset.to_string(),
+            source,
+            verified,
+            url: url.map(ToOwned::to_owned),
+            path: Some(path.display().to_string()),
+        })?;
+        return Ok(());
+    }
+    println!("downloaded {asset}");
+    println!("path={}", path.display());
+    println!("source={source}");
+    println!("verified={verified}");
+    if let Some(url) = url {
+        println!("url={url}");
+    }
+    Ok(())
+}
+
+fn print_up_to_date(
+    mode: UpdateMode,
+    tag: &str,
+    source: &'static str,
+    verified: bool,
+    json: bool,
+) -> Result<()> {
+    if json {
+        print_update_json(UpdateJson {
+            available: false,
+            current_version: PRODUCT_VERSION,
+            latest_version: tag.trim_start_matches('v').to_string(),
+            tag: tag.to_string(),
+            asset: String::new(),
+            source,
+            verified,
+            url: None,
+            path: None,
+        })?;
+        return Ok(());
+    }
+    println!("{} {PRODUCT_VERSION} is up to date", mode.noun());
+    Ok(())
+}
+
+fn print_update_json(output: UpdateJson<'_>) -> Result<()> {
+    println!("{}", serde_json::to_string(&output)?);
     Ok(())
 }
 
@@ -580,6 +1106,58 @@ mod tests {
                 GITHUB_LATEST_RELEASE_URL.to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn secure_cli_selection_prefers_cli_archive_over_desktop_app() {
+        let archive_ext = if cfg!(target_os = "windows") {
+            ".zip"
+        } else {
+            ".tar.gz"
+        };
+        let manifest: UpdateManifest = serde_json::from_str(&format!(
+            r#"{{
+                "tag": "v4.0.48",
+                "assets": [
+                    {{ "name": "nostr-vpn-v4.0.48-macos-arm64.app.tar.gz", "path": "assets/app.tgz" }},
+                    {{ "name": "nvpn-v4.0.48-{target}{archive_ext}", "path": "assets/cli.tgz" }}
+                ]
+            }}"#,
+            target = current_target(),
+            archive_ext = archive_ext,
+        ))
+        .expect("manifest");
+
+        let asset = preferred_secure_asset(&manifest, UpdateMode::Cli).expect("cli asset");
+        assert_eq!(asset.path, "assets/cli.tgz");
+    }
+
+    #[test]
+    fn secure_app_selection_ignores_cli_archives() {
+        let manifest: UpdateManifest = serde_json::from_str(
+            r#"{
+                "tag": "v4.0.48",
+                "assets": [
+                    { "name": "nvpn-v4.0.48-aarch64-apple-darwin.tar.gz", "path": "assets/cli.tgz" },
+                    { "name": "nostr-vpn-v4.0.48-macos-arm64.app.tar.gz", "path": "assets/app.tgz" }
+                ]
+            }"#,
+        )
+        .expect("manifest");
+
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        {
+            let asset = preferred_secure_asset(&manifest, UpdateMode::App).expect("app asset");
+            assert_eq!(asset.path, "assets/app.tgz");
+        }
+    }
+
+    #[test]
+    fn app_asset_name_matching_rejects_cli_archive() {
+        assert!(!app_asset_name_matches_current_target(&format!(
+            "nvpn-v4.0.48-{}.tar.gz",
+            current_target()
+        )));
     }
 
     #[test]

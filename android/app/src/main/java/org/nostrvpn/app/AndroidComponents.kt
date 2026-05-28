@@ -698,9 +698,23 @@ internal fun Notice(text: String) {
 
 @Composable
 internal fun CopyLine(value: String, displayValue: String = value) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(displayValue, modifier = Modifier.weight(1f), color = Muted, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
+    Row(verticalAlignment = Alignment.Top) {
+        Text(
+            breakableDisplayValue(displayValue),
+            modifier = Modifier.weight(1f),
+            color = Muted,
+            softWrap = true,
+        )
         CopyButton(value)
+    }
+}
+
+private fun breakableDisplayValue(value: String): String {
+    val display = value.ifBlank { "-" }
+    return if (display.length > 24 && display.none { it.isWhitespace() }) {
+        display.chunked(8).joinToString("\u200B")
+    } else {
+        display
     }
 }
 

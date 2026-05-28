@@ -232,8 +232,53 @@ pub(crate) fn write_daemon_control_request(
         )
     })?;
     set_daemon_runtime_file_permissions(&control_file)?;
+    if let Err(error) = persist_desired_daemon_vpn_enabled_for_request(config_path, request) {
+        eprintln!(
+            "daemon: failed to persist desired VPN state in {}: {}",
+            config_path.display(),
+            error
+        );
+    }
     project_daemon_vpn_enabled_request(config_path, request);
     Ok(())
+}
+
+pub(crate) fn persist_desired_daemon_vpn_enabled_for_request(
+    config_path: &Path,
+    request: DaemonControlRequest,
+) -> Result<Option<bool>> {
+    let vpn_enabled = match request {
+        DaemonControlRequest::Pause => false,
+        DaemonControlRequest::Resume => true,
+        DaemonControlRequest::Reload | DaemonControlRequest::Stop => return Ok(None),
+    };
+
+    persist_desired_daemon_vpn_enabled(config_path, vpn_enabled)?;
+    Ok(Some(vpn_enabled))
+}
+
+pub(crate) fn persist_desired_daemon_vpn_enabled(
+    config_path: &Path,
+    vpn_enabled: bool,
+) -> Result<bool> {
+    let mut app = load_or_default_config(config_path)?;
+    persist_desired_daemon_vpn_enabled_in_config(&mut app, config_path, vpn_enabled)
+}
+
+pub(crate) fn persist_desired_daemon_vpn_enabled_in_config(
+    app: &mut AppConfig,
+    config_path: &Path,
+    vpn_enabled: bool,
+) -> Result<bool> {
+    if app.autoconnect == vpn_enabled {
+        return Ok(false);
+    }
+
+    app.autoconnect = vpn_enabled;
+    app.ensure_defaults();
+    maybe_autoconfigure_node(app);
+    app.save(config_path)?;
+    Ok(true)
 }
 
 fn project_daemon_vpn_enabled_request(config_path: &Path, request: DaemonControlRequest) {

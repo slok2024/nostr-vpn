@@ -1174,17 +1174,17 @@ private struct DeviceDetailSheet: View {
     }
 
     private func labelValueRow(_ label: String, _ value: String, copyable: Bool = false) -> some View {
-        HStack(alignment: .top) {
+        HStack(alignment: .top, spacing: 8) {
             Text(label)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 90, alignment: .leading)
             Text(value)
                 .font(.callout)
-                .lineLimit(2)
-                .truncationMode(.middle)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
-            Spacer(minLength: 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
             if copyable {
                 Button {
                     model.copy(value)
@@ -1753,13 +1753,13 @@ private struct CopyLine: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        HStack {
+        HStack(alignment: .top, spacing: 8) {
             Text((displayValue ?? value).isEmpty ? "-" : (displayValue ?? value))
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer()
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Button {
                 model.copy(value)
             } label: {

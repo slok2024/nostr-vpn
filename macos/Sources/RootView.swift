@@ -821,8 +821,8 @@ struct RootView: View {
         return VStack(alignment: .leading, spacing: 4) {
             Text(displayValue)
                 .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-                .truncationMode(.middle)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             HStack(spacing: 6) {
                 Text(title)

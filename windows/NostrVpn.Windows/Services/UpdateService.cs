@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -15,6 +16,19 @@ public sealed class UpdateService
 
     public async Task<UpdateResult> CheckAsync(string currentVersion)
     {
+        if (UseBundledHelper())
+        {
+            var helper = await RunHelperAsync("update", "--app", "--check", "--json");
+            EnsureVerifiedHelperResult(helper);
+            return new UpdateResult(
+                helper.Available,
+                helper.Tag,
+                null,
+                string.IsNullOrWhiteSpace(helper.Asset) ? null : helper.Asset,
+                helper.Available ? $"Update {helper.Tag} available" : "Up to date",
+                UseBundledHelper: helper.Available);
+        }
+
         Exception? lastError = null;
         foreach (var manifestUri in ManifestUris())
         {
@@ -32,7 +46,8 @@ public sealed class UpdateService
                     asset?.Name,
                     available
                         ? asset is null ? $"Update {manifest.Tag} found without a Windows asset" : $"Update {manifest.Tag} available"
-                        : "Up to date");
+                        : "Up to date",
+                    UseBundledHelper: false);
             }
             catch (Exception error)
             {
@@ -74,12 +89,82 @@ public sealed class UpdateService
         return destination;
     }
 
+    public async Task<string> DownloadWithBundledHelperAsync()
+    {
+        var downloadDir = Environment.GetEnvironmentVariable("NVPN_UPDATE_DOWNLOAD_DIR");
+        if (string.IsNullOrWhiteSpace(downloadDir))
+        {
+            downloadDir = Path.Combine(Path.GetTempPath(), "NostrVpnDownloads");
+        }
+        Directory.CreateDirectory(downloadDir);
+        var helper = await RunHelperAsync(
+            "update",
+            "--app",
+            "--download-only",
+            "--download-dir",
+            downloadDir,
+            "--json");
+        EnsureVerifiedHelperResult(helper);
+        if (string.IsNullOrWhiteSpace(helper.Path))
+        {
+            throw new InvalidOperationException("bundled updater helper did not return a downloaded file");
+        }
+        return helper.Path;
+    }
+
     private static IReadOnlyList<Uri> ManifestUris()
     {
         var overrideUrl = Environment.GetEnvironmentVariable("NVPN_UPDATE_MANIFEST_URL");
         return string.IsNullOrWhiteSpace(overrideUrl)
             ? new[] { HtreeManifestUri, GithubLatestReleaseUri }
             : new[] { new Uri(overrideUrl) };
+    }
+
+    private static bool UseBundledHelper()
+    {
+        return string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NVPN_UPDATE_MANIFEST_URL"))
+            && File.Exists(BundledHelperPath());
+    }
+
+    private static string BundledHelperPath()
+    {
+        return Path.Combine(AppContext.BaseDirectory, "nvpn.exe");
+    }
+
+    private static async Task<BundledUpdateHelperResult> RunHelperAsync(params string[] arguments)
+    {
+        using var process = new Process();
+        process.StartInfo = new ProcessStartInfo
+        {
+            FileName = BundledHelperPath(),
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var argument in arguments)
+        {
+            process.StartInfo.ArgumentList.Add(argument);
+        }
+        process.Start();
+        var stdout = await process.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(stderr)
+                ? "bundled updater helper failed"
+                : stderr.Trim());
+        }
+        return JsonSerializer.Deserialize<BundledUpdateHelperResult>(stdout, JsonOptions)
+            ?? throw new InvalidOperationException("bundled updater helper returned invalid output");
+    }
+
+    private static void EnsureVerifiedHelperResult(BundledUpdateHelperResult helper)
+    {
+        if (!helper.Verified || !string.Equals(helper.Source, "hashtree-nostr-blossom", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("bundled updater helper did not verify the update");
+        }
     }
 
     private static async Task<string> ReadStringAsync(Uri uri)
@@ -120,7 +205,24 @@ public sealed class UpdateService
     }
 }
 
-public sealed record UpdateResult(bool Available, string Tag, Uri? AssetUrl, string? AssetName, string Message);
+public sealed record UpdateResult(
+    bool Available,
+    string Tag,
+    Uri? AssetUrl,
+    string? AssetName,
+    string Message,
+    bool UseBundledHelper);
+
+public sealed class BundledUpdateHelperResult
+{
+    public bool Available { get; set; }
+    public string Tag { get; set; } = "";
+    public string Asset { get; set; } = "";
+    public string Source { get; set; } = "";
+    public bool Verified { get; set; }
+    public string? Url { get; set; }
+    public string? Path { get; set; }
+}
 
 public sealed class ReleaseManifest
 {

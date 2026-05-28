@@ -54,6 +54,7 @@ final class AppManager: ObservableObject {
     private var startupUrlsDrained = false
     private var startupUpdateCheckDone = false
     private var updateAssetUrl: URL?
+    private var updateUsesBundledHelper = false
     private let updateManifestUrls: [URL] = {
         if let overrideUrl = ProcessInfo.processInfo.environment["NVPN_UPDATE_MANIFEST_URL"]
             .flatMap(URL.init(string:)) {
@@ -138,7 +139,7 @@ final class AppManager: ObservableObject {
     }
 
     var updateInstallEnabled: Bool {
-        updateAvailable && updateAssetUrl != nil && !updateChecking && !updateInstalling
+        updateAvailable && (updateUsesBundledHelper || updateAssetUrl != nil) && !updateChecking && !updateInstalling
     }
 
     func start() {
@@ -727,6 +728,8 @@ final class AppManager: ObservableObject {
             } catch {
                 await MainActor.run {
                     self.updateChecking = false
+                    self.updateUsesBundledHelper = false
+                    self.updateAssetUrl = nil
                     if manual {
                         self.updateStatus = error.localizedDescription
                     }
@@ -771,6 +774,10 @@ final class AppManager: ObservableObject {
     }
 
     func installUpdate() {
+        if updateUsesBundledHelper {
+            installBundledHelperUpdate()
+            return
+        }
         guard let updateAssetUrl else {
             updateStatus = "No macOS update asset found"
             return
@@ -799,6 +806,17 @@ final class AppManager: ObservableObject {
     }
 
     private func fetchUpdateCheck() async throws -> UpdateCheck {
+        if ProcessInfo.processInfo.environment["NVPN_UPDATE_MANIFEST_URL"] == nil {
+            let result = try await runBundledUpdateHelper(arguments: ["update", "--app", "--check", "--json"])
+            let asset = result.asset.isEmpty ? nil : ReleaseAsset(name: result.asset, path: result.url ?? "")
+            return UpdateCheck(
+                manifest: ReleaseManifest(tag: result.tag, assets: asset.map { [$0] } ?? []),
+                asset: asset,
+                assetUrl: nil,
+                isNewer: result.available,
+                usesBundledHelper: true
+            )
+        }
         let manifestUrls = await MainActor.run { self.updateManifestUrls }
         var lastError: Error?
         for manifestUrl in manifestUrls {
@@ -812,7 +830,8 @@ final class AppManager: ObservableObject {
                     manifest: manifest,
                     asset: asset,
                     assetUrl: assetUrl,
-                    isNewer: versionIsNewer(manifest.tag, than: currentVersion)
+                    isNewer: versionIsNewer(manifest.tag, than: currentVersion),
+                    usesBundledHelper: false
                 )
             } catch {
                 lastError = error is DecodingError ? UpdateFetchError.malformedManifest : error
@@ -826,16 +845,54 @@ final class AppManager: ObservableObject {
         updateChecking = false
         updateAvailable = check.isNewer
         updateVersion = check.manifest.tag
+        updateUsesBundledHelper = check.isNewer && check.usesBundledHelper
         updateAssetUrl = check.isNewer ? check.assetUrl : nil
         if check.isNewer {
-            updateStatus = check.assetUrl == nil ? "Update \(check.manifest.tag) found without a macOS asset" : "Update \(check.manifest.tag) available"
-            if allowAutoInstall, autoInstallUpdates, check.assetUrl != nil {
+            let hasAsset = check.usesBundledHelper || check.assetUrl != nil
+            updateStatus = hasAsset ? "Update \(check.manifest.tag) available" : "Update \(check.manifest.tag) found without a macOS asset"
+            if allowAutoInstall, autoInstallUpdates, hasAsset {
                 installUpdate()
             }
         } else if manual {
             updateStatus = "Up to date"
         } else {
             updateStatus = ""
+        }
+    }
+
+    private func installBundledHelperUpdate() {
+        guard !updateInstalling else {
+            return
+        }
+        updateInstalling = true
+        updateStatus = "Downloading \(updateVersion)"
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            do {
+                let downloadDir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("NostrVpnDownloads", isDirectory: true)
+                let result = try await runBundledUpdateHelper(arguments: [
+                    "update",
+                    "--app",
+                    "--download-only",
+                    "--download-dir",
+                    downloadDir.path,
+                    "--json"
+                ])
+                guard let path = result.path, !path.isEmpty else {
+                    throw UpdateError.missingDownloadedPath
+                }
+                try await MainActor.run {
+                    try self.installDownloadedUpdate(URL(fileURLWithPath: path))
+                }
+            } catch {
+                await MainActor.run {
+                    self.updateInstalling = false
+                    self.updateStatus = error.localizedDescription
+                }
+            }
         }
     }
 
@@ -1303,6 +1360,11 @@ struct ReleaseManifest: Decodable {
         case assets
     }
 
+    init(tag: String, assets: [ReleaseAsset]) {
+        self.tag = tag
+        self.assets = assets
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         if let tag = try container.decodeIfPresent(String.self, forKey: .tag) {
@@ -1335,6 +1397,11 @@ struct ReleaseAsset: Decodable {
         case browserDownloadUrl = "browser_download_url"
     }
 
+    init(name: String, path: String) {
+        self.name = name
+        self.path = path
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.name = try container.decode(String.self, forKey: .name)
@@ -1356,6 +1423,17 @@ struct UpdateCheck {
     let asset: ReleaseAsset?
     let assetUrl: URL?
     let isNewer: Bool
+    let usesBundledHelper: Bool
+}
+
+struct BundledUpdateHelperResult: Decodable {
+    let available: Bool
+    let tag: String
+    let asset: String
+    let source: String
+    let verified: Bool
+    let url: String?
+    let path: String?
 }
 
 enum CopyValue {
@@ -1392,11 +1470,26 @@ enum LaunchAgentError: LocalizedError {
 
 enum UpdateError: LocalizedError {
     case missingAppBundle
+    case missingBundledHelper
+    case helperFailed(String)
+    case helperOutputInvalid
+    case helperReturnedUnverifiedSource
+    case missingDownloadedPath
 
     var errorDescription: String? {
         switch self {
         case .missingAppBundle:
             return "Downloaded update did not contain Nostr VPN.app."
+        case .missingBundledHelper:
+            return "Bundled nvpn updater helper was not found."
+        case .helperFailed(let message):
+            return message.isEmpty ? "Bundled updater helper failed." : message
+        case .helperOutputInvalid:
+            return "Bundled updater helper returned invalid output."
+        case .helperReturnedUnverifiedSource:
+            return "Bundled updater helper did not verify the update."
+        case .missingDownloadedPath:
+            return "Bundled updater helper did not return a downloaded file."
         }
     }
 }
@@ -1629,6 +1722,54 @@ private func moveDownloadedUpdate(_ downloadedUrl: URL, from assetUrl: URL) thro
     }
     try FileManager.default.moveItem(at: downloadedUrl, to: destination)
     return destination
+}
+
+private func bundledUpdaterHelperURL() throws -> URL {
+    if let url = Bundle.main.url(forResource: "nvpn", withExtension: nil, subdirectory: "binaries") {
+        return url
+    }
+    if let url = Bundle.main.url(forResource: "nvpn", withExtension: nil) {
+        return url
+    }
+    throw UpdateError.missingBundledHelper
+}
+
+private func runBundledUpdateHelper(arguments: [String]) async throws -> BundledUpdateHelperResult {
+    let output = try await runBundledUpdateHelperProcess(arguments: arguments)
+    let result = try JSONDecoder().decode(BundledUpdateHelperResult.self, from: output)
+    guard result.verified && result.source == "hashtree-nostr-blossom" else {
+        throw UpdateError.helperReturnedUnverifiedSource
+    }
+    return result
+}
+
+private func runBundledUpdateHelperProcess(arguments: [String]) async throws -> Data {
+    let executable = try bundledUpdaterHelperURL()
+    return try await withCheckedThrowingContinuation { continuation in
+        let process = Process()
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.executableURL = executable
+        process.arguments = arguments
+        process.standardOutput = stdout
+        process.standardError = stderr
+        process.terminationHandler = { process in
+            let output = stdout.fileHandleForReading.readDataToEndOfFile()
+            let errorOutput = stderr.fileHandleForReading.readDataToEndOfFile()
+            if process.terminationStatus == 0 {
+                continuation.resume(returning: output)
+                return
+            }
+            let message = String(data: errorOutput, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            continuation.resume(throwing: UpdateError.helperFailed(message))
+        }
+        do {
+            try process.run()
+        } catch {
+            continuation.resume(throwing: error)
+        }
+    }
 }
 
 private func loadUpdateData(from url: URL) async throws -> Data {

@@ -56,6 +56,14 @@ pub fn parse_network_invite(value: &str) -> Result<NetworkInvite> {
         let payload = trimmed
             .strip_prefix(NETWORK_INVITE_PREFIX)
             .unwrap_or(trimmed);
+        if payload.trim().is_empty() {
+            return Err(anyhow!("invite payload is empty"));
+        }
+        if looks_like_invite_placeholder(payload) {
+            return Err(anyhow!(
+                "invite code is a placeholder; paste the full nvpn://invite/... value printed by `nvpn create-invite`"
+            ));
+        }
         let decoded = URL_SAFE_NO_PAD
             .decode(payload)
             .context("failed to decode network invite payload")?;
@@ -150,4 +158,33 @@ fn normalized_invite_strings(values: &[String]) -> Vec<String> {
     normalized.sort();
     normalized.dedup();
     normalized
+}
+
+fn looks_like_invite_placeholder(payload: &str) -> bool {
+    let trimmed = payload.trim();
+    trimmed.contains("...")
+        || trimmed.contains('…')
+        || matches!(
+            trimmed,
+            "<code>" | "<payload>" | "<invite>" | "<full-invite-code>"
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placeholder_invite_has_actionable_error() {
+        let error = parse_network_invite("nvpn://invite/...").expect_err("placeholder fails");
+
+        assert!(
+            error.to_string().contains("placeholder"),
+            "unexpected error: {error:#}"
+        );
+        assert!(
+            error.to_string().contains("nvpn create-invite"),
+            "unexpected error: {error:#}"
+        );
+    }
 }

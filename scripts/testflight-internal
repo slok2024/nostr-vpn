@@ -45,7 +45,7 @@ Environment:
   NVPN_TESTFLIGHT_PUBLIC_LINK_ENABLED
                                    default true for external groups
   NVPN_TESTFLIGHT_PUBLIC_LINK_LIMIT
-                                   default 1000
+                                   optional override; existing limit is preserved
   NVPN_TESTFLIGHT_WHATS_NEW       optional What to Test text
   NVPN_TESTFLIGHT_BETA_DESCRIPTION
                                    optional public beta app description
@@ -139,6 +139,7 @@ APP_ENCRYPTION_DECLARATION_ID = os.environ.get(
 ).strip()
 PUBLIC_ACTIONS = {"public", "public-submit", "public-attach", "public-status"}
 DEFAULT_PUBLIC_GROUP_NAME = "Public Beta"
+DEFAULT_PUBLIC_LINK_LIMIT = 9999
 DEFAULT_WHATS_NEW = (
     "Please test creating or importing a Nostr VPN network, starting and stopping the iOS "
     "packet tunnel, LAN pairing, invite import, peer connectivity, routing settings, "
@@ -175,6 +176,13 @@ def bool_env(name, default=False):
     if raw is None or raw == "":
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def int_env(name):
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return None
+    return int(raw.strip())
 
 
 def b64url(data):
@@ -544,8 +552,9 @@ def create_external_group():
             "NVPN_TESTFLIGHT_PUBLIC_LINK_LIMIT_ENABLED", True
         )
         if attrs["publicLinkLimitEnabled"]:
-            attrs["publicLinkLimit"] = int(
-                os.environ.get("NVPN_TESTFLIGHT_PUBLIC_LINK_LIMIT", "1000")
+            attrs["publicLinkLimit"] = (
+                int_env("NVPN_TESTFLIGHT_PUBLIC_LINK_LIMIT")
+                or DEFAULT_PUBLIC_LINK_LIMIT
             )
 
     body = {
@@ -661,8 +670,11 @@ def ensure_public_group_settings(selected_groups):
             ),
         }
         if attrs["publicLinkLimitEnabled"]:
-            attrs["publicLinkLimit"] = int(
-                os.environ.get("NVPN_TESTFLIGHT_PUBLIC_LINK_LIMIT", "1000")
+            group_attrs = group.get("attributes", {})
+            attrs["publicLinkLimit"] = (
+                int_env("NVPN_TESTFLIGHT_PUBLIC_LINK_LIMIT")
+                or group_attrs.get("publicLinkLimit")
+                or DEFAULT_PUBLIC_LINK_LIMIT
             )
         status, body = request(
             "PATCH",

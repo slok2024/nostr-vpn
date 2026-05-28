@@ -31,7 +31,7 @@ LINUX_DIR = REPO / "linux/resources"
 WINDOWS_DIR = REPO / "windows/NostrVpn.Windows/Assets"
 
 ROUND_RADIUS_FRACTION = 0.195
-MAC_APP_CONTENT_SCALE = 0.84
+MAC_APP_CONTENT_SCALE = 0.80
 
 IOS_OUTPUTS = {
     "AppIcon-20x20@1x.png": 20,
@@ -125,12 +125,16 @@ def render_svg(svg: Path, size: int) -> Image.Image:
         return Image.open(tmp.name).convert("RGBA")
 
 
-def render_padded_svg(svg: Path, size: int, content_scale: float) -> Image.Image:
+def render_app_icon(svg: Path, size: int, rounded: bool, content_scale: float) -> Image.Image:
     if content_scale >= 1:
-        return render_svg(svg, size)
+        image = render_svg(svg, size)
+        return rounded_corners(image) if rounded else image
+
     content_size = max(1, round(size * content_scale))
     image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     content = render_svg(svg, content_size)
+    if rounded:
+        content = rounded_corners(content)
     offset = ((size - content_size) // 2, (size - content_size) // 2)
     image.alpha_composite(content, offset)
     return image
@@ -164,9 +168,7 @@ def write_png_outputs(
     content_scale: float = 1,
 ) -> None:
     for filename, size in outputs.items():
-        image = render_padded_svg(APP_SVG, size, content_scale)
-        if rounded:
-            image = rounded_corners(image)
+        image = render_app_icon(APP_SVG, size, rounded, content_scale)
         save_png(out_dir / filename, image, rgb=rgb)
 
 

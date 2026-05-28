@@ -307,7 +307,7 @@
                           <TextBlock Grid.Row="2" Text="Device ID" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,0" />
                           <DockPanel Grid.Row="2" Grid.Column="1" LastChildFill="True">
                             <Button DockPanel.Dock="Right" Content="Copy" Tag="{Binding SelectedParticipant.Npub}" Click="CopyPeer_Click" Margin="8,0,0,0" />
-                            <TextBlock Text="{Binding SelectedParticipant.Npub}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding SelectedParticipant.Npub}" TextWrapping="Wrap" />
                           </DockPanel>
                         </Grid>
                       </StackPanel>
@@ -526,7 +526,7 @@
                     <ColumnDefinition Width="Auto" />
                   </Grid.ColumnDefinitions>
                   <TextBlock Text="Your Device ID" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
-                  <TextBlock Grid.Column="1" Text="{Binding State.OwnNpub}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="1" Text="{Binding State.OwnNpub}" TextWrapping="Wrap" VerticalAlignment="Center" />
                   <Button Grid.Column="2" Content="Copy" Tag="{Binding State.OwnNpub}" Click="CopyPeer_Click" />
                 </Grid>
                 <Grid>

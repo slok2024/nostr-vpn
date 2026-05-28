@@ -6,6 +6,12 @@
 !crates
 !crates/**
 
+!linux
+linux/**
+!linux/Dockerfile
+!linux/scripts
+!linux/scripts/dev-entrypoint.sh
+
 !umbrel
 umbrel/**
 !umbrel/Dockerfile

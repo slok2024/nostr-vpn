@@ -145,6 +145,45 @@ fn daemon_control_request_projects_desired_vpn_state_immediately() {
 }
 
 #[test]
+fn daemon_control_request_persists_desired_vpn_state() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("nvpn-control-persist-test-{nonce}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let config_path = dir.join("config.toml");
+    let mut config = AppConfig::generated();
+    config.autoconnect = true;
+    config.save(&config_path).expect("save config");
+
+    write_daemon_control_request(&config_path, DaemonControlRequest::Pause)
+        .expect("write pause control request");
+    let paused = AppConfig::load(&config_path).expect("load paused config");
+    assert!(!paused.autoconnect);
+
+    write_daemon_control_request(&config_path, DaemonControlRequest::Resume)
+        .expect("write resume control request");
+    let resumed = AppConfig::load(&config_path).expect("load resumed config");
+    assert!(resumed.autoconnect);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn daemon_start_honors_persisted_desired_vpn_state() {
+    let mut config = AppConfig::generated();
+
+    config.autoconnect = true;
+    assert!(daemon_start_vpn_enabled(&config, false));
+    assert!(!daemon_start_vpn_enabled(&config, true));
+
+    config.autoconnect = false;
+    assert!(!daemon_start_vpn_enabled(&config, false));
+    assert!(!daemon_start_vpn_enabled(&config, true));
+}
+
+#[test]
 fn daemon_state_freshness_allows_pid_namespace_status() {
     let state = DaemonRuntimeState {
         updated_at: 100,
