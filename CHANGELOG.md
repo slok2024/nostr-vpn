@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.49 - 2026-05-30
+
+### Changed
+
+- Android now follows the system dark/light theme.
+- Mobile release tooling now has local environment-file support for physical
+  device smoke tests without committing device IDs or signing details.
+
+### Fixed
+
+- Android and iOS mobile tunnels now keep MagicDNS on a local in-tunnel
+  responder address instead of treating the resolver as a remote nvpn peer.
+- Android and iOS WireGuard exit-node mode now starts without waiting for the
+  upstream handshake, letting Android protect the WireGuard UDP socket before
+  default-route traffic can trap it in the VPN.
+- Mobile WireGuard and FIPS exit traffic now finalizes IPv4 TCP/UDP checksums
+  after address rewrites, fixing packet loss through exit nodes.
+- iOS now installs full-tunnel packet settings for selected FIPS exit nodes and
+  handles MagicDNS plus public DNS failover correctly on iOS 26.
+- Active-network invite generation now requires the local device to be an
+  admin, so non-admin devices cannot mint invites.
+- Mobile app rows now keep full npubs in device detail views and avoid
+  hyphenating/wrapping npubs.
+
 ## 4.0.48 - 2026-05-28
 
 ### Changed

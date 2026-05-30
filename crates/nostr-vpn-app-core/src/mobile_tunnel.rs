@@ -152,7 +152,7 @@ pub(crate) struct MobileTunnelConfig {
     /// the native tunnel; other mobile hosts use public fallback DNS.
     #[serde(default)]
     dns_forwarders: Vec<String>,
-    /// In-tunnel MagicDNS responder address. Empty when MagicDNS is disabled.
+    /// In-tunnel `MagicDNS` responder address. Empty when `MagicDNS` is disabled.
     #[serde(default)]
     pub(crate) magic_dns_server: String,
     /// The WG upstream config to drive boringtun against. None when
