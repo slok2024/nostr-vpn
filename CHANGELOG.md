@@ -4,11 +4,6 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
-### Fixed
-
-- Daemon network-refresh status now returns to `VPN on` after recovery instead
-  of leaving the GUI in a stale refresh state.
-
 ## 4.0.53 - 2026-06-02
 
 ### Changed
@@ -21,6 +16,8 @@ All notable changes to this project are documented in this file.
   verify the built `nvpn` version before installing, preventing stale
   `target/release/nvpn` binaries from being copied when a custom Cargo target
   dir is configured.
+- Daemon network-refresh status now returns to `VPN on` after recovery instead
+  of leaving the GUI in a stale refresh state.
 - Daemon startup failures now write an explicit failure status instead of
   leaving the previous projected `Turning VPN on` state visible.
 - FIPS bulk send saturation no longer blocks link liveness/control handling,
