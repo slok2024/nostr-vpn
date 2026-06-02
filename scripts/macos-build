@@ -431,6 +431,26 @@ team_id_from_identity() {
   fi
 }
 
+codesign_timestamp_arg() {
+  printf -- '--timestamp=%s\n' "${NVPN_MACOS_TIMESTAMP_URL:-http://timestamp.apple.com/ts01}"
+}
+
+run_codesign() {
+  local attempt
+  local max_attempts="${NVPN_MACOS_CODESIGN_ATTEMPTS:-5}"
+
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    if codesign "$@"; then
+      return 0
+    fi
+    if ((attempt == max_attempts)); then
+      return 1
+    fi
+    echo "codesign failed; retrying in 5s (attempt $attempt/$max_attempts)..." >&2
+    sleep 5
+  done
+}
+
 has_notary_credentials() {
   if [[ -n "${MACOS_NOTARY_PROFILE:-}" ]]; then
     return 0
@@ -499,11 +519,11 @@ sign_release_app_deep() {
 
   while IFS= read -r -d '' executable; do
     if file "$executable" | grep -Eq 'Mach-O'; then
-      codesign --force --timestamp --options runtime --sign "$identity" "$executable"
+      run_codesign --force "$(codesign_timestamp_arg)" --options runtime --sign "$identity" "$executable"
     fi
   done < <(find "$app_path/Contents" -type f -perm -111 -print0)
 
-  codesign --force --deep --timestamp --options runtime --sign "$identity" "$app_path"
+  run_codesign --force --deep "$(codesign_timestamp_arg)" --options runtime --sign "$identity" "$app_path"
   codesign --verify --deep --strict --verbose=2 "$app_path"
 }
 
@@ -525,28 +545,11 @@ run_macos_app() {
   signing_identity="$(developer_id_identity || true)"
   if [[ -n "$signing_identity" ]]; then
     verify_signing_identity "$signing_identity"
-    team_id="${NVPN_MACOS_DEVELOPMENT_TEAM:-}"
-    if [[ -z "$team_id" ]]; then
-      team_id="$(team_id_from_identity "$signing_identity" || true)"
-    fi
-    sign_args+=(
-      CODE_SIGNING_ALLOWED=YES
-      CODE_SIGNING_REQUIRED=YES
-      CODE_SIGN_STYLE=Manual
-      CODE_SIGN_IDENTITY="$signing_identity"
-      ENABLE_HARDENED_RUNTIME=YES
-      CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO
-      OTHER_CODE_SIGN_FLAGS=--timestamp
-    )
-    if [[ -n "$team_id" ]]; then
-      sign_args+=(DEVELOPMENT_TEAM="$team_id")
-    fi
   elif bool_is_true "${NVPN_MACOS_REQUIRE_SIGNING:-false}"; then
     echo "Developer ID signing is required for release artifacts. Set MACOS_SIGNING_IDENTITY." >&2
     exit 1
-  else
-    sign_args+=(CODE_SIGNING_ALLOWED=NO)
   fi
+  sign_args+=(CODE_SIGNING_ALLOWED=NO)
 
   xcodebuild \
     -project "$PROJECT" \
@@ -668,7 +671,7 @@ run_macos_dmg() {
 
   signing_identity="$(developer_id_identity || true)"
   if [[ -n "$signing_identity" ]]; then
-    codesign --force --timestamp --sign "$signing_identity" "$dmg_path"
+    run_codesign --force "$(codesign_timestamp_arg)" --sign "$signing_identity" "$dmg_path"
   fi
 
   if has_notary_credentials; then
