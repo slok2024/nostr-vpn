@@ -1360,6 +1360,11 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         }
                     }
                 }
+                if vpn_status == "Connected (network refresh)"
+                    && daemon_vpn_active(vpn_enabled, expected_peers)
+                {
+                    vpn_status = "VPN on".to_string();
+                }
                 if last_state_persisted_at.elapsed() >= daemon_state_persist_interval {
                     let fips_peer_statuses = current_fips_peer_statuses!(fips_tunnel_runtime);
                     let fips_relay_statuses =

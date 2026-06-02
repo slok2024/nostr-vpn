@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Daemon network-refresh status now returns to `VPN on` after recovery instead
+  of leaving the GUI in a stale refresh state.
+
 ## 4.0.53 - 2026-06-02
 
 ### Changed
