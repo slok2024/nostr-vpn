@@ -26,7 +26,7 @@ boringtun = "0.7"
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
 fips-endpoint = "0.3.19"
-fips-core = "0.3.25"
+fips-core = "0.3.26"
 futures = "0.3"
 hashtree-blossom = { version = "0.2.55", default-features = false, features = ["store"] }
 hashtree-core = "0.2.55"

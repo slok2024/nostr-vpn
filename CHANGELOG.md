@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- FIPS now uses `fips-core` 0.3.26.
+
+### Fixed
+
+- FIPS bulk send saturation no longer blocks link liveness/control handling,
+  reducing false link-dead drops during high-rate traffic such as Screen
+  Sharing.
+
 ## 4.0.53 - 2026-06-02
 
 ### Changed
