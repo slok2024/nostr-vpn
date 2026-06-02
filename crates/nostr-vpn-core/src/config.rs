@@ -229,11 +229,11 @@ pub struct AppConfig {
     pub fips_bootstrap_peers: HashMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fips_host_inbound_tcp_ports: Vec<u16>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing)]
     pub mesh_mtu_profile: String,
-    #[serde(default, skip_serializing_if = "is_zero_u16")]
+    #[serde(default, skip_serializing)]
     pub mesh_underlay_udp_mtu: u16,
-    #[serde(default, skip_serializing_if = "is_zero_u16")]
+    #[serde(default, skip_serializing)]
     pub mesh_tunnel_mtu: u16,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub exit_node: String,
@@ -649,10 +649,6 @@ fn wireguard_exit_persistent_keepalive_secs_is_default(value: &u16) -> bool {
 
 fn default_exit_node_leak_protection() -> bool {
     true
-}
-
-fn is_zero_u16(value: &u16) -> bool {
-    *value == 0
 }
 
 fn normalize_wireguard_exit_config(config: &mut WireGuardExitConfig) {

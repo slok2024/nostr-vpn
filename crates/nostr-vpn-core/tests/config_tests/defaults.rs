@@ -71,6 +71,28 @@ fn fips_public_endpoint_advertise_serializes_new_config_key() {
     assert!(!encoded.contains("fips_advertise_endpoint = true"));
 }
 
+#[test]
+fn mesh_mtu_experiment_fields_load_but_do_not_serialize() {
+    let config: AppConfig = toml::from_str(
+        r#"
+mesh_mtu_profile = "lan"
+mesh_underlay_udp_mtu = 1420
+mesh_tunnel_mtu = 1290
+"#,
+    )
+    .expect("parse config with legacy mtu experiment fields");
+
+    assert_eq!(config.mesh_mtu_profile, "lan");
+    assert_eq!(config.mesh_underlay_udp_mtu, 1420);
+    assert_eq!(config.mesh_tunnel_mtu, 1290);
+
+    let encoded = toml::to_string(&config).expect("serialize config");
+
+    assert!(!encoded.contains("mesh_mtu_profile"));
+    assert!(!encoded.contains("mesh_underlay_udp_mtu"));
+    assert!(!encoded.contains("mesh_tunnel_mtu"));
+}
+
 const LNVPS_BOOTSTRAP_NPUB: &str =
     "npub1ekr70wv2592r52qx06tyz0xjwygveyr4cut486a4pggjc6cvdn7sm0pk2z";
 const LNVPS_BOOTSTRAP_ADDRS: &[&str] = &[
