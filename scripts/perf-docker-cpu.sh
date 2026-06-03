@@ -57,9 +57,15 @@ ALICE_NPUB="$(nostr_pubkey_from_config node-a)"
 BOB_NPUB="$(nostr_pubkey_from_config node-b)"
 
 "${COMPOSE[@]}" exec -T node-a nvpn set \
-  --network-id "$NETWORK_ID" \
   --participant "$ALICE_NPUB" \
-  --participant "$BOB_NPUB" \
+  --participant "$BOB_NPUB" >/dev/null
+
+"${COMPOSE[@]}" exec -T node-b nvpn set \
+  --participant "$ALICE_NPUB" \
+  --participant "$BOB_NPUB" >/dev/null
+
+"${COMPOSE[@]}" exec -T node-a nvpn set \
+  --network-id "$NETWORK_ID" \
   --endpoint "10.203.0.10:51820" \
   --listen-port 51820 \
   --fips-advertise-endpoint true \
@@ -67,8 +73,6 @@ BOB_NPUB="$(nostr_pubkey_from_config node-b)"
 
 "${COMPOSE[@]}" exec -T node-b nvpn set \
   --network-id "$NETWORK_ID" \
-  --participant "$ALICE_NPUB" \
-  --participant "$BOB_NPUB" \
   --endpoint "10.203.0.11:51820" \
   --listen-port 51820 \
   --fips-advertise-endpoint true \

@@ -518,11 +518,20 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelSendPac
     let Some(tunnel) = tunnel_from_jlong(handle) else {
         return 0;
     };
-    let Ok(mut bytes) = env.convert_byte_array(&packet) else {
+    let Ok(capacity) = env.get_array_length(&packet) else {
         return 0;
     };
-    let len = usize::try_from(len).unwrap_or(0).min(bytes.len());
-    bytes.truncate(len);
+    let Some(len) = bounded_packet_copy_len(len, capacity) else {
+        return 0;
+    };
+    let mut signed = vec![0_i8; len];
+    if env.get_byte_array_region(&packet, 0, &mut signed).is_err() {
+        return 0;
+    }
+    let bytes = signed
+        .into_iter()
+        .map(|byte| byte as u8)
+        .collect::<Vec<_>>();
     u8::from(tunnel.tunnel.send_packet(&bytes))
 }
 
@@ -600,6 +609,16 @@ fn tunnel_from_jlong<'a>(handle: jlong) -> Option<&'a NvpnMobileTunnelHandle> {
         return None;
     }
     Some(unsafe { &*(handle as *const NvpnMobileTunnelHandle) })
+}
+
+#[cfg(any(target_os = "android", test))]
+fn bounded_packet_copy_len(requested: i32, capacity: i32) -> Option<usize> {
+    if requested <= 0 || capacity <= 0 {
+        return None;
+    }
+    let requested = usize::try_from(requested).ok()?;
+    let capacity = usize::try_from(capacity).ok()?;
+    Some(requested.min(capacity))
 }
 
 fn c_string_lossy(value: *const c_char) -> String {
@@ -728,6 +747,20 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn bounded_packet_copy_len_rejects_empty_or_invalid_lengths() {
+        assert_eq!(bounded_packet_copy_len(0, 65_535), None);
+        assert_eq!(bounded_packet_copy_len(-1, 65_535), None);
+        assert_eq!(bounded_packet_copy_len(64, 0), None);
+        assert_eq!(bounded_packet_copy_len(64, -1), None);
+    }
+
+    #[test]
+    fn bounded_packet_copy_len_uses_actual_packet_length() {
+        assert_eq!(bounded_packet_copy_len(84, 65_535), Some(84));
+        assert_eq!(bounded_packet_copy_len(65_536, 65_535), Some(65_535));
+    }
 
     #[test]
     fn c_abi_returns_json_state_and_action_errors() {

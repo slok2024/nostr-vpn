@@ -10,7 +10,7 @@ services:
     entrypoint: ["sleep", "infinity"]
     networks:
       internet:
-        ipv4_address: ${NVPN_E2E_INTERNET_TARGET_IP:-198.51.100.100}
+        ipv4_address: ${NVPN_E2E_INTERNET_TARGET_IP:-172.31.242.100}
 
   wireguard-upstream:
     build:
@@ -31,7 +31,7 @@ services:
       - /dev/net/tun:/dev/net/tun
     networks:
       internet:
-        ipv4_address: ${NVPN_E2E_WG_UPSTREAM_IP:-198.51.100.20}
+        ipv4_address: ${NVPN_E2E_WG_UPSTREAM_IP:-172.31.242.20}
 
   node-a:
     build:
@@ -48,7 +48,7 @@ services:
       - /dev/net/tun:/dev/net/tun
     networks:
       internet:
-        ipv4_address: ${NVPN_E2E_NODE_A_PUBLIC_IP:-198.51.100.10}
+        ipv4_address: ${NVPN_E2E_NODE_A_PUBLIC_IP:-172.31.242.10}
 
   nat-b:
     build:
@@ -69,20 +69,20 @@ services:
       - -lc
       - |
         set -e
-        public_iface="$$(ip -o -4 addr show | awk '$$4 == "${NVPN_E2E_NAT_B_PUBLIC_IP:-198.51.100.11}/24" { print $$2; exit }')"
+        public_iface="$$(ip -o -4 addr show | awk '$$4 == "${NVPN_E2E_NAT_B_PUBLIC_IP:-172.31.242.11}/24" { print $$2; exit }')"
         private_iface="$$(ip -o -4 addr show | awk '$$4 == "172.30.242.2/24" { print $$2; exit }')"
         test -n "$$public_iface"
         test -n "$$private_iface"
         iptables -P FORWARD ACCEPT
         iptables -t nat -A PREROUTING -i "$$public_iface" -p udp --dport 51820 -j DNAT --to-destination 172.30.242.3:51820
-        iptables -t nat -A POSTROUTING -o "$$public_iface" -s 172.30.242.0/24 -p udp --sport 51820 -j SNAT --to-source ${NVPN_E2E_NAT_B_PUBLIC_IP:-198.51.100.11}:51820
+        iptables -t nat -A POSTROUTING -o "$$public_iface" -s 172.30.242.0/24 -p udp --sport 51820 -j SNAT --to-source ${NVPN_E2E_NAT_B_PUBLIC_IP:-172.31.242.11}:51820
         iptables -t nat -A POSTROUTING -o "$$public_iface" -s 172.30.242.0/24 -j MASQUERADE
         sleep infinity
     networks:
       private-b:
         ipv4_address: 172.30.242.2
       internet:
-        ipv4_address: ${NVPN_E2E_NAT_B_PUBLIC_IP:-198.51.100.11}
+        ipv4_address: ${NVPN_E2E_NAT_B_PUBLIC_IP:-172.31.242.11}
 
   node-b:
     build:
@@ -108,7 +108,7 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: ${NVPN_E2E_INTERNET_SUBNET:-198.51.100.0/24}
+        - subnet: ${NVPN_E2E_INTERNET_SUBNET:-172.31.242.0/24}
   private-b:
     driver: bridge
     ipam:

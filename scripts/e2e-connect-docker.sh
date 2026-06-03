@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_NAME="nostr-vpn-e2e-connect"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.e2e.yml")
+NETWORK_ID="${NVPN_CONNECT_E2E_NETWORK_ID:-docker-connect}"
+IDLE_CPU_MAX_PERCENT="${NVPN_E2E_IDLE_CPU_MAX_PERCENT:-80}"
 
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -46,6 +48,26 @@ nostr_pubkey_from_config() {
   " | tr -d '\r\"'
 }
 
+assert_idle_cpu_below() {
+  local service="$1"
+  local pids
+  pids="$("${COMPOSE[@]}" exec -T "$service" sh -lc 'pgrep -d, -x nvpn || true' | tr -d '\r')"
+  if [[ -z "$pids" ]]; then
+    echo "connect e2e failed: no nvpn process found on $service for idle CPU guard" >&2
+    exit 1
+  fi
+
+  local max_cpu
+  max_cpu="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
+    "top -b -n 3 -d 1 -p '$pids' | awk '\$12 == \"nvpn\" && \$9 + 0 > max { max = \$9 + 0 } END { printf \"%.1f\", max + 0 }'" \
+    | tr -d '\r')"
+  echo "--- $service idle nvpn CPU max: ${max_cpu}% ---"
+  if awk -v max="$max_cpu" -v limit="$IDLE_CPU_MAX_PERCENT" 'BEGIN { exit !(max > limit) }'; then
+    echo "connect e2e failed: $service idle nvpn CPU ${max_cpu}% exceeded ${IDLE_CPU_MAX_PERCENT}%" >&2
+    exit 1
+  fi
+}
+
 cleanup
 
 "${COMPOSE[@]}" build >/dev/null
@@ -66,15 +88,21 @@ fi
 
 "${COMPOSE[@]}" exec -T node-a nvpn set \
   --participant "$ALICE_NPUB" \
-  --participant "$BOB_NPUB" \
+  --participant "$BOB_NPUB" >/dev/null
+
+"${COMPOSE[@]}" exec -T node-b nvpn set \
+  --participant "$ALICE_NPUB" \
+  --participant "$BOB_NPUB" >/dev/null
+
+"${COMPOSE[@]}" exec -T node-a nvpn set \
+  --network-id "$NETWORK_ID" \
   --endpoint "10.203.0.10:51820" \
   --listen-port 51820 \
   --fips-advertise-endpoint true \
   --fips-peer-endpoint "$BOB_NPUB=10.203.0.11:51820" >/dev/null
 
 "${COMPOSE[@]}" exec -T node-b nvpn set \
-  --participant "$ALICE_NPUB" \
-  --participant "$BOB_NPUB" \
+  --network-id "$NETWORK_ID" \
   --endpoint "10.203.0.11:51820" \
   --listen-port 51820 \
   --fips-advertise-endpoint true \
@@ -135,6 +163,9 @@ if ! "${COMPOSE[@]}" exec -T node-b ping -c 3 -W 2 "$ALICE_TUNNEL_IP" >/tmp/ping
   echo "$BOB_CONNECT_LOGS"
   exit 1
 fi
+
+assert_idle_cpu_below node-a
+assert_idle_cpu_below node-b
 
 echo "--- Alice connect log ---"
 echo "$ALICE_CONNECT_LOGS"

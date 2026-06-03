@@ -140,7 +140,7 @@ class NostrVpnService : VpnService() {
         if (!foregroundStarted) {
             publishTunnelNotification()
         }
-        acquireMulticastLock()
+        reconcileMulticastLock(config)
 
         val descriptor = buildVpnInterface(config) ?: run {
             releaseMulticastLock()
@@ -384,6 +384,25 @@ class NostrVpnService : VpnService() {
         } catch (_: RuntimeException) {
             // The callback may already be gone during service teardown.
         }
+    }
+
+    private fun reconcileMulticastLock(config: JSONObject) {
+        if (!shouldHoldMulticastLock(config)) {
+            releaseMulticastLock()
+            return
+        }
+        acquireMulticastLock()
+    }
+
+    private fun shouldHoldMulticastLock(config: JSONObject): Boolean {
+        if (!config.optBoolean("shareLocalCandidates", false)) return false
+        if (!config.optBoolean("nostrDiscoveryEnabled", false)) return false
+        val hasPeers = (config.optJSONArray("peers")?.length() ?: 0) > 0
+        val joinRequestsEnabled = config.optBoolean("joinRequestsEnabled", false)
+        val pendingJoinRequest =
+            config.optString("pendingJoinRequestRecipient").isNotBlank() &&
+                config.optLong("pendingJoinRequestedAt", 0) != 0L
+        return hasPeers || joinRequestsEnabled || pendingJoinRequest
     }
 
     private fun acquireMulticastLock() {
