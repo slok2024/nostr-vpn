@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.0.57 - 2026-06-03
+
+### Changed
+
+- FIPS status now distinguishes fallback mesh/relay transport from background
+  direct UDP probing, including native app state and `nvpn status --json`.
+
+### Fixed
+
+- FIPS direct paths now behave like retryable candidates instead of sticky
+  privileged routes: link-dead UDP paths schedule quick reprobes, fresh
+  discovered candidates can outrank stale static hints, and fallback mesh
+  keeps traffic flowing without suppressing direct upgrades.
+- Mobile-hotspot NAT flaps no longer turn one or two direct liveness failures
+  into long Nostr traversal cooldowns that pin a peer to mesh.
+
 ## 4.0.56 - 2026-06-03
 
 ### Fixed

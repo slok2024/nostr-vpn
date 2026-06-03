@@ -335,6 +335,8 @@ fn mesh_status_from_endpoint_peer(
         link_packets_recv: peer.packets_recv,
         link_bytes_sent: peer.bytes_sent,
         link_bytes_recv: peer.bytes_recv,
+        direct_probe_pending: peer.direct_probe_pending,
+        direct_probe_after_ms: peer.direct_probe_after_ms,
         last_seen_at: Some(now),
         tx_bytes: 0,
         rx_bytes: 0,
@@ -4244,6 +4246,8 @@ mod tests {
             link_packets_recv: 8,
             link_bytes_sent: 900,
             link_bytes_recv: 1200,
+            direct_probe_pending: false,
+            direct_probe_after_ms: None,
             last_seen_at,
             tx_bytes: 0,
             rx_bytes: 0,
@@ -4269,6 +4273,8 @@ mod tests {
                 packets_recv: 12,
                 bytes_sent: 1300,
                 bytes_recv: 1400,
+                direct_probe_pending: true,
+                direct_probe_after_ms: Some(12_345),
             },
         );
 
@@ -4283,6 +4289,8 @@ mod tests {
             Some("203.0.113.9:9000")
         );
         assert_eq!(statuses[0].transport_type.as_deref(), Some("udp"));
+        assert!(statuses[0].direct_probe_pending);
+        assert_eq!(statuses[0].direct_probe_after_ms, Some(12_345));
         assert_eq!(statuses[0].srtt_ms, Some(7));
         assert_eq!(statuses[0].link_packets_sent, 11);
         assert_eq!(statuses[0].link_packets_recv, 12);

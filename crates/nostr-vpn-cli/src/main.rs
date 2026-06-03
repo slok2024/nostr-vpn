@@ -2262,6 +2262,10 @@ struct DaemonPeerState {
     fips_bytes_sent: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
     fips_bytes_recv: u64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    direct_probe_pending: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    direct_probe_after_ms: Option<u64>,
     #[serde(default)]
     tx_bytes: u64,
     #[serde(default)]
@@ -2277,6 +2281,10 @@ struct DaemonPeerState {
 
 fn is_zero(value: &u64) -> bool {
     *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4070,6 +4078,11 @@ fn print_daemon_peer_line(peer: &DaemonPeerState, now: u64) {
     } else {
         format!(" routes={}", peer.advertised_routes.join(","))
     };
+    let probe = if peer.direct_probe_pending {
+        " direct_probe=pending"
+    } else {
+        ""
+    };
     let err = peer
         .error
         .as_deref()
@@ -4082,7 +4095,7 @@ fn print_daemon_peer_line(peer: &DaemonPeerState, now: u64) {
         peer.participant_pubkey.as_str()
     };
     println!(
-        "  {marker} {} {} {transport}{srtt}{last}{traffic}{routes}{err}",
+        "  {marker} {} {} {transport}{srtt}{last}{traffic}{routes}{probe}{err}",
         truncate_pubkey(pubkey),
         peer.tunnel_ip,
     );

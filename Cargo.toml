@@ -11,7 +11,7 @@ exclude = ["linux"]
 resolver = "2"
 
 [workspace.package]
-version = "4.0.56"
+version = "4.0.57"
 edition = "2024"
 license = "MIT"
 authors = ["Nostr VPN contributors"]
@@ -25,8 +25,8 @@ base64 = "0.22"
 boringtun = "0.7"
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = "0.3.20"
-fips-core = "0.3.27"
+fips-endpoint = "0.3.21"
+fips-core = "0.3.28"
 futures = "0.3"
 hashtree-blossom = { version = "0.2.55", default-features = false, features = ["store"] }
 hashtree-core = "0.2.55"

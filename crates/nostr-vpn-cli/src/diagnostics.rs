@@ -592,6 +592,8 @@ mod tests {
                 fips_packets_recv: 0,
                 fips_bytes_sent: 0,
                 fips_bytes_recv: 0,
+                direct_probe_pending: false,
+                direct_probe_after_ms: None,
                 tx_bytes: 0,
                 rx_bytes: 0,
                 public_key: "pk".to_string(),

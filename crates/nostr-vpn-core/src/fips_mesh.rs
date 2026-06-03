@@ -204,6 +204,8 @@ impl FipsMeshRuntime {
                 link_packets_recv: 0,
                 link_bytes_sent: 0,
                 link_bytes_recv: 0,
+                direct_probe_pending: false,
+                direct_probe_after_ms: None,
                 last_seen_at: None,
                 tx_bytes: 0,
                 rx_bytes: 0,

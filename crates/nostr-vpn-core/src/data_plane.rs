@@ -56,6 +56,8 @@ pub struct MeshPeerStatus {
     pub link_packets_recv: u64,
     pub link_bytes_sent: u64,
     pub link_bytes_recv: u64,
+    pub direct_probe_pending: bool,
+    pub direct_probe_after_ms: Option<u64>,
     pub last_seen_at: Option<u64>,
     pub tx_bytes: u64,
     pub rx_bytes: u64,

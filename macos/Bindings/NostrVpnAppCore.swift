@@ -2283,6 +2283,8 @@ public struct NativeParticipantState {
     public var fipsPacketsRecv: UInt64
     public var fipsBytesSent: UInt64
     public var fipsBytesRecv: UInt64
+    public var fipsDirectProbePending: Bool
+    public var fipsDirectProbeAfterMs: UInt64
     public var state: String
     public var meshState: String
     public var statusText: String
@@ -2290,7 +2292,7 @@ public struct NativeParticipantState {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(npub: String, pubkeyHex: String, alias: String, magicDnsAlias: String, magicDnsName: String, tunnelIp: String, isAdmin: Bool, reachable: Bool, txBytes: UInt64, rxBytes: UInt64, advertisedRoutes: [String], offersExitNode: Bool, fipsEndpointNpub: String, fipsEndpointHints: [String], fipsTransportAddr: String, fipsTransportType: String, fipsSrttMs: UInt64, fipsPacketsSent: UInt64, fipsPacketsRecv: UInt64, fipsBytesSent: UInt64, fipsBytesRecv: UInt64, state: String, meshState: String, statusText: String, lastSeenText: String) {
+    public init(npub: String, pubkeyHex: String, alias: String, magicDnsAlias: String, magicDnsName: String, tunnelIp: String, isAdmin: Bool, reachable: Bool, txBytes: UInt64, rxBytes: UInt64, advertisedRoutes: [String], offersExitNode: Bool, fipsEndpointNpub: String, fipsEndpointHints: [String], fipsTransportAddr: String, fipsTransportType: String, fipsSrttMs: UInt64, fipsPacketsSent: UInt64, fipsPacketsRecv: UInt64, fipsBytesSent: UInt64, fipsBytesRecv: UInt64, fipsDirectProbePending: Bool, fipsDirectProbeAfterMs: UInt64, state: String, meshState: String, statusText: String, lastSeenText: String) {
         self.npub = npub
         self.pubkeyHex = pubkeyHex
         self.alias = alias
@@ -2312,6 +2314,8 @@ public struct NativeParticipantState {
         self.fipsPacketsRecv = fipsPacketsRecv
         self.fipsBytesSent = fipsBytesSent
         self.fipsBytesRecv = fipsBytesRecv
+        self.fipsDirectProbePending = fipsDirectProbePending
+        self.fipsDirectProbeAfterMs = fipsDirectProbeAfterMs
         self.state = state
         self.meshState = meshState
         self.statusText = statusText
@@ -2389,6 +2393,12 @@ extension NativeParticipantState: Equatable, Hashable {
         if lhs.fipsBytesRecv != rhs.fipsBytesRecv {
             return false
         }
+        if lhs.fipsDirectProbePending != rhs.fipsDirectProbePending {
+            return false
+        }
+        if lhs.fipsDirectProbeAfterMs != rhs.fipsDirectProbeAfterMs {
+            return false
+        }
         if lhs.state != rhs.state {
             return false
         }
@@ -2426,6 +2436,8 @@ extension NativeParticipantState: Equatable, Hashable {
         hasher.combine(fipsPacketsRecv)
         hasher.combine(fipsBytesSent)
         hasher.combine(fipsBytesRecv)
+        hasher.combine(fipsDirectProbePending)
+        hasher.combine(fipsDirectProbeAfterMs)
         hasher.combine(state)
         hasher.combine(meshState)
         hasher.combine(statusText)
@@ -2463,6 +2475,8 @@ public struct FfiConverterTypeNativeParticipantState: FfiConverterRustBuffer {
                 fipsPacketsRecv: FfiConverterUInt64.read(from: &buf),
                 fipsBytesSent: FfiConverterUInt64.read(from: &buf),
                 fipsBytesRecv: FfiConverterUInt64.read(from: &buf),
+                fipsDirectProbePending: FfiConverterBool.read(from: &buf),
+                fipsDirectProbeAfterMs: FfiConverterUInt64.read(from: &buf),
                 state: FfiConverterString.read(from: &buf),
                 meshState: FfiConverterString.read(from: &buf),
                 statusText: FfiConverterString.read(from: &buf),
@@ -2492,6 +2506,8 @@ public struct FfiConverterTypeNativeParticipantState: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.fipsPacketsRecv, into: &buf)
         FfiConverterUInt64.write(value.fipsBytesSent, into: &buf)
         FfiConverterUInt64.write(value.fipsBytesRecv, into: &buf)
+        FfiConverterBool.write(value.fipsDirectProbePending, into: &buf)
+        FfiConverterUInt64.write(value.fipsDirectProbeAfterMs, into: &buf)
         FfiConverterString.write(value.state, into: &buf)
         FfiConverterString.write(value.meshState, into: &buf)
         FfiConverterString.write(value.statusText, into: &buf)

@@ -2021,6 +2021,7 @@ impl NativeAppRuntime {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn participant_state(
         &self,
         participant: &str,
@@ -2122,6 +2123,10 @@ impl NativeAppRuntime {
             fips_packets_recv: daemon_peer.map_or(0, |peer| peer.fips_packets_recv),
             fips_bytes_sent: daemon_peer.map_or(0, |peer| peer.fips_bytes_sent),
             fips_bytes_recv: daemon_peer.map_or(0, |peer| peer.fips_bytes_recv),
+            fips_direct_probe_pending: daemon_peer.is_some_and(|peer| peer.direct_probe_pending),
+            fips_direct_probe_after_ms: daemon_peer
+                .and_then(|peer| peer.direct_probe_after_ms)
+                .unwrap_or(0),
             state: peer_state.clone(),
             mesh_state,
             status_text,
@@ -2705,6 +2710,9 @@ fn peer_link_text(peer: &DaemonPeerState) -> Option<String> {
         if let Some(srtt_ms) = peer.fips_srtt_ms.filter(|value| *value > 0) {
             let _ = write!(text, " ({srtt_ms} ms)");
         }
+        if peer.direct_probe_pending {
+            text.push_str(", probing direct");
+        }
         return Some(text);
     }
 
@@ -2717,7 +2725,11 @@ fn peer_link_text(peer: &DaemonPeerState) -> Option<String> {
     let recently_seen =
         peer.reachable || peer_last_fips_seen_secs(peer).is_some_and(within_presence_grace);
     if is_fips_peer && recently_seen {
-        let mut text = "mesh".to_string();
+        let mut text = if peer.direct_probe_pending {
+            "mesh, probing direct".to_string()
+        } else {
+            "mesh".to_string()
+        };
         if let Some(srtt_ms) = peer.fips_srtt_ms.filter(|value| *value > 0) {
             let _ = write!(text, " ({srtt_ms} ms)");
         }

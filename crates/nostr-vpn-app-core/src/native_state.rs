@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeParticipantState {
@@ -26,6 +27,8 @@ pub struct NativeParticipantState {
     pub fips_packets_recv: u64,
     pub fips_bytes_sent: u64,
     pub fips_bytes_recv: u64,
+    pub fips_direct_probe_pending: bool,
+    pub fips_direct_probe_after_ms: u64,
     pub state: String,
     pub mesh_state: String,
     pub status_text: String,

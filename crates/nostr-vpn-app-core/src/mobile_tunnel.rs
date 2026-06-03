@@ -1474,6 +1474,7 @@ async fn persist_mobile_runtime_state(
     write_mobile_runtime_state(path, &state)
 }
 
+#[allow(clippy::too_many_lines)]
 fn mobile_runtime_state(
     config: &MobileTunnelConfig,
     mesh: &FipsMeshRuntime,
@@ -1537,6 +1538,8 @@ fn mobile_runtime_state(
                 fips_packets_recv: link.map_or(0, |peer| peer.packets_recv),
                 fips_bytes_sent: link.map_or(0, |peer| peer.bytes_sent),
                 fips_bytes_recv: link.map_or(0, |peer| peer.bytes_recv),
+                direct_probe_pending: link.is_some_and(|peer| peer.direct_probe_pending),
+                direct_probe_after_ms: link.and_then(|peer| peer.direct_probe_after_ms),
                 tx_bytes: peer_presence.map_or(0, |presence| presence.tx_bytes),
                 rx_bytes: peer_presence.map_or(0, |presence| presence.rx_bytes),
                 public_key: status.pubkey,
@@ -3818,6 +3821,8 @@ mod tests {
             packets_recv: 4,
             bytes_sent: 120,
             bytes_recv: 240,
+            direct_probe_pending: true,
+            direct_probe_after_ms: Some(98_765),
         };
 
         let state = mobile_runtime_state(
@@ -3836,6 +3841,8 @@ mod tests {
         assert!(state.peers[0].reachable);
         assert_eq!(state.peers[0].fips_transport_type, "udp");
         assert_eq!(state.peers[0].fips_srtt_ms, Some(14));
+        assert!(state.peers[0].direct_probe_pending);
+        assert_eq!(state.peers[0].direct_probe_after_ms, Some(98_765));
     }
 
     #[test]

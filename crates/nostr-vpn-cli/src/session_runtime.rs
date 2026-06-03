@@ -1646,6 +1646,8 @@ pub(crate) fn build_daemon_runtime_state(
             fips_packets_recv: status.map(|status| status.link_packets_recv).unwrap_or(0),
             fips_bytes_sent: status.map(|status| status.link_bytes_sent).unwrap_or(0),
             fips_bytes_recv: status.map(|status| status.link_bytes_recv).unwrap_or(0),
+            direct_probe_pending: status.is_some_and(|status| status.direct_probe_pending),
+            direct_probe_after_ms: status.and_then(|status| status.direct_probe_after_ms),
             tx_bytes: status.map(|status| status.tx_bytes).unwrap_or(0),
             rx_bytes: status.map(|status| status.rx_bytes).unwrap_or(0),
             public_key: String::new(),

@@ -27,8 +27,8 @@ RUN apt-get update \
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
-RUN --mount=type=cache,id=nostr-vpn-umbrel-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=nostr-vpn-umbrel-cargo-git,target=/usr/local/cargo/git \
+RUN --mount=type=cache,id=nostr-vpn-umbrel-cargo-registry-${TARGETPLATFORM},target=/usr/local/cargo/registry \
+    --mount=type=cache,id=nostr-vpn-umbrel-cargo-git-${TARGETPLATFORM},target=/usr/local/cargo/git \
     --mount=type=cache,id=nostr-vpn-umbrel-cargo-target-${TARGETPLATFORM},target=/work/target \
     cargo build --release -p nvpn -p nostr-vpn-web \
     && mkdir -p /out \

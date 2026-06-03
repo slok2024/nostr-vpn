@@ -73,6 +73,10 @@ pub struct DaemonPeerState {
     pub fips_bytes_sent: u64,
     #[serde(default, alias = "fips_bytes_recv")]
     pub fips_bytes_recv: u64,
+    #[serde(default, alias = "direct_probe_pending")]
+    pub direct_probe_pending: bool,
+    #[serde(default, alias = "direct_probe_after_ms")]
+    pub direct_probe_after_ms: Option<u64>,
     #[serde(default, alias = "tx_bytes")]
     pub tx_bytes: u64,
     #[serde(default, alias = "rx_bytes")]
@@ -123,6 +127,8 @@ pub struct ParticipantView {
     pub fips_packets_recv: u64,
     pub fips_bytes_sent: u64,
     pub fips_bytes_recv: u64,
+    pub fips_direct_probe_pending: bool,
+    pub fips_direct_probe_after_ms: Option<u64>,
     pub state: String,
     pub mesh_state: String,
     pub status_text: String,
