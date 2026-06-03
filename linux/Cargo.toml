@@ -14,13 +14,9 @@ adw = { package = "libadwaita", version = "0.7", features = ["v1_5"] }
 gio = "0.20"
 glib = "0.20"
 gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
-hashtree-blossom = { version = "0.2.55", default-features = false, features = ["store"] }
-hashtree-core = "0.2.55"
-hashtree-resolver = { version = "0.2.56", features = ["nostr"] }
-hashtree-updater = "0.2.56"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
-nostr = { version = "0.35", features = ["nip44"] }
 nostr-vpn-app-core = { path = "../crates/nostr-vpn-app-core" }
+nostr-vpn-core = { path = "../crates/nostr-vpn-core", features = ["updater"] }
 qrcode = { version = "0.14", default-features = false }
 rqrr = "0.10"
 serde = { version = "1", features = ["derive"] }

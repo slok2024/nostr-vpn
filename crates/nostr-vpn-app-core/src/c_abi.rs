@@ -16,6 +16,10 @@ use jni::JNIEnv;
 use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString};
 #[cfg(target_os = "android")]
 use jni::sys::{jboolean, jint, jlong, jstring};
+use nostr_vpn_core::updater::{
+    ProductUpdateMode, ProductUpdateResult, ProductUpdateSource, check_product_update_blocking,
+    download_product_update_blocking,
+};
 use qrcode::QrCode;
 use serde::Serialize;
 
@@ -44,6 +48,12 @@ struct QrMatrixResult {
 #[serde(rename_all = "camelCase")]
 struct QrDecodeResult {
     value: String,
+    error: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateJsonError {
     error: String,
 }
 
@@ -212,6 +222,39 @@ pub extern "C" fn nostr_vpn_mobile_tunnel_new(
             ptr::null_mut()
         }
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn nostr_vpn_update_check_json(
+    current_version: *const c_char,
+    mode: *const c_char,
+    source: *const c_char,
+) -> *mut c_char {
+    let result = check_product_update_blocking(
+        &c_string_lossy(current_version),
+        parse_update_mode(&c_string_lossy(mode)),
+        parse_update_source(&c_string_lossy(source)),
+    );
+    update_result_json(result)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn nostr_vpn_update_download_json(
+    current_version: *const c_char,
+    mode: *const c_char,
+    source: *const c_char,
+    download_dir: *const c_char,
+) -> *mut c_char {
+    let download_dir = c_string_lossy(download_dir);
+    let download_dir =
+        (!download_dir.trim().is_empty()).then(|| std::path::Path::new(&download_dir));
+    let result = download_product_update_blocking(
+        &c_string_lossy(current_version),
+        parse_update_mode(&c_string_lossy(mode)),
+        parse_update_source(&c_string_lossy(source)),
+        download_dir,
+    );
+    update_result_json(result)
 }
 
 /// # Safety
@@ -673,6 +716,33 @@ fn json_string(value: &impl Serialize) -> *mut c_char {
 
 fn json_raw_string(value: &str) -> *mut c_char {
     into_c_string(value)
+}
+
+fn update_result_json(result: Result<ProductUpdateResult>) -> *mut c_char {
+    match result {
+        Ok(result) => json_string(&result),
+        Err(error) => json_string(&UpdateJsonError {
+            error: error.to_string(),
+        }),
+    }
+}
+
+fn parse_update_mode(value: &str) -> ProductUpdateMode {
+    if value.eq_ignore_ascii_case("app") {
+        ProductUpdateMode::App
+    } else {
+        ProductUpdateMode::Cli
+    }
+}
+
+fn parse_update_source(value: &str) -> ProductUpdateSource {
+    if value.eq_ignore_ascii_case("github") {
+        ProductUpdateSource::Github
+    } else if value.eq_ignore_ascii_case("hashtree") || value.eq_ignore_ascii_case("htree") {
+        ProductUpdateSource::Hashtree
+    } else {
+        ProductUpdateSource::Auto
+    }
 }
 
 fn into_c_string(value: &str) -> *mut c_char {

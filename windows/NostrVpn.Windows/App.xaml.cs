@@ -64,11 +64,11 @@ public partial class App : System.Windows.Application
             long? downloadedBytes = null;
             if (install)
             {
-                if (check.AssetUrl is null)
+                if (!check.UseCoreDownload)
                 {
                     throw new InvalidOperationException("no Windows update asset selected");
                 }
-                downloadedPath = await service.DownloadAsync(check.AssetUrl);
+                downloadedPath = await service.DownloadWithCoreAsync(currentVersion);
                 downloadedBytes = new FileInfo(downloadedPath).Length;
             }
             ok = true;

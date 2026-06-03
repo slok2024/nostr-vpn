@@ -59,6 +59,22 @@ public sealed class AppCoreClient : IDisposable
         };
     }
 
+    public static NativeUpdateResult CheckUpdate(string currentVersion, string mode = "app", string source = "auto")
+    {
+        var json = TakeString(NativeMethods.UpdateCheckJson(currentVersion, mode, source));
+        return DecodeUpdateResult(json);
+    }
+
+    public static NativeUpdateResult DownloadUpdate(
+        string currentVersion,
+        string downloadDir,
+        string mode = "app",
+        string source = "auto")
+    {
+        var json = TakeString(NativeMethods.UpdateDownloadJson(currentVersion, mode, source, downloadDir));
+        return DecodeUpdateResult(json);
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -80,6 +96,19 @@ public sealed class AppCoreClient : IDisposable
         {
             Error = "failed to decode native state",
         };
+    }
+
+    private static NativeUpdateResult DecodeUpdateResult(string json)
+    {
+        var result = JsonSerializer.Deserialize<NativeUpdateResult>(json, JsonOptions) ?? new NativeUpdateResult
+        {
+            Error = "failed to decode native update response",
+        };
+        if (!string.IsNullOrWhiteSpace(result.Error))
+        {
+            throw new InvalidOperationException(result.Error);
+        }
+        return result;
     }
 
     private static string TakeString(IntPtr ptr)
@@ -126,6 +155,19 @@ public sealed class AppCoreClient : IDisposable
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "nostr_vpn_decode_qr_image_json")]
         public static extern IntPtr DecodeQrImageJson([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "nostr_vpn_update_check_json")]
+        public static extern IntPtr UpdateCheckJson(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string currentVersion,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string mode,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string source);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "nostr_vpn_update_download_json")]
+        public static extern IntPtr UpdateDownloadJson(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string currentVersion,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string mode,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string source,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string downloadDir);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "nostr_vpn_string_free")]
         public static extern void StringFree(IntPtr value);

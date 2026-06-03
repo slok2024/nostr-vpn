@@ -20,7 +20,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 fips-endpoint.workspace = true
 netdev.workspace = true
 nostr-sdk.workspace = true
-nostr-vpn-core.workspace = true
+nostr-vpn-core = { workspace = true, features = ["updater"] }
 qrcode = { version = "0.14", default-features = false }
 rqrr = "0.10"
 serde.workspace = true

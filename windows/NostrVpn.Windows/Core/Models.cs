@@ -1,5 +1,19 @@
 namespace NostrVpn.Windows.Core;
 
+public sealed class NativeUpdateResult
+{
+    public bool Available { get; set; }
+    public string CurrentVersion { get; set; } = "";
+    public string LatestVersion { get; set; } = "";
+    public string Tag { get; set; } = "";
+    public string Asset { get; set; } = "";
+    public string Source { get; set; } = "";
+    public bool Verified { get; set; }
+    public string? Url { get; set; }
+    public string? Path { get; set; }
+    public string Error { get; set; } = "";
+}
+
 public sealed class NativeAppState
 {
     public ulong Rev { get; set; }

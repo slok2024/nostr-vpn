@@ -8,6 +8,16 @@ description = "Shared Nostr VPN configuration, diagnostics, MagicDNS, NAT, and W
 repository.workspace = true
 readme = "README.md"
 
+[features]
+default = []
+updater = [
+  "dep:hashtree-blossom",
+  "dep:hashtree-core",
+  "dep:hashtree-resolver",
+  "dep:hashtree-updater",
+  "dep:nostr",
+]
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -28,7 +38,12 @@ uuid.workspace = true
 hex.workspace = true
 hickory-proto.workspace = true
 hostname.workspace = true
+hashtree-blossom = { workspace = true, optional = true }
+hashtree-core = { workspace = true, optional = true }
+hashtree-resolver = { workspace = true, optional = true }
+hashtree-updater = { workspace = true, optional = true }
 netdev.workspace = true
+nostr = { workspace = true, optional = true }
 socket2.workspace = true
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]

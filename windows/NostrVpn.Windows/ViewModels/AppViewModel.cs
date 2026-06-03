@@ -57,7 +57,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     private string _addNetworkJoinStatus = "";
     private string _updateStatus = "";
     private Uri? _updateAssetUrl;
-    private bool _updateUsesBundledHelper;
+    private bool _updateUsesCoreDownload;
     private bool _updateChecking;
     private bool _updateInstalling;
     private bool _updateAvailable;
@@ -445,7 +445,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    public bool UpdateInstallEnabled => UpdateAvailable && (_updateUsesBundledHelper || _updateAssetUrl is not null) && !UpdateChecking && !UpdateInstalling;
+    public bool UpdateInstallEnabled => UpdateAvailable && _updateUsesCoreDownload && !UpdateChecking && !UpdateInstalling;
 
     public string UpdateStripeText => string.IsNullOrWhiteSpace(State.AppVersion)
         ? $"Update available: {UpdateVersion}"
@@ -982,13 +982,13 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
             UpdateAvailable = result.Available;
             UpdateVersion = result.Tag;
             _updateAssetUrl = result.Available ? result.AssetUrl : null;
-            _updateUsesBundledHelper = result.Available && result.UseBundledHelper;
+            _updateUsesCoreDownload = result.Available && result.UseCoreDownload;
             OnPropertyChanged(nameof(UpdateInstallEnabled));
             CommandManager.InvalidateRequerySuggested();
             if (result.Available)
             {
                 UpdateStatus = result.Message;
-                if (AutoInstallUpdates && (result.AssetUrl is not null || result.UseBundledHelper))
+                if (AutoInstallUpdates && result.UseCoreDownload)
                 {
                     await InstallUpdateAsync();
                 }
@@ -1005,7 +1005,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         catch (Exception error)
         {
             _updateAssetUrl = null;
-            _updateUsesBundledHelper = false;
+            _updateUsesCoreDownload = false;
             OnPropertyChanged(nameof(UpdateInstallEnabled));
             CommandManager.InvalidateRequerySuggested();
             if (manual)
@@ -1021,7 +1021,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task InstallUpdateAsync()
     {
-        if ((!_updateUsesBundledHelper && _updateAssetUrl is null) || UpdateInstalling)
+        if (!_updateUsesCoreDownload || UpdateInstalling)
         {
             return;
         }
@@ -1029,9 +1029,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         UpdateStatus = $"Downloading {UpdateVersion}";
         try
         {
-            var path = _updateUsesBundledHelper
-                ? await _updateService.DownloadWithBundledHelperAsync()
-                : await _updateService.DownloadAsync(_updateAssetUrl!);
+            var path = await _updateService.DownloadWithCoreAsync(State.AppVersion);
             UpdateStatus = $"Downloaded {Path.GetFileName(path)}";
             if (!UpdateService.SkipOpen)
             {
