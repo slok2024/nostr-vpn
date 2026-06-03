@@ -64,9 +64,10 @@ const FIPS_DISCOVERY_BACKOFF_MAX_SECS: u64 = 300;
 const FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS: u64 = 30;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 8;
 const FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS: usize = 4;
-const FIPS_NOSTR_FAILURE_STREAK_THRESHOLD: u32 = 2;
+const FIPS_NOSTR_FAILURE_STREAK_THRESHOLD: u32 = 6;
+const FIPS_NOSTR_EXTENDED_COOLDOWN_SECS: u64 = 60;
 const FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS: u64 = 300;
-const FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS: u64 = 5;
+const FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS: u64 = 2;
 const FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS: u64 = 30;
 const FIPS_PEER_ACTIVE_PING_INTERVAL_SECS: u64 = 5;
 const FIPS_PEER_LINK_PING_INTERVAL_SECS: u64 = 5;
@@ -1493,6 +1494,7 @@ fn fips_endpoint_config_with_open_discovery_limit(
     config.node.discovery.nostr.policy = nostr_discovery_policy;
     config.node.discovery.nostr.open_discovery_max_pending = open_discovery_max_pending;
     config.node.discovery.nostr.failure_streak_threshold = FIPS_NOSTR_FAILURE_STREAK_THRESHOLD;
+    config.node.discovery.nostr.extended_cooldown_secs = FIPS_NOSTR_EXTENDED_COOLDOWN_SECS;
     config.node.discovery.nostr.startup_sweep_max_age_secs = FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS;
     config.node.discovery.nostr.share_local_candidates = transport
         .map(|transport| transport.share_local_candidates)
@@ -3963,8 +3965,9 @@ mod tests {
         ControlFragmentBuffer, FIPS_DISCOVERY_BACKOFF_BASE_SECS, FIPS_DISCOVERY_BACKOFF_MAX_SECS,
         FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS, FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS,
         FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS, FIPS_LAN_DISCOVERY_SCOPE_PREFIX,
-        FIPS_MESH_EVENT_DRAIN_LIMIT, FIPS_NOSTR_DISCOVERY_APP, FIPS_NOSTR_FAILURE_STREAK_THRESHOLD,
-        FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING, FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS,
+        FIPS_MESH_EVENT_DRAIN_LIMIT, FIPS_NOSTR_DISCOVERY_APP, FIPS_NOSTR_EXTENDED_COOLDOWN_SECS,
+        FIPS_NOSTR_FAILURE_STREAK_THRESHOLD, FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+        FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS,
         FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS, FIPS_RECONNECT_BACKOFF_BASE_SECS,
         FIPS_RECONNECT_BACKOFF_MAX_SECS, FipsEndpointTransportConfig, FipsPeerAddressHint,
         FipsPrivateMeshEvent, FipsPrivateMeshRuntime, FipsPrivateTunnelConfig,
@@ -4925,6 +4928,10 @@ mod tests {
             FIPS_NOSTR_FAILURE_STREAK_THRESHOLD
         );
         assert_eq!(
+            config.node.discovery.nostr.extended_cooldown_secs,
+            FIPS_NOSTR_EXTENDED_COOLDOWN_SECS
+        );
+        assert_eq!(
             config.node.discovery.nostr.startup_sweep_max_age_secs,
             FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS
         );
@@ -4991,6 +4998,10 @@ mod tests {
         assert_eq!(
             config.node.discovery.nostr.failure_streak_threshold,
             FIPS_NOSTR_FAILURE_STREAK_THRESHOLD
+        );
+        assert_eq!(
+            config.node.discovery.nostr.extended_cooldown_secs,
+            FIPS_NOSTR_EXTENDED_COOLDOWN_SECS
         );
         assert!(config.node.discovery.nostr.share_local_candidates);
         assert!(config.node.discovery.lan.enabled);
