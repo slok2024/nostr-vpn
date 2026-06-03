@@ -2,7 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased
+## 4.0.56 - 2026-06-03
+
+### Fixed
+
+- FIPS static endpoint hints now ignore stale private, CGNAT, and link-local
+  addresses unless they match the current local underlay subnet, preventing old
+  LAN addresses from blocking fresh traversal candidates.
+- FIPS direct-path retries are less punitive on mobile-hotspot NAT flaps: nvpn
+  now probes direct paths more frequently and avoids long Nostr traversal
+  cooldowns after only one or two transient liveness failures.
 
 ## 4.0.55 - 2026-06-03
 
