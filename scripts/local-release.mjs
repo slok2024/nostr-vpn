@@ -581,7 +581,7 @@ function buildLinuxArtifacts({ env, tag, dryRun, builtLines }) {
   const innerScript = [
     'set -euo pipefail',
     `rustup target add ${muslTriple}`,
-    'rsync -a --exclude target --exclude dist --exclude .git /work/ /build/',
+    'rsync -a --exclude target --exclude dist --exclude .git --exclude .cargo/config.toml /work/ /build/',
     'cd /build',
     'cargo build --release --locked --manifest-path linux/Cargo.toml',
     'cargo build --release --locked -p nvpn',
