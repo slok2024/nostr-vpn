@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.0.58 - 2026-06-04
+
+### Changed
+
+- FIPS now uses `fips-core` 0.3.29 and `fips-endpoint` 0.3.22.
+
+### Fixed
+
+- FIPS link-dead direct paths now immediately refresh fallback routing through
+  live transit peers while direct UDP reprobes continue in the background.
+- Daemon and mobile status now keep retry-only direct probe state separate from
+  authenticated direct-link connectivity, so `runtime_endpoint: "fips"` can
+  accurately mean fallback transport is carrying traffic while direct probing
+  is still active.
+- The release gate now includes a three-node roaming Docker scenario that
+  drops, restores, and drops direct Alice/Bob UDP again to catch sticky
+  fallback demotion regressions.
+
 ## 4.0.57 - 2026-06-03
 
 ### Changed

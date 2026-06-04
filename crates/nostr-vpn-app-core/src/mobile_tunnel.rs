@@ -1507,7 +1507,8 @@ fn mobile_runtime_state(
             let presence_connected = last_seen_at.is_some_and(|last_seen_at| {
                 now.saturating_sub(last_seen_at) <= MOBILE_PEER_ONLINE_GRACE_SECS
             });
-            let reachable = presence_connected || link.is_some();
+            let link_connected = link.is_some_and(|peer| peer.connected);
+            let reachable = presence_connected || link_connected;
             let advertised_routes = peer_config
                 .map(|peer| peer.allowed_ips.clone())
                 .unwrap_or_default();
@@ -1544,11 +1545,10 @@ fn mobile_runtime_state(
                 rx_bytes: peer_presence.map_or(0, |presence| presence.rx_bytes),
                 public_key: status.pubkey,
                 advertised_routes,
-                last_mesh_seen_at: last_seen_at
-                    .unwrap_or_else(|| if link.is_some() { now } else { 0 }),
-                last_fips_seen_at: last_seen_at.or_else(|| link.is_some().then_some(now)),
+                last_mesh_seen_at: last_seen_at.unwrap_or(if link_connected { now } else { 0 }),
+                last_fips_seen_at: last_seen_at.or_else(|| link_connected.then_some(now)),
                 reachable,
-                last_handshake_at: last_seen_at.or_else(|| link.is_some().then_some(now)),
+                last_handshake_at: last_seen_at.or_else(|| link_connected.then_some(now)),
                 error: if reachable {
                     None
                 } else {
@@ -3813,6 +3813,7 @@ mod tests {
         let mesh = FipsMeshRuntime::with_local_routes(config.peers.clone(), vec![]);
         let endpoint_peer = FipsEndpointPeer {
             npub: config.peers[0].endpoint_npub.clone(),
+            connected: true,
             transport_addr: Some("192.168.50.10:51820".to_string()),
             transport_type: Some("udp".to_string()),
             link_id: 7,
@@ -3891,6 +3892,70 @@ mod tests {
         assert_eq!(state.peers[0].tx_bytes, 32);
         assert_eq!(state.peers[0].rx_bytes, 64);
         assert_eq!(state.peers[0].last_fips_seen_at, Some(now - 10));
+    }
+
+    #[test]
+    fn mobile_runtime_state_keeps_retry_only_probe_separate_from_link() {
+        let mut app = AppConfig::generated();
+        app.ensure_defaults();
+        let own = app.own_nostr_pubkey_hex().expect("own pubkey");
+        let peer = "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc";
+        app.networks = vec![NetworkConfig {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            enabled: true,
+            network_id: "test".to_string(),
+            invite_secret: "join-secret".to_string(),
+            participants: vec![peer.to_string()],
+            admins: vec![own],
+            listen_for_join_requests: true,
+            invite_inviter: String::new(),
+            outbound_join_request: None,
+            inbound_join_requests: Vec::new(),
+            shared_roster_updated_at: 0,
+            shared_roster_signed_by: String::new(),
+        }];
+        let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
+        let mesh = FipsMeshRuntime::with_local_routes(config.peers.clone(), vec![]);
+        let now = 1_778_998_000;
+        let mut presence = HashMap::new();
+        presence.insert(
+            peer.to_string(),
+            MobilePeerPresence {
+                last_seen_at: Some(now - 4),
+                ..MobilePeerPresence::default()
+            },
+        );
+        let endpoint_peer = FipsEndpointPeer {
+            npub: config.peers[0].endpoint_npub.clone(),
+            connected: false,
+            transport_addr: None,
+            transport_type: None,
+            link_id: 0,
+            srtt_ms: None,
+            packets_sent: 0,
+            packets_recv: 0,
+            bytes_sent: 0,
+            bytes_recv: 0,
+            direct_probe_pending: true,
+            direct_probe_after_ms: Some(98_765),
+        };
+
+        let state = mobile_runtime_state(
+            &config,
+            &mesh,
+            &presence,
+            vec![endpoint_peer],
+            Vec::new(),
+            now,
+        );
+
+        assert_eq!(state.connected_peer_count, 1);
+        assert!(state.peers[0].reachable);
+        assert!(state.peers[0].direct_probe_pending);
+        assert_eq!(state.peers[0].direct_probe_after_ms, Some(98_765));
+        assert_eq!(state.peers[0].fips_transport_addr, "");
+        assert_eq!(state.peers[0].last_fips_seen_at, Some(now - 4));
     }
 
     #[test]

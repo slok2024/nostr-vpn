@@ -324,9 +324,10 @@ fn mesh_status_from_endpoint_peer(
     peer: &FipsEndpointPeer,
     now: u64,
 ) -> MeshPeerStatus {
+    let connected = peer.connected;
     MeshPeerStatus {
         pubkey,
-        connected: true,
+        connected,
         endpoint_npub: normalize_fips_endpoint_npub(&peer.npub),
         transport_addr: peer.transport_addr.clone(),
         transport_type: peer.transport_type.clone(),
@@ -337,10 +338,10 @@ fn mesh_status_from_endpoint_peer(
         link_bytes_recv: peer.bytes_recv,
         direct_probe_pending: peer.direct_probe_pending,
         direct_probe_after_ms: peer.direct_probe_after_ms,
-        last_seen_at: Some(now),
+        last_seen_at: connected.then_some(now),
         tx_bytes: 0,
         rx_bytes: 0,
-        error: None,
+        error: (!connected).then(|| "fips link pending".to_string()),
     }
 }
 
@@ -476,13 +477,17 @@ fn filter_static_tunnel_endpoints(
 fn filter_stamped_tunnel_endpoints(
     groups: Vec<(String, Vec<(String, u64)>)>,
     tunnel_ips: &HashSet<IpAddr>,
+    local_subnets: &[Ipv4Subnet],
 ) -> Vec<(String, Vec<(String, u64)>)> {
     groups
         .into_iter()
         .filter_map(|(participant, addrs)| {
             let addrs = addrs
                 .into_iter()
-                .filter(|(addr, _)| !endpoint_uses_tunnel_ip(addr, tunnel_ips))
+                .filter(|(addr, _)| {
+                    !endpoint_uses_tunnel_ip(addr, tunnel_ips)
+                        && static_endpoint_allowed_on_current_underlay(addr, local_subnets)
+                })
                 .collect::<Vec<_>>();
             (!addrs.is_empty()).then_some((participant, addrs))
         })
@@ -945,11 +950,13 @@ impl FipsPrivateMeshRuntime {
                 status.link_packets_recv = peer_link.packets_recv;
                 status.link_bytes_sent = peer_link.bytes_sent;
                 status.link_bytes_recv = peer_link.bytes_recv;
+                status.direct_probe_pending = peer_link.direct_probe_pending;
+                status.direct_probe_after_ms = peer_link.direct_probe_after_ms;
             }
             if status.srtt_ms.is_none() {
                 status.srtt_ms = peer_presence.and_then(|value| value.rtt_ms);
             }
-            let link_connected = peer_link.is_some();
+            let link_connected = peer_link.is_some_and(|peer_link| peer_link.connected);
             let (connected, error) = fips_peer_liveness(
                 status.last_seen_at,
                 link_connected,
@@ -1045,7 +1052,9 @@ impl FipsPrivateMeshRuntime {
             .into_iter()
             .filter(|participant| {
                 let peer_presence = presence.get(participant);
-                let link_connected = link_status.contains_key(participant);
+                let link_connected = link_status
+                    .get(participant)
+                    .is_some_and(|peer| peer.connected);
                 fips_peer_ping_due(
                     peer_presence.and_then(|value| value.last_seen_at),
                     peer_presence.and_then(|value| value.last_ping_sent_at),
@@ -1875,8 +1884,11 @@ impl FipsPrivateTunnelConfig {
         let mut recent_peer_endpoints = recent_peers
             .map(|cache| cache.as_static_peer_endpoints_with_seen_at())
             .unwrap_or_default();
-        recent_peer_endpoints =
-            filter_stamped_tunnel_endpoints(recent_peer_endpoints, &tunnel_endpoint_hosts);
+        recent_peer_endpoints = filter_stamped_tunnel_endpoints(
+            recent_peer_endpoints,
+            &tunnel_endpoint_hosts,
+            &local_private_subnets,
+        );
         // Roster/admin endpoint hints are part of the user's network and are
         // always retained. Recent authenticated non-roster peers are only
         // ambient transit seeds; cap them before handing the list to fips so
@@ -1900,6 +1912,7 @@ impl FipsPrivateTunnelConfig {
                     .cloned()
                     .collect(),
                 &tunnel_endpoint_hosts,
+                &local_private_subnets,
             )
             .into_iter()
             .filter(|(participant, _)| {
@@ -4049,11 +4062,12 @@ mod tests {
         FipsEndpointTransportConfig, FipsPeerAddressHint, FipsPrivateMeshEvent,
         FipsPrivateMeshRuntime, FipsPrivateTunnelConfig, Ipv4Subnet,
         cap_recent_non_roster_transit_endpoints, control_frame_destination_npub,
-        control_frame_source_pubkey, drain_event_batch, filter_static_tunnel_endpoints,
-        fips_endpoint_config, fips_endpoint_peers_from_mesh, fips_lan_discovery_scope,
-        fips_peer_address_from_hint, linux_cap_eff_has_net_admin, linux_tun_setup_error,
-        other_endpoint_peer_statuses, parse_fips_nostr_discovery_policy, strip_cidr,
-        tag_authenticated_transport_addr, unix_timestamp,
+        control_frame_source_pubkey, drain_event_batch, filter_stamped_tunnel_endpoints,
+        filter_static_tunnel_endpoints, fips_endpoint_config, fips_endpoint_peers_from_mesh,
+        fips_lan_discovery_scope, fips_peer_address_from_hint, linux_cap_eff_has_net_admin,
+        linux_tun_setup_error, mesh_status_from_endpoint_peer, other_endpoint_peer_statuses,
+        parse_fips_nostr_discovery_policy, strip_cidr, tag_authenticated_transport_addr,
+        unix_timestamp,
     };
     use fips_endpoint::{
         Config, ConnectPolicy, FipsEndpointPeer, NostrDiscoveryPolicy,
@@ -4265,6 +4279,7 @@ mod tests {
             pubkey.clone(),
             FipsEndpointPeer {
                 npub: npub.clone(),
+                connected: true,
                 transport_addr: Some("203.0.113.9:9000".to_string()),
                 transport_type: Some("udp".to_string()),
                 link_id: 42,
@@ -4298,6 +4313,35 @@ mod tests {
         assert_eq!(statuses[0].link_bytes_recv, 1400);
         assert_eq!(statuses[0].last_seen_at, Some(123));
         assert_eq!(statuses[0].error, None);
+    }
+
+    #[test]
+    fn retry_only_endpoint_peer_status_keeps_probe_separate_from_link() {
+        let status = mesh_status_from_endpoint_peer(
+            "peer".to_string(),
+            &FipsEndpointPeer {
+                npub: "npub1peer".to_string(),
+                connected: false,
+                transport_addr: None,
+                transport_type: None,
+                link_id: 0,
+                srtt_ms: None,
+                packets_sent: 0,
+                packets_recv: 0,
+                bytes_sent: 0,
+                bytes_recv: 0,
+                direct_probe_pending: true,
+                direct_probe_after_ms: Some(12_345),
+            },
+            123,
+        );
+
+        assert!(!status.connected);
+        assert!(status.direct_probe_pending);
+        assert_eq!(status.direct_probe_after_ms, Some(12_345));
+        assert_eq!(status.last_seen_at, None);
+        assert_eq!(status.transport_addr, None);
+        assert_eq!(status.error.as_deref(), Some("fips link pending"));
     }
 
     #[test]
@@ -5311,11 +5355,11 @@ mod tests {
             &[
                 (
                     bob_pubkey.clone(),
-                    vec![("192.168.50.22:51820".to_string(), 123_000)],
+                    vec![("203.0.113.22:51820".to_string(), 123_000)],
                 ),
                 (
                     admin_pubkey.clone(),
-                    vec![("192.168.50.33:51820".to_string(), 123_000)],
+                    vec![("203.0.113.33:51820".to_string(), 123_000)],
                 ),
             ],
         )
@@ -5327,7 +5371,7 @@ mod tests {
             .find(|peer| peer.npub == bob_npub)
             .expect("bob endpoint peer");
         assert_eq!(bob.addresses.len(), 1);
-        assert_eq!(bob.addresses[0].addr, "192.168.50.22:51820");
+        assert_eq!(bob.addresses[0].addr, "203.0.113.22:51820");
         assert_eq!(bob.addresses[0].seen_at_ms, Some(123_000));
 
         let admin = config
@@ -5336,7 +5380,7 @@ mod tests {
             .find(|peer| peer.npub == admin_npub)
             .expect("admin endpoint peer");
         assert_eq!(admin.addresses.len(), 1);
-        assert_eq!(admin.addresses[0].addr, "192.168.50.33:51820");
+        assert_eq!(admin.addresses[0].addr, "203.0.113.33:51820");
         assert_eq!(admin.addresses[0].seen_at_ms, Some(123_000));
     }
 
@@ -5575,6 +5619,44 @@ mod tests {
     }
 
     #[test]
+    fn stamped_endpoint_filter_drops_stale_private_hints() {
+        let mut tunnel_ips = HashSet::new();
+        tunnel_ips.insert(IpAddr::V4(Ipv4Addr::new(10, 44, 1, 2)));
+        let local_subnets = vec![Ipv4Subnet::new(Ipv4Addr::new(192, 168, 50, 10), 24)];
+
+        let filtered = filter_stamped_tunnel_endpoints(
+            vec![(
+                "peer".to_string(),
+                vec![
+                    ("192.168.50.57:51820".to_string(), 100),
+                    ("udp:192.168.50.58:51820".to_string(), 101),
+                    ("192.168.51.57:51820".to_string(), 102),
+                    ("172.19.0.1:51820".to_string(), 103),
+                    ("100.120.94.10:51820".to_string(), 104),
+                    ("10.44.1.2:51820".to_string(), 105),
+                    ("203.0.113.9:51820".to_string(), 106),
+                    ("peer.example.com:443".to_string(), 107),
+                ],
+            )],
+            &tunnel_ips,
+            &local_subnets,
+        );
+
+        assert_eq!(
+            filtered,
+            vec![(
+                "peer".to_string(),
+                vec![
+                    ("192.168.50.57:51820".to_string(), 100),
+                    ("udp:192.168.50.58:51820".to_string(), 101),
+                    ("203.0.113.9:51820".to_string(), 106),
+                    ("peer.example.com:443".to_string(), 107),
+                ],
+            )]
+        );
+    }
+
+    #[test]
     fn tunnel_config_drops_overlay_tunnel_endpoint_hints() {
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();
@@ -5609,7 +5691,7 @@ mod tests {
                 bob_pubkey.clone(),
                 vec![
                     (bob_tunnel_endpoint, 123_000),
-                    ("192.168.50.22:51820".to_string(), 124_000),
+                    ("203.0.113.24:51820".to_string(), 124_000),
                 ],
             )],
         )
@@ -5625,7 +5707,7 @@ mod tests {
             .iter()
             .map(|hint| hint.addr.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(addrs, vec!["192.168.50.22:51820", "203.0.113.23:51820"]);
+        assert_eq!(addrs, vec!["203.0.113.23:51820", "203.0.113.24:51820"]);
     }
 
     /// Pin the open-discovery / closed-data-plane invariant.
