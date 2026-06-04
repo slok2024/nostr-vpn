@@ -140,13 +140,35 @@ final class AuthorizationServicesPrivilegedCommandRunner: PrivilegedCommandRunne
             UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
             UnsafeMutablePointer<UnsafeMutablePointer<FILE>?>?
         ) -> OSStatus
-        guard let sym = dlsym(
-            UnsafeMutableRawPointer(bitPattern: -2),
-            "AuthorizationExecuteWithPrivileges"
-        ) else {
+        guard let sym = Self.resolveExecuteWithPrivilegesSymbol() else {
             return errAuthorizationInternal
         }
         let fn = unsafeBitCast(sym, to: FnT.self)
         return fn(authRef, pathToTool, [], args, communicationsPipe)
+    }
+
+    /// Resolves the (long-deprecated) `AuthorizationExecuteWithPrivileges`
+    /// symbol at runtime.
+    ///
+    /// macOS 26 stopped exposing this symbol through the `RTLD_DEFAULT`
+    /// namespace, so `dlsym((void*)-2, ...)` now returns `nil` even though the
+    /// function still ships in `Security.framework`. The result was that the
+    /// privileged `nvpn` invocation silently never ran and the VPN toggle
+    /// reverted to off with no auth prompt (see issue #3). Keep the
+    /// `RTLD_DEFAULT` lookup first for older systems, then fall back to an
+    /// explicit `Security.framework` handle, which still resolves on macOS 26.
+    private static func resolveExecuteWithPrivilegesSymbol() -> UnsafeMutableRawPointer? {
+        let name = "AuthorizationExecuteWithPrivileges"
+        if let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), name) {
+            return sym
+        }
+        let securityPath = "/System/Library/Frameworks/Security.framework/Security"
+        guard let handle = dlopen(securityPath, RTLD_LAZY) else {
+            return nil
+        }
+        // The handle is intentionally left resident for the process lifetime;
+        // Security.framework is already loaded, so this does not leak a real
+        // resource.
+        return dlsym(handle, name)
     }
 }
