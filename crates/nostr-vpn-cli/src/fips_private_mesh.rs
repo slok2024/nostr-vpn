@@ -67,6 +67,8 @@ const FIPS_NOSTR_EXTENDED_COOLDOWN_SECS: u64 = 60;
 const FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS: u64 = 300;
 const FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS: u64 = 2;
 const FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS: u64 = 30;
+const FIPS_ENDPOINT_SESSION_IDLE_TIMEOUT_SECS: u64 = 0;
+const FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST: usize = 64;
 const FIPS_PEER_ACTIVE_PING_INTERVAL_SECS: u64 = 5;
 const FIPS_PEER_LINK_PING_INTERVAL_SECS: u64 = 5;
 const FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS: u64 = 30;
@@ -1542,6 +1544,8 @@ fn fips_endpoint_config_with_open_discovery_limit(
     config.node.retry.max_backoff_secs = FIPS_RECONNECT_BACKOFF_MAX_SECS;
     config.node.heartbeat_interval_secs = FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS;
     config.node.link_dead_timeout_secs = FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS;
+    config.node.session.idle_timeout_secs = FIPS_ENDPOINT_SESSION_IDLE_TIMEOUT_SECS;
+    config.node.session.pending_packets_per_dest = FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST;
     config.dns.enabled = false;
     // nvpn keeps public/open discovery available as a fallback, but it should
     // be polite to public transit nodes when stale roster peers or cached
@@ -4054,7 +4058,8 @@ mod tests {
     use super::{
         ControlFragmentBuffer, FIPS_DISCOVERY_BACKOFF_BASE_SECS, FIPS_DISCOVERY_BACKOFF_MAX_SECS,
         FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS, FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS,
-        FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS, FIPS_LAN_DISCOVERY_SCOPE_PREFIX,
+        FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS, FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST,
+        FIPS_ENDPOINT_SESSION_IDLE_TIMEOUT_SECS, FIPS_LAN_DISCOVERY_SCOPE_PREFIX,
         FIPS_MESH_EVENT_DRAIN_LIMIT, FIPS_NOSTR_DISCOVERY_APP, FIPS_NOSTR_EXTENDED_COOLDOWN_SECS,
         FIPS_NOSTR_FAILURE_STREAK_THRESHOLD, FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS, FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS,
@@ -5029,6 +5034,14 @@ mod tests {
         assert_eq!(
             config.node.link_dead_timeout_secs,
             FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS
+        );
+        assert_eq!(
+            config.node.session.idle_timeout_secs,
+            FIPS_ENDPOINT_SESSION_IDLE_TIMEOUT_SECS
+        );
+        assert_eq!(
+            config.node.session.pending_packets_per_dest,
+            FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST
         );
         assert!(config.node.discovery.nostr.enabled);
         assert!(!config.node.discovery.nostr.advertise);
