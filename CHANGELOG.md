@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.0.66 - 2026-06-05
+
+### Changed
+
+- FIPS now uses `fips-core` 0.3.38 and `fips-endpoint` 0.3.24.
+
+### Fixed
+
+- Direct-path failures no longer reinstall a stale UDP fast path after
+  link-dead. Mesh can carry traffic as fallback while direct UDP keeps
+  probing and upgrades back when the path recovers.
+
 ## 4.0.65 - 2026-06-05
 
 ### Changed

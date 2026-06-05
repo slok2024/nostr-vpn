@@ -52,6 +52,10 @@ on_exit() {
   local exit_code=$?
   if [[ $exit_code -ne 0 ]]; then
     dump_debug
+    if [[ "${NVPN_E2E_KEEP_CONTAINERS_ON_FAIL:-}" == "1" ]]; then
+      echo "NVPN_E2E_KEEP_CONTAINERS_ON_FAIL=1, leaving docker containers running for inspection" >&2
+      exit "$exit_code"
+    fi
   fi
   cleanup
   exit "$exit_code"
@@ -217,7 +221,6 @@ peer_matches_fallback_with_probe() {
     | any(
       (.participant_pubkey == $peer_key or .fips_endpoint_npub == $peer_key)
       and .reachable == true
-      and (.runtime_endpoint == "fips" or .endpoint == "fips")
       and (.direct_probe_pending == true or (.direct_probe_after_ms? != null))
     )
   ' >/dev/null <<<"$status"
