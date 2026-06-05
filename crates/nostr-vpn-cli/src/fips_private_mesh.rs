@@ -1661,10 +1661,14 @@ struct FipsEndpointTransportConfig {
 /// recent-peers cache entries, `None` for operator-supplied static hints.
 /// fips's dialer uses this field as a recency tiebreaker inside the same
 /// priority tier.
+const FIPS_STATIC_PEER_ENDPOINT_PRIORITY: u8 = 10;
+const FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY: u8 = 100;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FipsPeerAddressHint {
     pub(crate) addr: String,
     pub(crate) seen_at_ms: Option<u64>,
+    pub(crate) priority: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1676,7 +1680,7 @@ pub(crate) struct FipsEndpointPeerTransportConfig {
 
 fn fips_peer_address_from_hint(hint: &FipsPeerAddressHint) -> PeerAddress {
     let (transport, addr) = split_peer_transport_addr(&hint.addr);
-    let mut peer_address = PeerAddress::new(transport, addr);
+    let mut peer_address = PeerAddress::with_priority(transport, addr, hint.priority);
     if let Some(seen_at_ms) = hint.seen_at_ms {
         peer_address = peer_address.with_seen_at_ms(seen_at_ms);
     }
@@ -1866,6 +1870,7 @@ fn fips_endpoint_peers_from_mesh(
             peer.addresses.push(FipsPeerAddressHint {
                 addr: trimmed.to_string(),
                 seen_at_ms: None,
+                priority: FIPS_STATIC_PEER_ENDPOINT_PRIORITY,
             });
         }
     }
@@ -1903,6 +1908,7 @@ fn fips_endpoint_peers_from_mesh(
             peer.addresses.push(FipsPeerAddressHint {
                 addr: trimmed.to_string(),
                 seen_at_ms: Some(seen_at_ms),
+                priority: FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY,
             });
         }
     }
@@ -4230,14 +4236,15 @@ fn unix_timestamp() -> u64 {
 mod tests {
     use super::{
         ControlFragmentBuffer, FIPS_DISCOVERY_BACKOFF_BASE_SECS, FIPS_DISCOVERY_BACKOFF_MAX_SECS,
-        FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS, FIPS_ENDPOINT_FAST_LINK_DEAD_TIMEOUT_SECS,
-        FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS, FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS,
-        FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST, FIPS_ENDPOINT_REKEY_AFTER_SECS,
-        FIPS_ENDPOINT_SESSION_IDLE_TIMEOUT_SECS, FIPS_LAN_DISCOVERY_SCOPE_PREFIX,
-        FIPS_MESH_EVENT_DRAIN_LIMIT, FIPS_NOSTR_DISCOVERY_APP, FIPS_NOSTR_EXTENDED_COOLDOWN_SECS,
-        FIPS_NOSTR_FAILURE_STREAK_THRESHOLD, FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-        FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS, FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS,
-        FIPS_RECONNECT_BACKOFF_BASE_SECS, FIPS_RECONNECT_BACKOFF_MAX_SECS,
+        FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS, FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY,
+        FIPS_ENDPOINT_FAST_LINK_DEAD_TIMEOUT_SECS, FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS,
+        FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS, FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST,
+        FIPS_ENDPOINT_REKEY_AFTER_SECS, FIPS_ENDPOINT_SESSION_IDLE_TIMEOUT_SECS,
+        FIPS_LAN_DISCOVERY_SCOPE_PREFIX, FIPS_MESH_EVENT_DRAIN_LIMIT, FIPS_NOSTR_DISCOVERY_APP,
+        FIPS_NOSTR_EXTENDED_COOLDOWN_SECS, FIPS_NOSTR_FAILURE_STREAK_THRESHOLD,
+        FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING, FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS,
+        FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS, FIPS_RECONNECT_BACKOFF_BASE_SECS,
+        FIPS_RECONNECT_BACKOFF_MAX_SECS, FIPS_STATIC_PEER_ENDPOINT_PRIORITY,
         FipsEndpointTransportConfig, FipsPeerAddressHint, FipsPrivateMeshEvent,
         FipsPrivateMeshRuntime, FipsPrivateTunnelConfig, Ipv4Subnet,
         cap_recent_non_roster_transit_endpoints, control_frame_destination_npub,
@@ -4314,17 +4321,21 @@ mod tests {
         let tcp = fips_peer_address_from_hint(&FipsPeerAddressHint {
             addr: "tcp:203.0.113.20:443".to_string(),
             seen_at_ms: Some(123_000),
+            priority: FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY,
         });
         assert_eq!(tcp.transport, "tcp");
         assert_eq!(tcp.addr, "203.0.113.20:443");
         assert_eq!(tcp.seen_at_ms, Some(123_000));
+        assert_eq!(tcp.priority, FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY);
 
         let udp = fips_peer_address_from_hint(&FipsPeerAddressHint {
             addr: "udp:203.0.113.21:2121".to_string(),
             seen_at_ms: None,
+            priority: FIPS_STATIC_PEER_ENDPOINT_PRIORITY,
         });
         assert_eq!(udp.transport, "udp");
         assert_eq!(udp.addr, "203.0.113.21:2121");
+        assert_eq!(udp.priority, FIPS_STATIC_PEER_ENDPOINT_PRIORITY);
     }
 
     #[test]
@@ -5772,6 +5783,44 @@ mod tests {
 
         assert_eq!(capped.len(), 1);
         assert_eq!(capped[0].0, "older-stable");
+    }
+
+    #[test]
+    fn endpoint_peer_hints_mark_static_addresses_as_preferred_priority() {
+        let endpoint_peers = fips_endpoint_peers_from_mesh(
+            &[],
+            vec![("peer".to_string(), vec!["192.168.178.91:51830".to_string()])],
+            vec![(
+                "peer".to_string(),
+                vec![("89.27.103.157:33838".to_string(), 123_000)],
+            )],
+        );
+
+        let peer = endpoint_peers
+            .iter()
+            .find(|peer| peer.npub == "peer")
+            .expect("peer");
+        let static_hint = peer
+            .addresses
+            .iter()
+            .find(|hint| hint.addr == "192.168.178.91:51830")
+            .expect("static hint");
+        let recent_hint = peer
+            .addresses
+            .iter()
+            .find(|hint| hint.addr == "89.27.103.157:33838")
+            .expect("recent hint");
+
+        assert_eq!(static_hint.priority, FIPS_STATIC_PEER_ENDPOINT_PRIORITY);
+        assert_eq!(recent_hint.priority, FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY);
+        assert_eq!(
+            fips_peer_address_from_hint(static_hint).priority,
+            FIPS_STATIC_PEER_ENDPOINT_PRIORITY
+        );
+        assert_eq!(
+            fips_peer_address_from_hint(recent_hint).priority,
+            FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY
+        );
     }
 
     #[test]
