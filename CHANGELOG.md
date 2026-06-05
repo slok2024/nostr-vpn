@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.0.60 - 2026-06-05
+
+### Changed
+
+- FIPS now uses `fips-core` 0.3.31 and `fips-endpoint` 0.3.24.
+
+### Fixed
+
+- Repeated direct UDP drops no longer let a reconnecting static path look
+  "fresh" enough to suppress direct re-probing, so mesh remains fallback
+  transport instead of becoming a sticky demotion after hotspot flaps.
+
 ## 4.0.59 - 2026-06-05
 
 ### Changed
