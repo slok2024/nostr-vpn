@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.0.63 - 2026-06-05
+
+### Changed
+
+- FIPS now uses `fips-core` 0.3.34 and `fips-endpoint` 0.3.24.
+
+### Fixed
+
+- Nostr/STUN-discovered UDP paths now fall back after a short liveness window
+  when they go quiet, even if they previously carried traffic. Mesh stays a
+  fallback transport while direct UDP keeps probing.
+
 ## 4.0.62 - 2026-06-05
 
 ### Changed
