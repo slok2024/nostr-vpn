@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.0.59 - 2026-06-05
+
+### Changed
+
+- FIPS now uses `fips-core` 0.3.30 and `fips-endpoint` 0.3.23.
+
+### Fixed
+
+- Direct-path retry maintenance now re-probes the last observed UDP endpoint
+  after link-dead, while mesh/relay stays only as fallback traffic transport.
+  This prevents transient hotspot liveness failures from pinning peers to
+  `runtime_endpoint: "fips"`.
+
 ## 4.0.58 - 2026-06-04
 
 ### Changed
