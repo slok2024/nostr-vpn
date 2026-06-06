@@ -15,4 +15,9 @@ if [ "$#" -eq 0 ]; then
     set -- cargo run
 fi
 
-docker compose exec nostr-vpn-linux /usr/local/bin/dev-entrypoint "$@"
+exec_args=()
+if [ ! -t 0 ]; then
+    exec_args=(-T)
+fi
+
+docker compose exec "${exec_args[@]}" nostr-vpn-linux /usr/local/bin/dev-entrypoint "$@"

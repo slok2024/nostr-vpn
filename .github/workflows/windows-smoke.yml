@@ -13,7 +13,7 @@ env:
 
 jobs:
   windows-smoke:
-    name: Windows CLI smoke
+    name: Windows app smoke
     runs-on: windows-latest
     permissions:
       contents: read
@@ -29,6 +29,11 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
         with:
@@ -40,20 +45,37 @@ jobs:
       - name: Build CLI release binary
         run: cargo build --release -p nvpn
 
+      - name: Install Windows native package dependencies
+        run: choco install llvm innosetup -y --no-progress
+
+      - name: Build Windows installer
+        env:
+          NVPN_WINDOWS_LLVM_BIN: C:\Program Files\LLVM\bin
+        run: .\scripts\windows-build.ps1 -Configuration Release -Installer -Tag v0.0.0 -OutputDir dist
+
+      - name: Smoke launch installed Windows app
+        run: .\scripts\windows-installer-smoke.ps1 -InstallerPath dist\nostr-vpn-v0.0.0-windows-x64-setup.exe -ArtifactRoot artifacts
+
       - name: Package smoke artifacts
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 
           $files = @(
-            "target/release/nvpn.exe"
+            "target/release/nvpn.exe",
+            "dist/nostr-vpn-v0.0.0-windows-x64-setup.exe",
+            "artifacts/windows-app-launch-smoke.json"
           )
 
           foreach ($file in $files) {
             if (-not (Test-Path $file)) {
               throw "Expected build output not found: $file"
             }
-            Copy-Item $file dist/
+            $source = Resolve-Path $file
+            $dist = Resolve-Path dist
+            if ((Split-Path -Parent $source) -ne $dist) {
+              Copy-Item $source dist/
+            }
           }
 
           Compress-Archive -Path dist/* -DestinationPath artifacts/windows-smoke.zip -Force

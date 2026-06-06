@@ -20,21 +20,7 @@ run_ps() {
   ssh "$SSH_HOST" powershell.exe -NoProfile -EncodedCommand "$encoded"
 }
 
-# Sync host -> remote with tar over SSH (matches scripts/local-release.mjs).
-run_ps "New-Item -ItemType Directory -Force -Path '$GUEST_REPO' | Out-Null"
-guest_repo_unix="${GUEST_REPO//\\//}"
-tar \
-  --exclude=./target \
-  --exclude=./dist \
-  --exclude=./.git \
-  --exclude=./artifacts \
-  --exclude=./node_modules \
-  --exclude=./.env.release.local \
-  --exclude=./.env.zapstore.local \
-  --exclude=./macos/.build \
-  --exclude=./linux/target \
-  -cf - -C "$ROOT" . \
-  | ssh "$SSH_HOST" tar -xf - -C "$guest_repo_unix"
+"$ROOT/scripts/windows-vm-git-sync.sh" "$SSH_HOST"
 
 run_ps "Set-Location '$GUEST_REPO'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\e2e-update-windows.ps1 -ArtifactRoot '$GUEST_ARTIFACT_ROOT'

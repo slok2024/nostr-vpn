@@ -29,4 +29,6 @@ jobs:
           cache-bin: false
 
       - name: Run release gate
+        env:
+          NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE: '0'
         run: ./scripts/release-gate.sh

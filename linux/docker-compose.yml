@@ -15,6 +15,7 @@ services:
       - "5902:5900"
     volumes:
       - ..:/workspace/nostr-vpn
+      - ../../nostr-pubsub:/workspace/nostr-pubsub
       - ../../fips:/workspace/fips
       - ../../hashtree:/workspace/hashtree
       - nostr_vpn_linux_cargo_registry:/root/.cargo/registry

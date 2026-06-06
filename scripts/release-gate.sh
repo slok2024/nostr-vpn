@@ -21,6 +21,69 @@ cargo test --locked -p nostr-vpn-app-core mobile_wireguard_start_returns_before_
 cargo test --locked -p nostr-vpn-app-core mobile_fips_exit_node_routes_default_traffic_to_selected_member
 ./scripts/e2e-update-cli.sh
 
+run_auto_windows_vm_app_smoke() {
+  local host="${NVPN_WINDOWS_SSH_HOST:-win11-dev}"
+  if ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" hostname >/dev/null 2>&1; then
+    ./scripts/windows-vm-app-launch-smoke.sh "$host"
+  else
+    echo "Skipping Windows VM app launch smoke because ssh $host is unreachable."
+  fi
+}
+
+run_desktop_app_launch_smokes() {
+  local linux_gui_smoke_default=1
+  case "${NVPN_RELEASE_GATE_DOCKER_E2E:-1}" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off)
+      linux_gui_smoke_default=0
+      ;;
+  esac
+
+  case "${NVPN_RELEASE_GATE_LINUX_GUI_SMOKE:-$linux_gui_smoke_default}" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off)
+      echo "Skipping Linux GUI launch smoke because NVPN_RELEASE_GATE_LINUX_GUI_SMOKE=${NVPN_RELEASE_GATE_LINUX_GUI_SMOKE}"
+      ;;
+    *)
+      ./tools/run-linux ./scripts/e2e-smoke.sh
+      ;;
+  esac
+
+  case "${NVPN_RELEASE_GATE_MACOS_GUI_SMOKE:-auto}" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off)
+      echo "Skipping macOS app launch smoke because NVPN_RELEASE_GATE_MACOS_GUI_SMOKE=${NVPN_RELEASE_GATE_MACOS_GUI_SMOKE}"
+      ;;
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+      ./scripts/macos-app-launch-smoke.sh
+      ;;
+    auto|AUTO|Auto|"")
+      if [[ "$(uname -s)" == "Darwin" && -d "$ROOT_DIR/macos/Sources" ]]; then
+        ./scripts/macos-app-launch-smoke.sh
+      else
+        echo "Skipping macOS app launch smoke on this host."
+      fi
+      ;;
+    *)
+      echo "Unsupported NVPN_RELEASE_GATE_MACOS_GUI_SMOKE=${NVPN_RELEASE_GATE_MACOS_GUI_SMOKE}" >&2
+      exit 2
+      ;;
+  esac
+
+  case "${NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE:-auto}" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off)
+      echo "Skipping Windows app launch smoke because NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE=${NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE}"
+      ;;
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On|windows-vm)
+      ./scripts/windows-vm-app-launch-smoke.sh "${NVPN_WINDOWS_SSH_HOST:-win11-dev}"
+      ;;
+    auto|AUTO|Auto|"")
+      run_auto_windows_vm_app_smoke
+      ;;
+    *)
+      echo "Unsupported NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE=${NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE}" >&2
+      exit 2
+      ;;
+  esac
+}
+
 case "${NVPN_RELEASE_GATE_DOCKER_E2E:-1}" in
   0|false|FALSE|False|no|NO|No|off|OFF|Off)
     echo "Skipping Docker e2e because NVPN_RELEASE_GATE_DOCKER_E2E=${NVPN_RELEASE_GATE_DOCKER_E2E}"
@@ -49,3 +112,5 @@ case "${NVPN_RELEASE_GATE_DOCKER_E2E:-1}" in
     esac
     ;;
 esac
+
+run_desktop_app_launch_smokes

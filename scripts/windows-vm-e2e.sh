@@ -9,10 +9,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SSH_HOST="${NVPN_WINDOWS_SSH_HOST:-${1:-win11-dev}}"
 GUEST_REPO="${NVPN_WINDOWS_GUEST_REPO_PATH:-C:\\src\\nostr-vpn}"
+GUEST_ARTIFACT_ROOT="${GUEST_ARTIFACT_ROOT:-C:\\src\\nostr-vpn\\artifacts}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-$ROOT/artifacts}"
 RECT_JSON="$ARTIFACT_ROOT/windows-gui-rect.json"
 FULL_SCREENSHOT="$ARTIFACT_ROOT/windows-vm-full.png"
 APP_SCREENSHOT="$ARTIFACT_ROOT/windows-e2e-gui.png"
+GUEST_RECT_PATH="$GUEST_ARTIFACT_ROOT\\nvpn-windows-gui-rect.json"
+GUEST_FULL_SCREENSHOT="$GUEST_ARTIFACT_ROOT\\nvpn-windows-vm-full.png"
 
 mkdir -p "$ARTIFACT_ROOT"
 
@@ -25,26 +28,30 @@ run_ps() {
   ssh "$SSH_HOST" powershell.exe -NoProfile -EncodedCommand "$encoded"
 }
 
-# Sync host -> remote with a tar pipe over SSH. Matches the exclusion list
-# used by scripts/local-release.mjs; both sides see the same archive format.
-sync_repo() {
-  run_ps "New-Item -ItemType Directory -Force -Path '$GUEST_REPO' | Out-Null"
-  run_ps "Get-ChildItem -LiteralPath '$GUEST_REPO' -Recurse -Force -Filter '._*' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue"
-  local guest_repo_unix="${GUEST_REPO//\\//}"
-  COPYFILE_DISABLE=1 tar \
-    --exclude='._*' \
-    --exclude='*/._*' \
-    --exclude=./target \
-    --exclude=./dist \
-    --exclude=./.git \
-    --exclude=./artifacts \
-    --exclude=./node_modules \
-    --exclude=./.env.release.local \
-    --exclude=./.env.zapstore.local \
-    --exclude=./macos/.build \
-    --exclude=./linux/target \
-    -cf - -C "$ROOT" . \
-    | ssh "$SSH_HOST" tar -xf - -C "$guest_repo_unix"
+ps_single_quote() {
+  local escaped="${1//\'/\'\'}"
+  printf "'%s'" "$escaped"
+}
+
+decode_base64_to_file() {
+  local output="$1"
+  if printf '' | base64 --decode >/dev/null 2>&1; then
+    base64 --decode >"$output"
+  elif printf '' | base64 -D >/dev/null 2>&1; then
+    base64 -D >"$output"
+  else
+    base64 -d >"$output"
+  fi
+}
+
+pull_guest_file() {
+  local guest_path="$1"
+  local local_path="$2"
+  local encoded script
+  script="[Console]::Out.Write([Convert]::ToBase64String([IO.File]::ReadAllBytes($(ps_single_quote "$guest_path"))))"
+  encoded="$(printf '%s' "$script" | iconv -t UTF-16LE | base64)"
+  mkdir -p "$(dirname "$local_path")"
+  ssh "$SSH_HOST" powershell.exe -NoProfile -EncodedCommand "$encoded" | decode_base64_to_file "$local_path"
 }
 
 cleanup_gui() {
@@ -54,7 +61,8 @@ cleanup_gui() {
 }
 trap cleanup_gui EXIT
 
-sync_repo
+"$ROOT/scripts/windows-vm-git-sync.sh" "$SSH_HOST"
+run_ps "New-Item -ItemType Directory -Force -Path '$GUEST_ARTIFACT_ROOT' | Out-Null"
 
 run_ps "\$ErrorActionPreference = 'Stop'
 Set-Location '$GUEST_REPO'
@@ -74,10 +82,9 @@ Get-Process -Name NostrVpn.Windows -ErrorAction SilentlyContinue | Stop-Process 
 Start-Process -FilePath \$AppExe"
 
 # Wait for the window to appear, then capture its on-screen rect into a JSON
-# file in the guest's user TEMP — we'll pull that file back below.
-GUEST_RECT_PATH='$env:TEMP\\nvpn-windows-gui-rect.json'
+# file in the guest artifact directory.
 run_ps "\$ErrorActionPreference = 'Stop'
-\$RectPath = $GUEST_RECT_PATH
+\$RectPath = '$GUEST_RECT_PATH'
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -121,12 +128,12 @@ Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 \$bmp = New-Object System.Drawing.Bitmap \$bounds.Width, \$bounds.Height
 \$g = [System.Drawing.Graphics]::FromImage(\$bmp)
 \$g.CopyFromScreen(\$bounds.Location, [System.Drawing.Point]::Empty, \$bounds.Size)
-\$out = Join-Path \$env:TEMP 'nvpn-windows-vm-full.png'
+\$out = '$GUEST_FULL_SCREENSHOT'
 \$bmp.Save(\$out, [System.Drawing.Imaging.ImageFormat]::Png)
 \$g.Dispose(); \$bmp.Dispose()"
 
-ssh "$SSH_HOST" tar -cf - -C "%TEMP%" 'nvpn-windows-vm-full.png' 'nvpn-windows-gui-rect.json' 2>/dev/null \
-  | tar -xf - -C "$ARTIFACT_ROOT"
+pull_guest_file "$GUEST_FULL_SCREENSHOT" "$ARTIFACT_ROOT/nvpn-windows-vm-full.png"
+pull_guest_file "$GUEST_RECT_PATH" "$ARTIFACT_ROOT/nvpn-windows-gui-rect.json"
 mv -f "$ARTIFACT_ROOT/nvpn-windows-vm-full.png" "$FULL_SCREENSHOT"
 mv -f "$ARTIFACT_ROOT/nvpn-windows-gui-rect.json" "$RECT_JSON"
 

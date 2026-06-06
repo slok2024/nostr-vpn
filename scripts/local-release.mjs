@@ -376,80 +376,35 @@ function windowsArtifactArch(targetTriple) {
   return targetTriple
 }
 
-/// Run a tar pipe through ssh in either direction. We rely on macOS `tar`
-/// and Windows 10+ `tar.exe` (bsdtar) sharing a wire format. The remote ssh
-/// shell on win11-dev defaults to cmd.exe, which gladly forwards `tar` to
-/// the Windows-side `tar.exe`. No extra tools are installed on the remote.
-function runShellPipe(cmd, { dryRun = false, errMsg = 'pipe' } = {}) {
-  if (dryRun) {
-    console.log(`[dry] ${cmd}`)
-    return
-  }
-  const result = spawnSync('bash', ['-c', cmd], { stdio: ['ignore', 'inherit', 'inherit'] })
-  if (result.status !== 0) {
-    throw new Error(`${errMsg} failed (exit ${result.status})`)
-  }
-}
-
 function syncRepoToWindowsHost({ host, guestRepo, dryRun }) {
-  // Translate the Windows path to a forward-slash form that tar accepts as
-  // -C without backslash escaping.
-  const guestRepoForward = guestRepo.replace(/\\/g, '/')
-  // Skip the other platforms wholesale — they're not needed to build for
-  // Windows, and shipping them across the SSH tunnel wastes minutes (and
-  // risks the connection timing out on slow links). The cargo workspace
-  // explicitly excludes `linux/`, and `crates/` + `windows/` are the only
-  // things the Windows build touches.
-  const tarExcludes = [
-    '--exclude=./target',
-    '--exclude=./dist',
-    '--exclude=./.git',
-    '--exclude=./.cargo/config.toml',
-    '--exclude=./.claude',
-    '--exclude=./.codex',
-    '--exclude=./.codex_*',
-    '--exclude=./*.s9pk',
-    '--exclude=./artifacts',
-    '--exclude=./node_modules',
-    '--exclude=./.env.release.local',
-    '--exclude=./.env.zapstore.local',
-    '--exclude=./ios',
-    '--exclude=./macos',
-    '--exclude=./android',
-    '--exclude=./linux',
-    '--exclude=./umbrel',
-    '--exclude=./windows/NostrVpn.Windows/bin',
-    '--exclude=./windows/NostrVpn.Windows/obj',
-  ].join(' ')
-
-  // Start from a clean destination. The Windows project uses broad wildcard
-  // globs, so stale files from earlier sync attempts can break later builds.
-  runWindowsPowerShell(
-    host,
-    `
-Remove-Item -Recurse -Force -Path ${psQuote(guestRepo)} -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path ${psQuote(guestRepo)} | Out-Null
-`,
-    { dryRun },
-  )
-  // COPYFILE_DISABLE=1 stops macOS bsdtar from emitting AppleDouble `._*`
-  // sidecar files. Without it, csc.exe on the Windows side picks up the
-  // metadata files via the csproj wildcard glob and fails with CS2015
-  // ("is a binary file instead of a text file").
-  runShellPipe(
-    `COPYFILE_DISABLE=1 tar ${tarExcludes} -cf - -C ${quote(repoRoot)} . | ssh ${quote(host)} tar -xf - -C ${quote(guestRepoForward)}`,
-    { dryRun, errMsg: `tar|ssh sync to ${host}` },
+  run(
+    'bash',
+    [join(repoRoot, 'scripts', 'windows-vm-git-sync.sh'), host],
+    {
+      env: {
+        ...process.env,
+        NVPN_WINDOWS_SSH_HOST: host,
+        NVPN_WINDOWS_GUEST_REPO_PATH: guestRepo,
+      },
+      dryRun,
+    },
   )
 }
 
 function pullFileFromWindowsHost({ host, remotePath, localParent, name, dryRun }) {
-  // remotePath is the directory containing `name` (a single file). Pull just
-  // that file via tar so we don't need to know its size, etc.
-  const remotePathForward = remotePath.replace(/\\/g, '/')
-  runShellPipe(
-    `ssh ${quote(host)} tar -cf - -C ${quote(remotePathForward)} ${quote(name)} | tar -xf - -C ${quote(localParent)}`,
-    { dryRun, errMsg: `tar pull ${host}:${remotePath}/${name}` },
+  const remoteFile = `${remotePath.replace(/\\/g, '/')}/${name}`
+  const dest = join(localParent, name)
+  const script = `[Console]::Out.Write([Convert]::ToBase64String([IO.File]::ReadAllBytes(${psQuote(remoteFile)})))`
+  const encoded = encodePowerShellScript(script)
+  const base64 = run(
+    'ssh',
+    [host, 'powershell.exe', '-NoProfile', '-EncodedCommand', encoded],
+    { capture: true, dryRun },
   )
+  if (!dryRun) {
+    mkdirSync(localParent, { recursive: true })
+    writeFileSync(dest, Buffer.from(base64.trim(), 'base64'))
+  }
 }
 
 function buildWindowsArtifacts({ env, tag, dryRun, builtLines }) {

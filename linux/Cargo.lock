@@ -1700,9 +1700,9 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hashtree-blossom"
-version = "0.2.55"
+version = "0.2.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d99ef7a77f9f92462f7a51be16a0c9f1a56cc8684807a71268298680765b6f75"
+checksum = "0ef8d394c6a0392285c5334a56dafbabaf5a29220d453c2544eb778cb654c81a"
 dependencies = [
  "async-trait",
  "base64",
@@ -1719,9 +1719,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-core"
-version = "0.2.55"
+version = "0.2.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bff287e114f65c12b7805eb47d52be1460662e17e7e8f9b5a4347e99f8cdb80"
+checksum = "b9bbaea03d19e37f7f02ed633e3bc10e40e539adadec699c25546addf34b081c"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -2815,7 +2815,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.0.68"
+version = "4.0.69"
 dependencies = [
  "anyhow",
  "base64",
@@ -2840,7 +2840,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.0.68"
+version = "4.0.69"
 dependencies = [
  "android-native-keyring-store",
  "anyhow",
@@ -2876,7 +2876,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-linux"
-version = "4.0.68"
+version = "4.0.69"
 dependencies = [
  "gio",
  "glib",

@@ -7,7 +7,10 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use hashtree_blossom::{BlossomClient, BlossomStore};
 use hashtree_core::{HashTree, HashTreeConfig};
-use hashtree_resolver::nostr::{NostrResolverConfig, NostrRootResolver};
+use hashtree_resolver::{
+    Keys as HashtreeResolverKeys,
+    nostr::{NostrResolverConfig, NostrRootResolver},
+};
 use hashtree_updater::{
     DownloadOptions, HashtreeUpdater, UpdateAsset, UpdateCheck, UpdateCheckOptions, UpdateManifest,
     UpdateRef, UpdateTarget,
@@ -274,7 +277,7 @@ async fn build_secure_updater() -> Result<SecureUpdater> {
     })
     .await
     .context("failed to connect to Nostr release relays")?;
-    let blossom = BlossomClient::new_empty(nostr::Keys::generate())
+    let blossom = BlossomClient::new_empty(HashtreeResolverKeys::generate())
         .with_read_servers(blossom_read_servers())
         .with_timeout(Duration::from_secs(
             UPDATE_DOWNLOAD_TIMEOUT_SECS.parse::<u64>().unwrap_or(180),

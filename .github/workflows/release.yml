@@ -42,6 +42,8 @@ jobs:
           save-if: false
 
       - name: Run release gate
+        env:
+          NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE: '0'
         run: ./scripts/release-gate.sh
 
   build-cli:
@@ -265,6 +267,12 @@ jobs:
           MACOS_NOTARIZE_TEAM_ID: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
         run: ./scripts/macos-build macos-release-artifacts
 
+      - name: Smoke launch macOS app
+        env:
+          NVPN_MACOS_APP_PATH: dist/macos/Nostr VPN.app
+          NVPN_MACOS_APP_SMOKE_BUILD: '0'
+        run: ./scripts/macos-app-launch-smoke.sh
+
       - name: Upload native macOS app
         uses: actions/upload-artifact@v4
         with:
@@ -311,6 +319,9 @@ jobs:
 
       - name: Install cargo-deb
         run: cargo install cargo-deb --locked
+
+      - name: Smoke launch Linux GUI
+        run: ./tools/run-linux ./scripts/e2e-smoke.sh
 
       - name: Build Linux desktop package
         run: |
@@ -370,6 +381,9 @@ jobs:
           if (!(Test-Path "dist\nostr-vpn-${{ github.event.inputs.tag || github.ref_name }}-windows-x64-setup.exe")) {
             throw "Windows setup artifact was not produced"
           }
+
+      - name: Smoke launch installed Windows app
+        run: .\scripts\windows-installer-smoke.ps1 -InstallerPath "dist\nostr-vpn-${{ github.event.inputs.tag || github.ref_name }}-windows-x64-setup.exe" -ArtifactRoot artifacts
 
       - name: Upload native Windows app
         uses: actions/upload-artifact@v4

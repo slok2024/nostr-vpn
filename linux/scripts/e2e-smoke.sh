@@ -4,15 +4,17 @@ set -euo pipefail
 ROOT_DIR="/workspace/nostr-vpn"
 LINUX_DIR="$ROOT_DIR/linux"
 ARTIFACT_DIR="$ROOT_DIR/artifacts/linux-gui-e2e"
-DATA_HOME="/tmp/nostr-vpn-linux-gui-e2e/data"
-CONFIG_HOME="/tmp/nostr-vpn-linux-gui-e2e/config"
+E2E_ROOT="/tmp/nostr-vpn-linux-gui-e2e"
+DATA_HOME="$E2E_ROOT/data"
+CONFIG_HOME="$E2E_ROOT/config"
 CONFIG_PATH="$DATA_HOME/nostr-vpn/config.toml"
-BOB_CONFIG="/tmp/nostr-vpn-linux-gui-e2e/bob.toml"
-FAKE_NVPN="/tmp/nostr-vpn-linux-gui-e2e/nvpn"
+BOB_CONFIG="$E2E_ROOT/bob.toml"
+FAKE_NVPN="$E2E_ROOT/nvpn"
 SCREENSHOT="$ARTIFACT_DIR/nostr-vpn-linux-gui-e2e.png"
 
+rm -rf "$E2E_ROOT"
 mkdir -p "$ARTIFACT_DIR" "$(dirname "$CONFIG_PATH")" "$CONFIG_HOME"
-rm -f "$CONFIG_PATH" "$BOB_CONFIG" "$FAKE_NVPN" "$SCREENSHOT"
+rm -f "$SCREENSHOT"
 
 cd "$ROOT_DIR"
 cargo build -p nvpn >/dev/null
@@ -91,10 +93,13 @@ now="$(date +%s)"
 
 "$ROOT_DIR/target/debug/nvpn" set \
   --config "$CONFIG_PATH" \
+  --participant "$own_npub" \
+  --participant "$bob_npub" >/dev/null
+
+"$ROOT_DIR/target/debug/nvpn" set \
+  --config "$CONFIG_PATH" \
   --network-id "linux-gui-fips-e2e" \
   --node-name "alice" \
-  --participant "$own_npub" \
-  --participant "$bob_npub" \
   --endpoint "10.203.0.10:51820" \
   --listen-port 51820 \
   --fips-advertise-endpoint true \
@@ -200,7 +205,7 @@ export NVPN_CLI_PATH="$FAKE_NVPN"
 export GDK_BACKEND="${GDK_BACKEND:-x11}"
 export DISPLAY="${DISPLAY:-:99}"
 
-cargo run --quiet > "$ARTIFACT_DIR/app.log" 2>&1 &
+"$LINUX_DIR/target/debug/nostr-vpn" > "$ARTIFACT_DIR/app.log" 2>&1 &
 app_pid=$!
 
 cleanup_app() {

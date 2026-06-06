@@ -2,12 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased
+## 4.0.69 - 2026-06-06
 
 ### Changed
 
 - Added the `osiris` public FIPS bootstrap peer as a second built-in bootstrap
   route alongside `lnvps`.
+- Release-gate smoke testing now launches the desktop GUI on Linux, macOS, and
+  Windows so app startup regressions fail before tagging.
+- Windows VM release helpers now sync source through Git SSH remotes instead
+  of tar streams.
+
+### Fixed
+
+- The Windows app no longer crashes during startup when WPF initializes the
+  read-only public FIPS address field.
 
 ## 4.0.68 - 2026-06-06
 
