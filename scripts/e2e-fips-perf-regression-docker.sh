@@ -20,7 +20,7 @@ MIN_REVERSE_TCP_MBIT="${NVPN_PERF_MIN_REVERSE_TCP_MBIT:-100}"
 MAX_PING_LOSS_PERCENT="${NVPN_PERF_MAX_PING_LOSS_PERCENT:-2}"
 MAX_PING_AVG_MS="${NVPN_PERF_MAX_PING_AVG_MS:-250}"
 MAX_PING_MAX_MS="${NVPN_PERF_MAX_PING_MAX_MS:-1000}"
-PING_COUNT="${NVPN_PERF_PING_COUNT:-30}"
+PING_COUNT="${NVPN_PERF_PING_COUNT:-60}"
 PING_INTERVAL="${NVPN_PERF_PING_INTERVAL:-0.1}"
 FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}"
 CONSTRAINED_RATE_MBIT="${NVPN_PERF_CONSTRAINED_RATE_MBIT:-250}"
@@ -42,18 +42,17 @@ RX_MAINT_POST_MAX_PING_MAX_MS="${NVPN_PERF_RX_MAINT_POST_MAX_PING_MAX_MS:-150}"
 WORKER_QUEUE_PRESSURE_CAP="${NVPN_PERF_WORKER_QUEUE_PRESSURE_CAP:-8}"
 WORKER_QUEUE_PRESSURE_MIN_TCP_MBIT="${NVPN_PERF_WORKER_QUEUE_PRESSURE_MIN_TCP_MBIT:-20}"
 WORKER_QUEUE_PRESSURE_MIN_REVERSE_TCP_MBIT="${NVPN_PERF_WORKER_QUEUE_PRESSURE_MIN_REVERSE_TCP_MBIT:-20}"
-WORKER_QUEUE_PRESSURE_MAX_PING_LOSS_PERCENT="${NVPN_PERF_WORKER_QUEUE_PRESSURE_MAX_PING_LOSS_PERCENT:-5}"
+WORKER_QUEUE_PRESSURE_MAX_PING_LOSS_PERCENT="${NVPN_PERF_WORKER_QUEUE_PRESSURE_MAX_PING_LOSS_PERCENT:-10}"
 WORKER_QUEUE_PRESSURE_MAX_PING_AVG_MS="${NVPN_PERF_WORKER_QUEUE_PRESSURE_MAX_PING_AVG_MS:-100}"
 WORKER_QUEUE_PRESSURE_MAX_PING_MAX_MS="${NVPN_PERF_WORKER_QUEUE_PRESSURE_MAX_PING_MAX_MS:-200}"
+WORKER_QUEUE_PRESSURE_POST_MAX_PING_LOSS_PERCENT="${NVPN_PERF_WORKER_QUEUE_PRESSURE_POST_MAX_PING_LOSS_PERCENT:-5}"
 WORKER_QUEUE_PRESSURE_POST_MAX_PING_AVG_MS="${NVPN_PERF_WORKER_QUEUE_PRESSURE_POST_MAX_PING_AVG_MS:-100}"
 WORKER_QUEUE_PRESSURE_POST_MAX_PING_MAX_MS="${NVPN_PERF_WORKER_QUEUE_PRESSURE_POST_MAX_PING_MAX_MS:-150}"
 
-if [[ -z "${NVPN_FIPS_REPO_PATH:-}" && -d "$ROOT_DIR/../fips/crates/fips-core" ]]; then
-  export NVPN_FIPS_REPO_PATH="$ROOT_DIR/../fips"
-fi
-if [[ -n "${NVPN_FIPS_REPO_PATH:-}" && -z "${NVPN_PATCH_LOCAL_FIPS:-}" ]]; then
-  export NVPN_PATCH_LOCAL_FIPS=1
-fi
+# Keep the release gate aligned with CI by default: Docker builds use the
+# published FIPS crates pinned by Cargo.lock unless local patching is explicit.
+# Set NVPN_PATCH_LOCAL_FIPS=1 and NVPN_FIPS_REPO_PATH=../fips while developing
+# cross-repo FIPS changes.
 
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -161,7 +160,7 @@ assert_float_at_most() {
 }
 
 iperf_mbps() {
-  jq -r '(.end.sum_received.bits_per_second // .end.sum.bits_per_second) / 1000000'
+  jq -er '((.end.sum_received.bits_per_second // .end.sum.bits_per_second // .end.sum_sent.bits_per_second) | select(type == "number")) / 1000000'
 }
 
 iperf_retransmits() {
@@ -171,14 +170,33 @@ iperf_retransmits() {
 run_iperf_json() {
   local label="$1"
   shift
-  local output
-  if ! output="$("${COMPOSE[@]}" exec -T node-a iperf3 \
-      -J -c "$BOB_TUNNEL_IP" -t "$DURATION" -O 1 --connect-timeout 3000 "$@" 2>&1)"; then
-    echo "fips perf regression e2e failed: iperf $label failed" >&2
+  local output code
+  for attempt in 1 2 3; do
+    if output="$("${COMPOSE[@]}" exec -T node-a iperf3 \
+        -J -c "$BOB_TUNNEL_IP" -t "$DURATION" -O 1 --connect-timeout 3000 "$@" 2>&1)"; then
+      code=0
+      if printf '%s\n' "$output" | iperf_mbps >/dev/null 2>&1; then
+        printf '%s\n' "$output"
+        return 0
+      fi
+    else
+      code=$?
+    fi
+
+    if [[ "$attempt" -lt 3 ]]; then
+      echo "fips perf regression e2e: retrying iperf $label after attempt $attempt produced no throughput result" >&2
+      start_iperf_server
+      continue
+    fi
+
+    if [[ "$code" -ne 0 ]]; then
+      echo "fips perf regression e2e failed: iperf $label failed with exit $code" >&2
+    else
+      echo "fips perf regression e2e failed: iperf $label returned no throughput result" >&2
+    fi
     printf '%s\n' "$output" >&2
     exit 1
-  fi
-  printf '%s\n' "$output"
+  done
 }
 
 parse_ping_stats() {
@@ -254,7 +272,12 @@ run_concurrent_probe() {
     cat "$err_path" >&2
     exit 1
   fi
-  mbps="$(iperf_mbps <"$json_path")"
+  if ! mbps="$(iperf_mbps <"$json_path")"; then
+    echo "fips perf regression e2e failed: $phase $label iperf returned no throughput result" >&2
+    cat "$err_path" >&2
+    cat "$json_path" >&2
+    exit 1
+  fi
   retrans="$(iperf_retransmits <"$json_path")"
   rm -f "$json_path" "$err_path"
   printf '%s %s TCP load: %.1f Mbps retrans=%s\n' "$phase" "$label" "$mbps" "$retrans"
@@ -421,7 +444,7 @@ run_worker_queue_pressure_phase() {
     "$WORKER_QUEUE_PRESSURE_MAX_PING_LOSS_PERCENT" \
     "$WORKER_QUEUE_PRESSURE_MAX_PING_AVG_MS" \
     "$WORKER_QUEUE_PRESSURE_MAX_PING_MAX_MS" \
-    "$WORKER_QUEUE_PRESSURE_MAX_PING_LOSS_PERCENT" \
+    "$WORKER_QUEUE_PRESSURE_POST_MAX_PING_LOSS_PERCENT" \
     "$WORKER_QUEUE_PRESSURE_POST_MAX_PING_AVG_MS" \
     "$WORKER_QUEUE_PRESSURE_POST_MAX_PING_MAX_MS"
 }

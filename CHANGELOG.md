@@ -9,6 +9,9 @@ All notable changes to this project are documented in this file.
 - FIPS now uses `fips-core` 0.3.52 and `fips-endpoint` 0.3.28.
 - The FIPS perf regression gate now stresses encrypt-worker queue pressure
   while checking throughput and latency under bulk TCP load.
+- The Docker FIPS perf gate now uses the pinned published FIPS crates by
+  default, retries empty iperf samples, and samples worker-pressure pings long
+  enough for CI jitter.
 
 ### Fixed
 
