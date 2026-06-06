@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.0.70 - 2026-06-07
+
+### Changed
+
+- FIPS now uses `fips-core` 0.3.52 and `fips-endpoint` 0.3.28.
+- The FIPS perf regression gate now stresses encrypt-worker queue pressure
+  while checking throughput and latency under bulk TCP load.
+
+### Fixed
+
+- FIPS TCP bulk endpoint-data traffic no longer starves queued session
+  handshakes or mesh control packets under sustained throughput.
+- The macOS test-daemon installer now resolves Cargo's configured output path
+  before swapping binaries.
+
 ## 4.0.69 - 2026-06-06
 
 ### Changed
