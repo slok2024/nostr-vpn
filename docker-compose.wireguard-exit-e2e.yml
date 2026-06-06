@@ -36,7 +36,7 @@ services:
     entrypoint: ["sleep", "infinity"]
     networks:
       internet:
-        ipv4_address: 198.51.100.20
+        ipv4_address: 10.203.0.20
       public:
         ipv4_address: 203.0.113.20
 
@@ -55,7 +55,7 @@ services:
     entrypoint: ["sleep", "infinity"]
     networks:
       internet:
-        ipv4_address: 198.51.100.10
+        ipv4_address: 10.203.0.10
 
   node-b:
     build:
@@ -72,14 +72,14 @@ services:
     entrypoint: ["sleep", "infinity"]
     networks:
       internet:
-        ipv4_address: 198.51.100.11
+        ipv4_address: 10.203.0.11
 
 networks:
   internet:
     driver: bridge
     ipam:
       config:
-        - subnet: 198.51.100.0/24
+        - subnet: 10.203.0.0/24
   public:
     driver: bridge
     ipam:

@@ -3,10 +3,10 @@
 # upstream tunnel (Mullvad/Proton-style) and not directly via its bridge IP.
 #
 # Topology:
-#   internet (198.51.100.0/24)        public (203.0.113.0/24)
-#     - wg-upstream  198.51.100.20      - wg-upstream    203.0.113.20
-#     - node-a       198.51.100.10      - internet-target 203.0.113.100
-#     - node-b       198.51.100.11
+#   internet (10.203.0.0/24)          public (203.0.113.0/24)
+#     - wg-upstream  10.203.0.20        - wg-upstream    203.0.113.20
+#     - node-a       10.203.0.10        - internet-target 203.0.113.100
+#     - node-b       10.203.0.11
 #
 # 203.0.113.0/24 is reachable only via wg-upstream, so without the WG tunnel
 # node-a has no path to internet-target at all. Any successful ping proves
@@ -26,9 +26,9 @@ COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.wireguar
 
 CONFIG_PATH="/root/.config/nvpn/config.toml"
 TARGET_IP="203.0.113.100"
-WG_UPSTREAM_IP="198.51.100.20"
+WG_UPSTREAM_IP="10.203.0.20"
 WG_UPSTREAM_PUBLIC_IP="203.0.113.20"
-NODE_A_IP="198.51.100.10"
+NODE_A_IP="10.203.0.10"
 WG_LISTEN_PORT="51820"
 WG_TUNNEL_NET="10.99.99.0/24"
 WG_SERVER_TUNNEL_IP="10.99.99.1"
@@ -210,12 +210,12 @@ PersistentKeepalive = 25
   --fips-advertise-endpoint true \
   --fips-nostr-discovery-enabled false \
   --fips-bootstrap-enabled false \
-  --fips-peer-endpoint "$BOB_NPUB=198.51.100.11:51820" \
+  --fips-peer-endpoint "$BOB_NPUB=10.203.0.11:51820" \
   --wireguard-exit-config-file /tmp/wg-upstream.conf \
   --wireguard-exit-enabled true >/dev/null
 "${COMPOSE[@]}" exec -T node-b nvpn set \
   --participant "$ALICE_NPUB" \
-  --endpoint "198.51.100.11:51820" \
+  --endpoint "10.203.0.11:51820" \
   --listen-port 51820 \
   --fips-advertise-endpoint true \
   --fips-nostr-discovery-enabled false \

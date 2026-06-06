@@ -13,9 +13,9 @@
 #      forward → reply path.
 #
 # Topology (reuses docker-compose.wireguard-exit-e2e.yml):
-#   internet (198.51.100.0/24)        public (203.0.113.0/24)
-#     - wg-upstream  198.51.100.20      - wg-upstream    203.0.113.20
-#     - node-a       198.51.100.10      - internet-target 203.0.113.100
+#   internet (10.203.0.0/24)          public (203.0.113.0/24)
+#     - wg-upstream  10.203.0.20        - wg-upstream    203.0.113.20
+#     - node-a       10.203.0.10        - internet-target 203.0.113.100
 #
 # Pass criteria: both stages succeed and internet-target sees pings
 # arriving from the WG-upstream's public IP (proving they actually went
@@ -27,9 +27,9 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_NAME="nostr-vpn-e2e-wireguard-exit-userspace"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.wireguard-exit-e2e.yml")
 
-WG_UPSTREAM_IP="198.51.100.20"
+WG_UPSTREAM_IP="10.203.0.20"
 WG_UPSTREAM_PUBLIC_IP="203.0.113.20"
-NODE_A_IP="198.51.100.10"
+NODE_A_IP="10.203.0.10"
 TARGET_IP="203.0.113.100"
 WG_LISTEN_PORT="51820"
 WG_TUNNEL_NET="10.99.99.0/24"

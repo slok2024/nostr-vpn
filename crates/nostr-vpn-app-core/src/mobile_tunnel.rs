@@ -673,7 +673,11 @@ impl MobileTunnel {
             let mesh_addr = mesh_ipv4;
             let inbound_tx_for_dns = inbound_tx.clone();
             let app_config_for_dns = Arc::clone(&app_config);
-            let dns_forwarders = mobile_magic_dns_forwarders(&config.dns_forwarders);
+            let dns_forwarders = mobile_magic_dns_forwarders(
+                &config.dns_forwarders,
+                &config.dns_servers,
+                &config.magic_dns_server,
+            );
             tokio::spawn(async move {
                 let mut outbound_count: u32 = 0;
                 while let Some(packet) = outbound_rx.recv().await {
@@ -2628,11 +2632,21 @@ async fn forward_mobile_dns_query(query: &[u8], forwarders: &[SocketAddr]) -> Op
     None
 }
 
-fn mobile_magic_dns_forwarders(configured: &[String]) -> Vec<SocketAddr> {
+fn mobile_magic_dns_forwarders(
+    configured: &[String],
+    tunnel_dns_servers: &[String],
+    magic_dns_server: &str,
+) -> Vec<SocketAddr> {
     let mut seen = HashSet::new();
-    configured
+    tunnel_dns_servers
         .iter()
+        .filter(|server| server.trim() != magic_dns_server.trim())
         .filter_map(|server| parse_dns_forwarder(server))
+        .chain(
+            configured
+                .iter()
+                .filter_map(|server| parse_dns_forwarder(server)),
+        )
         .chain(
             MOBILE_MAGIC_DNS_FORWARDERS
                 .iter()
@@ -4071,6 +4085,73 @@ mod tests {
         assert_eq!(
             config.magic_dns_server,
             nostr_vpn_core::MESH_MAGIC_DNS_SERVER
+        );
+    }
+
+    #[test]
+    fn mobile_config_wireguard_exit_preserves_custom_dns_with_magic_dns() {
+        let mut app = AppConfig::generated();
+        app.ensure_defaults();
+        let own = app.own_nostr_pubkey_hex().expect("own pubkey");
+        app.networks = vec![NetworkConfig {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            enabled: true,
+            network_id: "test".to_string(),
+            invite_secret: "join-secret".to_string(),
+            participants: vec![own.clone()],
+            admins: vec![own],
+            listen_for_join_requests: true,
+            invite_inviter: String::new(),
+            outbound_join_request: None,
+            inbound_join_requests: Vec::new(),
+            shared_roster_updated_at: 0,
+            shared_roster_signed_by: String::new(),
+        }];
+        app.wireguard_exit = WireGuardExitConfig {
+            enabled: true,
+            address: "10.99.99.2/32".to_string(),
+            private_key: "client-private-key".to_string(),
+            peer_public_key: "server-public-key".to_string(),
+            endpoint: "198.51.100.20:51820".to_string(),
+            allowed_ips: vec!["0.0.0.0/0".to_string()],
+            dns: vec!["94.140.14.14".to_string()],
+            ..WireGuardExitConfig::default()
+        };
+
+        let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
+
+        assert_eq!(
+            config.dns_servers,
+            vec![nostr_vpn_core::MESH_MAGIC_DNS_SERVER, "94.140.14.14"]
+        );
+        assert_eq!(
+            config.magic_dns_server,
+            nostr_vpn_core::MESH_MAGIC_DNS_SERVER
+        );
+    }
+
+    #[test]
+    fn mobile_wireguard_exit_dns_forwarders_prefer_configured_tunnel_dns() {
+        let platform_dns = vec!["1.1.1.1".to_string()];
+        let tunnel_dns = vec![
+            nostr_vpn_core::MESH_MAGIC_DNS_SERVER.to_string(),
+            "94.140.14.14".to_string(),
+        ];
+
+        let forwarders = mobile_magic_dns_forwarders(
+            &platform_dns,
+            &tunnel_dns,
+            nostr_vpn_core::MESH_MAGIC_DNS_SERVER,
+        );
+
+        assert_eq!(
+            forwarders,
+            vec![
+                "94.140.14.14:53".parse().unwrap(),
+                "1.1.1.1:53".parse().unwrap(),
+                "9.9.9.9:53".parse().unwrap(),
+            ]
         );
     }
 
