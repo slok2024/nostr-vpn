@@ -20,4 +20,13 @@ if [ ! -t 0 ]; then
     exec_args=(-T)
 fi
 
-docker compose exec "${exec_args[@]}" nostr-vpn-linux /usr/local/bin/dev-entrypoint "$@"
+status=0
+docker compose exec "${exec_args[@]}" nostr-vpn-linux /usr/local/bin/dev-entrypoint "$@" || status=$?
+
+if [ "${CI:-}" = "true" ] && command -v sudo >/dev/null 2>&1; then
+    # Docker creates these bind-mount subdirectories as root on GitHub runners.
+    # Restore ownership so later host-side cargo steps can reuse the checkout.
+    sudo chown -R "$(id -u):$(id -g)" "$ROOT/target" "$ROOT/linux/target" 2>/dev/null || true
+fi
+
+exit "$status"
