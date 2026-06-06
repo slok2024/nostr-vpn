@@ -130,7 +130,7 @@ async fn flush_pending_fips_roster_recipients(
 }
 
 #[cfg(feature = "embedded-fips")]
-type EndpointPeerSignature = Vec<(String, Vec<String>)>;
+type EndpointPeerSignature = Vec<(String, Vec<(String, Option<u64>, u8)>)>;
 
 #[cfg(feature = "embedded-fips")]
 struct RecentPeerRefresh<'a> {
@@ -180,7 +180,7 @@ fn endpoint_peer_signature(
             let mut addresses = peer
                 .addresses
                 .iter()
-                .map(|hint| hint.addr.clone())
+                .map(|hint| (hint.addr.clone(), hint.seen_at_ms, hint.priority))
                 .collect::<Vec<_>>();
             addresses.sort();
             addresses.dedup();
@@ -1874,5 +1874,32 @@ mod tests {
 
         assert_eq!(preferred.default_interface.as_deref(), Some("eth0"));
         assert_eq!(preferred.primary_ipv4, Some(Ipv4Addr::new(192, 168, 64, 2)));
+    }
+
+    #[cfg(feature = "embedded-fips")]
+    #[test]
+    fn endpoint_peer_signature_tracks_address_hint_metadata() {
+        let static_config = vec![crate::fips_private_mesh::FipsEndpointPeerTransportConfig {
+            npub: "peer".to_string(),
+            addresses: vec![crate::fips_private_mesh::FipsPeerAddressHint {
+                addr: "198.51.100.91:51830".to_string(),
+                seen_at_ms: None,
+                priority: 10,
+            }],
+            discovery_fallback_transit: true,
+        }];
+        let mut stamped_config = static_config.clone();
+        stamped_config[0].addresses[0].seen_at_ms = Some(123_000);
+        let mut reprioritized_config = static_config.clone();
+        reprioritized_config[0].addresses[0].priority = 100;
+
+        assert_ne!(
+            endpoint_peer_signature(&static_config),
+            endpoint_peer_signature(&stamped_config)
+        );
+        assert_ne!(
+            endpoint_peer_signature(&static_config),
+            endpoint_peer_signature(&reprioritized_config)
+        );
     }
 }

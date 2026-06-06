@@ -168,13 +168,31 @@ struct MeshMtu {
     tunnel: u16,
 }
 
-fn private_mesh_mtu_from_app(_app: Option<&AppConfig>) -> MeshMtu {
+fn private_mesh_mtu_from_app(app: Option<&AppConfig>) -> MeshMtu {
     let env_profile_raw = std::env::var("NVPN_MESH_MTU_PROFILE").ok();
     let env_profile = env_profile_raw.as_deref().and_then(non_empty_str);
     let env_underlay = parse_mtu_env("NVPN_MESH_UNDERLAY_UDP_MTU");
     let env_tunnel = parse_mtu_env("NVPN_MESH_TUNNEL_MTU");
 
-    resolve_private_mesh_mtu(env_profile, env_underlay, env_tunnel)
+    resolve_private_mesh_mtu_from_sources(app, env_profile, env_underlay, env_tunnel)
+}
+
+fn resolve_private_mesh_mtu_from_sources(
+    app: Option<&AppConfig>,
+    env_profile: Option<&str>,
+    env_underlay: Option<u16>,
+    env_tunnel: Option<u16>,
+) -> MeshMtu {
+    let app_profile = app.and_then(|app| non_empty_str(&app.mesh_mtu_profile));
+    let app_underlay =
+        app.and_then(|app| (app.mesh_underlay_udp_mtu > 0).then_some(app.mesh_underlay_udp_mtu));
+    let app_tunnel = app.and_then(|app| (app.mesh_tunnel_mtu > 0).then_some(app.mesh_tunnel_mtu));
+
+    resolve_private_mesh_mtu(
+        env_profile.or(app_profile),
+        env_underlay.or(app_underlay),
+        env_tunnel.or(app_tunnel),
+    )
 }
 
 fn resolve_private_mesh_mtu(
@@ -1852,7 +1870,7 @@ fn fips_endpoint_peers_from_mesh(
     }
 
     // Operator-configured hints have no freshness signal. If a duplicate
-    // address later appears in the recent cache, keep that freshness below.
+    // address later appears in the recent cache, keep the operator hint static.
     for (npub, addresses) in operator_static_endpoints {
         let npub = normalize_fips_endpoint_npub(&npub);
         let peer = peers
@@ -1865,6 +1883,11 @@ fn fips_endpoint_peers_from_mesh(
         for raw in addresses {
             let trimmed = raw.trim();
             if trimmed.is_empty() {
+                continue;
+            }
+            if let Some(existing) = peer.addresses.iter_mut().find(|hint| hint.addr == trimmed) {
+                existing.seen_at_ms = None;
+                existing.priority = existing.priority.min(FIPS_STATIC_PEER_ENDPOINT_PRIORITY);
                 continue;
             }
             peer.addresses.push(FipsPeerAddressHint {
@@ -1895,14 +1918,15 @@ fn fips_endpoint_peers_from_mesh(
             if trimmed.is_empty() {
                 continue;
             }
-            // Same (npub, addr) from multiple sources: keep the freshest
-            // timestamp. The dedup pass below collapses duplicates.
+            // Same (npub, addr) from multiple dynamic sources: keep the
+            // freshest timestamp. If an operator static hint already owns this
+            // socket, do not stamp it as recent; fips uses that distinction to
+            // keep the configured LAN path preferred during retries.
             if let Some(existing) = peer.addresses.iter_mut().find(|hint| hint.addr == trimmed) {
-                existing.seen_at_ms = match (existing.seen_at_ms, Some(seen_at_ms)) {
-                    (Some(a), Some(b)) => Some(a.max(b)),
-                    (None, Some(b)) => Some(b),
-                    (a, _) => a,
-                };
+                if let Some(existing_seen_at_ms) = existing.seen_at_ms {
+                    existing.seen_at_ms = Some(existing_seen_at_ms.max(seen_at_ms));
+                    existing.priority = existing.priority.min(FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY);
+                }
                 continue;
             }
             peer.addresses.push(FipsPeerAddressHint {
@@ -4607,6 +4631,42 @@ mod tests {
     }
 
     #[test]
+    fn private_mesh_mtu_app_profile_uses_same_resolver() {
+        let app = AppConfig {
+            mesh_mtu_profile: " LAN ".to_string(),
+            ..Default::default()
+        };
+        let mtu = super::resolve_private_mesh_mtu_from_sources(Some(&app), None, None, None);
+
+        assert_eq!(
+            mtu,
+            super::MeshMtu {
+                underlay_udp: 1420,
+                tunnel: 1290,
+            }
+        );
+    }
+
+    #[test]
+    fn private_mesh_mtu_env_overrides_app_config() {
+        let app = AppConfig {
+            mesh_mtu_profile: "lan".to_string(),
+            mesh_underlay_udp_mtu: 1420,
+            mesh_tunnel_mtu: 1290,
+            ..Default::default()
+        };
+        let mtu = super::resolve_private_mesh_mtu_from_sources(Some(&app), None, Some(1280), None);
+
+        assert_eq!(
+            mtu,
+            super::MeshMtu {
+                underlay_udp: 1280,
+                tunnel: 1150,
+            }
+        );
+    }
+
+    #[test]
     fn private_mesh_mtu_underlay_override_derives_tunnel_budget() {
         let mtu = super::resolve_private_mesh_mtu(None, Some(1500), None);
 
@@ -5820,6 +5880,42 @@ mod tests {
         assert_eq!(
             fips_peer_address_from_hint(recent_hint).priority,
             FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY
+        );
+    }
+
+    #[test]
+    fn endpoint_peer_hints_keep_operator_static_duplicate_unstamped() {
+        let endpoint_peers = fips_endpoint_peers_from_mesh(
+            &[],
+            vec![("peer".to_string(), vec!["198.51.100.91:51830".to_string()])],
+            vec![(
+                "peer".to_string(),
+                vec![
+                    ("198.51.100.91:51830".to_string(), 123_000),
+                    ("198.51.100.91:51830".to_string(), 456_000),
+                ],
+            )],
+        );
+
+        let peer = endpoint_peers
+            .iter()
+            .find(|peer| peer.npub == "peer")
+            .expect("peer");
+        let matching_hints = peer
+            .addresses
+            .iter()
+            .filter(|hint| hint.addr == "198.51.100.91:51830")
+            .collect::<Vec<_>>();
+
+        assert_eq!(matching_hints.len(), 1);
+        assert_eq!(matching_hints[0].seen_at_ms, None);
+        assert_eq!(
+            matching_hints[0].priority,
+            FIPS_STATIC_PEER_ENDPOINT_PRIORITY
+        );
+        assert_eq!(
+            fips_peer_address_from_hint(matching_hints[0]).seen_at_ms,
+            None
         );
     }
 

@@ -38,5 +38,14 @@ case "${NVPN_RELEASE_GATE_DOCKER_E2E:-1}" in
       ./scripts/e2e-fips-roaming-docker.sh
     NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}" \
       ./scripts/e2e-fips-nat-safe-mtu-docker.sh
+    case "${NVPN_RELEASE_GATE_PERF_E2E:-1}" in
+      0|false|FALSE|False|no|NO|No|off|OFF|Off)
+        echo "Skipping Docker perf regression e2e because NVPN_RELEASE_GATE_PERF_E2E=${NVPN_RELEASE_GATE_PERF_E2E}"
+        ;;
+      *)
+        NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}" \
+          ./scripts/e2e-fips-perf-regression-docker.sh
+        ;;
+    esac
     ;;
 esac

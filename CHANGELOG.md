@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.0.68 - 2026-06-06
+
+### Changed
+
+- FIPS now uses `fips-core` 0.3.49 and `fips-endpoint` 0.3.25.
+- The release gate now includes a FIPS dataplane regression check that keeps
+  TCP throughput above a floor and verifies ping latency during and after bulk
+  TCP load.
+
+### Fixed
+
+- Mesh MTU settings from app config now use the same resolver as environment
+  overrides, so configured LAN MTU profiles are honored without launchd
+  environment edits.
+- Operator-configured static FIPS endpoint hints now stay unstamped even when
+  the same socket also appears in recent endpoint discovery, keeping explicit
+  LAN paths preferred while direct probing continues.
+- Runtime FIPS peer refreshes now detect endpoint hint freshness and priority
+  changes, not just address-string changes.
+- FIPS TCP endpoint-data packets now backpressure instead of being dropped by
+  the encrypt worker under bulk-send pressure, fixing the GitHub CI session
+  initiation and Windows endpoint-data regressions.
+
 ## 4.0.67 - 2026-06-05
 
 ### Changed
