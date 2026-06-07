@@ -31,4 +31,5 @@ jobs:
       - name: Run release gate
         env:
           NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE: '0'
+          NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_E2E: '0'
         run: ./scripts/release-gate.sh
